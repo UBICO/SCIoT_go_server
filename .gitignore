@@ -1,0 +1,6 @@
+# Binario compilato
+/server
+/bin/
+
+# File di sistema
+.DS_Store
