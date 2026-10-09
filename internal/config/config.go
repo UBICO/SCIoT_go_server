@@ -48,7 +48,7 @@ type Server struct {
 func Load(path string) (File, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return File{}, fmt.Errorf("open config: %w", err)
+		return File{}, fmt.Errorf("%w", err)
 	}
 	defer file.Close()
 

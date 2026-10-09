@@ -125,24 +125,32 @@ type ErrorDetail struct {
 // Heartbeat (client → server, 1 Hz)
 // ---------------------------------------------------------------------------
 
-// Telemetry contiene le metriche del device.
+// Telemetry contiene le metriche del device per l'intervallo trascorso
+// dall'heartbeat precedente (la "finestra").
 //
-// inference_time_ms è obbligatoria: ogni client la misura. Le altre sono
-// opzionali, perché non tutti i device le hanno (es. l'ESP32 non ha un
-// "cpu_load" come Linux). Un campo opzionale si modella con un puntatore:
-// nil = "non inviato", che è diverso da 0 ("inviato, vale zero").
+// Le metriche di inferenza sono AGGREGATE sulla finestra:
+//   - inference_count: numero di inferenze completate nella finestra.
+//     0 è un'informazione utile: il loop di inferenza è fermo.
+//   - inference_time_ms / inference_time_max_ms: media e massimo della
+//     finestra. Presenti solo se inference_count > 0: con zero inferenze la
+//     media non esiste, e 0 vorrebbe dire "inferenze istantanee".
 //
-//	{"inference_time_ms": 41.7, "cpu_load": 0.42, "rtt_ms": 3.1,
+// Le altre metriche sono opzionali, perché non tutti i device le hanno (es.
+// l'ESP32 non ha un "cpu_load" come Linux). Un campo opzionale si modella con
+// un puntatore: nil = "non inviato", che è diverso da 0 ("inviato, vale zero").
+//
+//	{"inference_count": 47, "inference_time_ms": 21.3,
+//	 "inference_time_max_ms": 38.9, "cpu_load": 0.42, "rtt_ms": 3.1,
 //	 "memory_available_bytes": 812345344}
 type Telemetry struct {
-	InferenceTimeMS      float64  `json:"inference_time_ms"`
+	// InferenceCount non è un puntatore: assente = 0 = "nessuna inferenza".
+	// Un client che lo dimentica ma invia la media viene rifiutato da Validate.
+	InferenceCount       int      `json:"inference_count"`
+	InferenceTimeMS      *float64 `json:"inference_time_ms,omitempty"`
+	InferenceTimeMaxMS   *float64 `json:"inference_time_max_ms,omitempty"`
 	CPULoad              *float64 `json:"cpu_load,omitempty"` // (0..1)
 	RTTMS                *float64 `json:"rtt_ms,omitempty"`
 	MemoryAvailableBytes *int64   `json:"memory_available_bytes,omitempty"`
-	//   Sui tre opzionali usa `omitempty`: quando il server li riserializza
-	//   (log, debug) un nil non deve diventare "null" ma sparire.
-	//   Qui omitempty è corretto, a differenza di split_point: il contratto
-	//   dice "opzionale", non "presente e null".
 }
 
 // HeartbeatRequest è il corpo di POST /api/v1/heartbeat.

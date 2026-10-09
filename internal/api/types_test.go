@@ -114,12 +114,12 @@ func TestErrorResponseJSON(t *testing.T) {
 }
 
 func TestTelemetryOmitsMissingOptionals(t *testing.T) {
-	// Solo il campo obbligatorio: gli opzionali nil devono sparire.
-	got, err := json.Marshal(Telemetry{InferenceTimeMS: 41.5})
+	// Finestra senza inferenze: restano solo i campi obbligatori.
+	got, err := json.Marshal(Telemetry{InferenceCount: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"inference_time_ms":41.5}`; string(got) != want {
+	if want := `{"inference_count":0}`; string(got) != want {
 		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
 	}
 }
@@ -131,7 +131,9 @@ func TestHeartbeatRequestDecode(t *testing.T) {
 		"policy_version": 3,
 		"mode": "SPLIT",
 		"telemetry": {
+			"inference_count": 47,
 			"inference_time_ms": 41.5,
+			"inference_time_max_ms": 60,
 			"cpu_load": 0,
 			"memory_available_bytes": 812345344
 		}
@@ -145,8 +147,9 @@ func TestHeartbeatRequestDecode(t *testing.T) {
 		t.Errorf("campi errati: %+v", req)
 	}
 	tel := req.Telemetry
-	if tel.InferenceTimeMS != 41.5 {
-		t.Errorf("InferenceTimeMS = %v", tel.InferenceTimeMS)
+	if tel.InferenceCount != 47 || tel.InferenceTimeMS == nil || *tel.InferenceTimeMS != 41.5 ||
+		tel.InferenceTimeMaxMS == nil || *tel.InferenceTimeMaxMS != 60 {
+		t.Errorf("metriche di inferenza errate: %+v", tel)
 	}
 	// cpu_load: 0 è stato INVIATO → puntatore non nil che punta a 0.
 	if tel.CPULoad == nil || *tel.CPULoad != 0 {

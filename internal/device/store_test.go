@@ -124,7 +124,7 @@ func TestHeartbeatUpdatesState(t *testing.T) {
 	d := s.Register("web_96", "python", fomo, api.Capabilities{})
 
 	s.now = func() time.Time { return t1 } // il tempo avanza di 1 s
-	tel := api.Telemetry{InferenceTimeMS: 41.7, CPULoad: ptr(0.42)}
+	tel := api.Telemetry{InferenceCount: 47, InferenceTimeMS: ptr(41.7), InferenceTimeMaxMS: ptr(60.0), CPULoad: ptr(0.42)}
 
 	policy, err := s.Heartbeat("web_96", d.SessionID, 1, tel)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestHeartbeatUpdatesState(t *testing.T) {
 	if got.AppliedPolicyVersion != 1 {
 		t.Errorf("AppliedPolicyVersion = %d, want 1", got.AppliedPolicyVersion)
 	}
-	if got.LastTelemetry.InferenceTimeMS != 41.7 || got.LastTelemetry.CPULoad == nil || *got.LastTelemetry.CPULoad != 0.42 {
+	if got.LastTelemetry.InferenceCount != 47 || got.LastTelemetry.CPULoad == nil || *got.LastTelemetry.CPULoad != 0.42 {
 		t.Errorf("LastTelemetry = %+v", got.LastTelemetry)
 	}
 }
@@ -180,12 +180,12 @@ func TestHeartbeatSessionExpired(t *testing.T) {
 func TestReRegisterResetsHeartbeatState(t *testing.T) {
 	s := newTestStore(time.Now())
 	d := s.Register("web_96", "python", fomo, api.Capabilities{})
-	if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceTimeMS: 10}); err != nil {
+	if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceCount: 10}); err != nil {
 		t.Fatal(err)
 	}
 
 	again := s.Register("web_96", "python", fomo, api.Capabilities{})
-	if again.AppliedPolicyVersion != 0 || again.LastTelemetry.InferenceTimeMS != 0 {
+	if again.AppliedPolicyVersion != 0 || again.LastTelemetry.InferenceCount != 0 {
 		t.Errorf("la ri-registrazione deve azzerare lo stato dell'heartbeat: %+v", again)
 	}
 }
@@ -197,7 +197,7 @@ func TestConcurrentHeartbeat(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Go(func() {
-			if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceTimeMS: 1}); err != nil {
+			if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceCount: 1}); err != nil {
 				t.Error(err)
 			}
 			s.Get("web_96")

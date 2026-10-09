@@ -24,9 +24,17 @@ func TestTelemetryValidate(t *testing.T) {
 		tel     Telemetry
 		wantErr bool
 	}{
-		{"solo obbligatorio", Telemetry{InferenceTimeMS: 41.5}, false},
-		{"tutto valido", Telemetry{InferenceTimeMS: 0, CPULoad: f64(1), RTTMS: f64(0), MemoryAvailableBytes: i64(0)}, false},
-		{"inference negativo", Telemetry{InferenceTimeMS: -1}, true},
+		{"finestra vuota", Telemetry{InferenceCount: 0}, false},
+		{"finestra piena", Telemetry{InferenceCount: 47, InferenceTimeMS: f64(21.3), InferenceTimeMaxMS: f64(38.9)}, false},
+		{"media uguale al massimo", Telemetry{InferenceCount: 1, InferenceTimeMS: f64(20), InferenceTimeMaxMS: f64(20)}, false},
+		{"tutto valido", Telemetry{InferenceCount: 1, InferenceTimeMS: f64(0), InferenceTimeMaxMS: f64(0), CPULoad: f64(1), RTTMS: f64(0), MemoryAvailableBytes: i64(0)}, false},
+		{"count negativo", Telemetry{InferenceCount: -1}, true},
+		{"count 0 con media", Telemetry{InferenceCount: 0, InferenceTimeMS: f64(20)}, true},
+		{"count 0 con massimo", Telemetry{InferenceCount: 0, InferenceTimeMaxMS: f64(20)}, true},
+		{"count > 0 senza media", Telemetry{InferenceCount: 3, InferenceTimeMaxMS: f64(20)}, true},
+		{"count > 0 senza massimo", Telemetry{InferenceCount: 3, InferenceTimeMS: f64(20)}, true},
+		{"media negativa", Telemetry{InferenceCount: 3, InferenceTimeMS: f64(-1), InferenceTimeMaxMS: f64(20)}, true},
+		{"media sopra il massimo", Telemetry{InferenceCount: 3, InferenceTimeMS: f64(30), InferenceTimeMaxMS: f64(20)}, true},
 		{"cpu_load sopra 1", Telemetry{CPULoad: f64(1.01)}, true},
 		{"cpu_load negativo", Telemetry{CPULoad: f64(-0.1)}, true},
 		{"rtt negativo", Telemetry{RTTMS: f64(-3)}, true},

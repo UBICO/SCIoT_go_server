@@ -237,7 +237,7 @@ func heartbeatBody(session string) string {
 		"session_id": "` + session + `",
 		"policy_version": 1,
 		"mode": "LOCAL",
-		"telemetry": {"inference_time_ms": 41.5, "cpu_load": 0.4}
+		"telemetry": {"inference_count": 10, "inference_time_ms": 41.5, "inference_time_max_ms": 50, "cpu_load": 0.4}
 	}`
 }
 
@@ -255,7 +255,7 @@ func TestHeartbeatOK(t *testing.T) {
 	}
 
 	d, _ := store.Get("web_192")
-	if d.AppliedPolicyVersion != 1 || d.LastTelemetry.InferenceTimeMS != 41.5 {
+	if d.AppliedPolicyVersion != 1 || d.LastTelemetry.InferenceCount != 10 {
 		t.Errorf("stato non aggiornato: %+v", d)
 	}
 }
@@ -276,6 +276,7 @@ func TestHeartbeatErrors(t *testing.T) {
 		{"session_id vuoto", heartbeatBody(""), 400, api.ErrCodeInvalidRequest},
 		{"mode non valido", strings.Replace(heartbeatBody(session), `"LOCAL"`, `"REMOTE"`, 1), 400, api.ErrCodeInvalidRequest},
 		{"telemetria fuori range", strings.Replace(heartbeatBody(session), `0.4`, `1.5`, 1), 400, api.ErrCodeInvalidRequest},
+		{"media sopra il massimo", strings.Replace(heartbeatBody(session), `"inference_time_max_ms": 50`, `"inference_time_max_ms": 30`, 1), 400, api.ErrCodeInvalidRequest},
 		{"sessione sconosciuta", heartbeatBody("SESSIONE-VECCHIA"), 409, api.ErrCodeSessionExpired},
 		{"device sconosciuto", strings.Replace(heartbeatBody(session), `"web_192"`, `"mai-visto"`, 1), 409, api.ErrCodeSessionExpired},
 	}
