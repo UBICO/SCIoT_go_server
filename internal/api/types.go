@@ -103,6 +103,9 @@ const (
 	ErrCodeInvalidRequest      = "invalid_request"
 	ErrCodeUnsupportedProtocol = "unsupported_protocol"
 	ErrCodeModelNotFound       = "model_not_found"
+	// ErrCodeSessionExpired: il server non riconosce (più) il session_id.
+	// Il client torna in LOCAL e ripete la registrazione.
+	ErrCodeSessionExpired = "session_expired"
 )
 
 // ErrorResponse è il corpo di ogni risposta di errore:
@@ -116,4 +119,56 @@ type ErrorResponse struct {
 type ErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat (client → server, 1 Hz)
+// ---------------------------------------------------------------------------
+
+// Telemetry contiene le metriche del device.
+//
+// inference_time_ms è obbligatoria: ogni client la misura. Le altre sono
+// opzionali, perché non tutti i device le hanno (es. l'ESP32 non ha un
+// "cpu_load" come Linux). Un campo opzionale si modella con un puntatore:
+// nil = "non inviato", che è diverso da 0 ("inviato, vale zero").
+//
+//	{"inference_time_ms": 41.7, "cpu_load": 0.42, "rtt_ms": 3.1,
+//	 "memory_available_bytes": 812345344}
+type Telemetry struct {
+	InferenceTimeMS      float64  `json:"inference_time_ms"`
+	CPULoad              *float64 `json:"cpu_load,omitempty"` // (0..1)
+	RTTMS                *float64 `json:"rtt_ms,omitempty"`
+	MemoryAvailableBytes *int64   `json:"memory_available_bytes,omitempty"`
+	//   Sui tre opzionali usa `omitempty`: quando il server li riserializza
+	//   (log, debug) un nil non deve diventare "null" ma sparire.
+	//   Qui omitempty è corretto, a differenza di split_point: il contratto
+	//   dice "opzionale", non "presente e null".
+}
+
+// HeartbeatRequest è il corpo di POST /api/v1/heartbeat.
+//
+//	{
+//	  "device_id": "web_96",
+//	  "session_id": "YVOF...",
+//	  "policy_version": 1,
+//	  "mode": "LOCAL",
+//	  "telemetry": { ...Telemetry... }
+//	}
+//
+// policy_version e mode sono la policy che il client sta APPLICANDO:
+// è la "conferma" che permette al server di sapere se il client è allineato.
+type HeartbeatRequest struct {
+	DeviceID      string        `json:"device_id"`
+	SessionID     string        `json:"session_id"`
+	PolicyVersion uint64        `json:"policy_version"`
+	Mode          ExecutionMode `json:"mode"`
+	Telemetry     Telemetry     `json:"telemetry"`
+}
+
+// HeartbeatResponse è il corpo della risposta 200: sempre la policy corrente
+// (opzione A).
+//
+//	{"policy": {"mode": "LOCAL", "split_point": null, "policy_version": 1}}
+type HeartbeatResponse struct {
+	Policy Policy `json:"policy"`
 }

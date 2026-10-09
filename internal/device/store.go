@@ -7,6 +7,7 @@ package device
 
 import (
 	"crypto/rand"
+	"errors"
 	"sync"
 	"time"
 
@@ -26,7 +27,20 @@ type Device struct {
 	Policy       api.Policy
 	RegisteredAt time.Time
 	LastSeen     time.Time
+
+	// AppliedPolicyVersion è la versione che il client ha dichiarato di
+	// applicare nell'ultimo heartbeat (0 = nessun heartbeat ancora).
+	AppliedPolicyVersion uint64
+	// LastTelemetry è l'ultimo campione ricevuto. Contiene puntatori (campi
+	// opzionali): una copia del Device li condivide con lo Store. È sicuro
+	// solo perché nessuno modifica una Telemetry dopo averla ricevuta.
+	LastTelemetry api.Telemetry
 }
+
+// ErrSessionExpired indica che device o sessione non sono (più) validi:
+// device mai registrato, server riavviato (lo Store è in memoria) oppure
+// session_id di una registrazione precedente.
+var ErrSessionExpired = errors.New("session expired")
 
 // Store contiene i device registrati, indicizzati per ID.
 type Store struct {
@@ -126,6 +140,29 @@ func (s *Store) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.devices)
+}
+
+// Heartbeat registra un heartbeat e restituisce la policy corrente.
+//
+// Restituisce ErrSessionExpired se il device non esiste o se sessionID non
+// coincide con la sessione attuale. In quel caso lo stato NON viene toccato:
+// un heartbeat vecchio non deve aggiornare la sessione nuova.
+func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Telemetry) (api.Policy, error) {
+	//   - Lock + defer Unlock
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	d, ok := s.devices[id]
+
+	if !ok || d.SessionID != sessionID {
+		return api.Policy{}, ErrSessionExpired
+	}
+
+	d.LastSeen = s.now()
+	d.AppliedPolicyVersion = appliedVersion
+	d.LastTelemetry = t
+	s.devices[id] = d
+	return d.Policy, nil
 }
 
 // newSessionID genera un identificatore casuale e non indovinabile.

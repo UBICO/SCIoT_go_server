@@ -1,6 +1,7 @@
 package device
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -110,4 +111,97 @@ func TestConcurrentRegister(t *testing.T) {
 	if s.Len() != 100 {
 		t.Errorf("Len = %d, want 100", s.Len())
 	}
+}
+
+// --- Heartbeat ---------------------------------------------------------------
+
+func ptr[T any](v T) *T { return &v } // funzione generica: &v di qualunque tipo
+
+func TestHeartbeatUpdatesState(t *testing.T) {
+	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	s := newTestStore(t0)
+	d := s.Register("web_96", "python", fomo, api.Capabilities{})
+
+	s.now = func() time.Time { return t1 } // il tempo avanza di 1 s
+	tel := api.Telemetry{InferenceTimeMS: 41.7, CPULoad: ptr(0.42)}
+
+	policy, err := s.Heartbeat("web_96", d.SessionID, 1, tel)
+	if err != nil {
+		t.Fatalf("Heartbeat: %v", err)
+	}
+	if policy != d.Policy {
+		t.Errorf("policy = %+v, want %+v", policy, d.Policy)
+	}
+
+	got, _ := s.Get("web_96")
+	if !got.LastSeen.Equal(t1) {
+		t.Errorf("LastSeen = %v, want %v (heartbeat non salvato nella map?)", got.LastSeen, t1)
+	}
+	if !got.RegisteredAt.Equal(t0) {
+		t.Errorf("RegisteredAt cambiato: %v", got.RegisteredAt)
+	}
+	if got.AppliedPolicyVersion != 1 {
+		t.Errorf("AppliedPolicyVersion = %d, want 1", got.AppliedPolicyVersion)
+	}
+	if got.LastTelemetry.InferenceTimeMS != 41.7 || got.LastTelemetry.CPULoad == nil || *got.LastTelemetry.CPULoad != 0.42 {
+		t.Errorf("LastTelemetry = %+v", got.LastTelemetry)
+	}
+}
+
+func TestHeartbeatSessionExpired(t *testing.T) {
+	s := newTestStore(time.Now())
+	old := s.Register("web_96", "python", fomo, api.Capabilities{})
+	current := s.Register("web_96", "python", fomo, api.Capabilities{}) // nuova sessione
+
+	cases := []struct {
+		name, id, session string
+	}{
+		{"device sconosciuto", "mai-visto", "x"},
+		{"sessione vecchia", "web_96", old.SessionID},
+		{"sessione vuota", "web_96", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.Heartbeat(tc.id, tc.session, 1, api.Telemetry{})
+			if !errors.Is(err, ErrSessionExpired) {
+				t.Errorf("err = %v, want ErrSessionExpired", err)
+			}
+		})
+	}
+
+	// Un heartbeat rifiutato non deve toccare la sessione corrente.
+	got, _ := s.Get("web_96")
+	if got.SessionID != current.SessionID || got.AppliedPolicyVersion != 0 {
+		t.Errorf("stato modificato da un heartbeat rifiutato: %+v", got)
+	}
+}
+
+func TestReRegisterResetsHeartbeatState(t *testing.T) {
+	s := newTestStore(time.Now())
+	d := s.Register("web_96", "python", fomo, api.Capabilities{})
+	if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceTimeMS: 10}); err != nil {
+		t.Fatal(err)
+	}
+
+	again := s.Register("web_96", "python", fomo, api.Capabilities{})
+	if again.AppliedPolicyVersion != 0 || again.LastTelemetry.InferenceTimeMS != 0 {
+		t.Errorf("la ri-registrazione deve azzerare lo stato dell'heartbeat: %+v", again)
+	}
+}
+
+func TestConcurrentHeartbeat(t *testing.T) {
+	s := NewStore()
+	d := s.Register("web_96", "python", fomo, api.Capabilities{})
+
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Go(func() {
+			if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceTimeMS: 1}); err != nil {
+				t.Error(err)
+			}
+			s.Get("web_96")
+		})
+	}
+	wg.Wait()
 }

@@ -112,3 +112,61 @@ func TestErrorResponseJSON(t *testing.T) {
 		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
 	}
 }
+
+func TestTelemetryOmitsMissingOptionals(t *testing.T) {
+	// Solo il campo obbligatorio: gli opzionali nil devono sparire.
+	got, err := json.Marshal(Telemetry{InferenceTimeMS: 41.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"inference_time_ms":41.5}`; string(got) != want {
+		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestHeartbeatRequestDecode(t *testing.T) {
+	body := `{
+		"device_id": "web_96",
+		"session_id": "S1",
+		"policy_version": 3,
+		"mode": "SPLIT",
+		"telemetry": {
+			"inference_time_ms": 41.5,
+			"cpu_load": 0,
+			"memory_available_bytes": 812345344
+		}
+	}`
+
+	var req HeartbeatRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if req.DeviceID != "web_96" || req.SessionID != "S1" || req.PolicyVersion != 3 || req.Mode != ModeSplit {
+		t.Errorf("campi errati: %+v", req)
+	}
+	tel := req.Telemetry
+	if tel.InferenceTimeMS != 41.5 {
+		t.Errorf("InferenceTimeMS = %v", tel.InferenceTimeMS)
+	}
+	// cpu_load: 0 è stato INVIATO → puntatore non nil che punta a 0.
+	if tel.CPULoad == nil || *tel.CPULoad != 0 {
+		t.Errorf("CPULoad = %v, want puntatore a 0", tel.CPULoad)
+	}
+	// rtt_ms non è stato inviato → nil.
+	if tel.RTTMS != nil {
+		t.Errorf("RTTMS = %v, want nil", *tel.RTTMS)
+	}
+	if tel.MemoryAvailableBytes == nil || *tel.MemoryAvailableBytes != 812345344 {
+		t.Errorf("MemoryAvailableBytes = %v", tel.MemoryAvailableBytes)
+	}
+}
+
+func TestHeartbeatResponseJSON(t *testing.T) {
+	got, err := json.Marshal(HeartbeatResponse{Policy: Policy{Mode: ModeLocal, PolicyVersion: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"policy":{"mode":"LOCAL","split_point":null,"policy_version":1}}`; string(got) != want {
+		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
+	}
+}
