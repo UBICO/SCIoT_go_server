@@ -1,4 +1,7 @@
 {
+  "server": {
+    "heartbeat_interval_ms": 1000
+  },
   "models": [
     {
       "model_key": "fomo_96x96",

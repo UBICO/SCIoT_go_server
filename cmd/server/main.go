@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/UBICO/sciot-go-server/internal/config"
 	"github.com/UBICO/sciot-go-server/internal/device"
 	"github.com/UBICO/sciot-go-server/internal/registry"
 	"github.com/UBICO/sciot-go-server/internal/server"
@@ -25,28 +26,31 @@ func main() {
 	addr := flag.String("addr", ":8080", "address of the sciot-server")
 	flag.Parse()
 
-	// --- 2. Registry dei modelli ---------------------------------------------
+	// --- 2. Configurazione e registry -----------------------------------------
 
-	//     se err != nil → log.Fatalf("load config: %v", err)
-	//     log.Fatalf stampa ed esce con codice 1: il server non deve partire
-	//     con una configurazione rotta.
-	cfg, err := registry.LoadConfig(*configPath)
+	// log.Fatalf stampa ed esce con codice 1: il server non deve partire
+	// con una configurazione rotta. Ogni messaggio dice quale passo è fallito.
+	f, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
 
-	//     Nota: qui err esiste già, quindi si usa = e non :=. Però := è
-	//     ammesso se ALMENO UNA variabile a sinistra è nuova (reg lo è).
-	reg, err := registry.New(cfg)
+	reg, err := registry.New(f.RegistryConfig())
 	if err != nil {
 		log.Fatalf("build registry: %v", err)
 	}
 	log.Printf("loaded %d models", reg.Len())
 
+	srvCfg, err := f.ServerConfig()
+	if err != nil {
+		log.Fatalf("server config: %v", err)
+	}
+	log.Printf("heartbeat interval %v", srvCfg.HeartbeatInterval)
+
 	// --- 3. Store e Server ---------------------------------------------------
 
 	devices := device.NewStore()
-	srv := server.New(reg, devices, server.DefaultConfig())
+	srv := server.New(reg, devices, srvCfg)
 
 	// --- 4. Server HTTP con timeout ------------------------------------------
 

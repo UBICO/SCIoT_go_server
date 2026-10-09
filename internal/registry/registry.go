@@ -9,7 +9,6 @@ package registry
 import (
 	"crypto/md5"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -42,41 +41,6 @@ type Config struct {
 // errNoTFLiteFiles è un "errore sentinella": un valore fisso che chi chiama
 // può riconoscere con errors.Is(err, errNoTFLiteFiles).
 var errNoTFLiteFiles = errors.New("no .tflite files found")
-
-// LoadConfig legge e decodifica il file di configurazione JSON.
-func LoadConfig(path string) (Config, error) {
-	//   - apri il file con os.Open(path). In caso di errore restituisci
-	//     Config{} e l'errore con contesto: fmt.Errorf("open config: %w", err).
-	//     %w "avvolge" l'errore originale: chi chiama può ancora ispezionarlo.
-
-	file, err := os.Open(path)
-
-	if err != nil {
-		err = fmt.Errorf("open config: %w", err)
-		return Config{}, err
-	}
-
-	//   - subito dopo l'apertura riuscita: defer f.Close()
-	//     defer esegue la chiamata quando la funzione termina, in qualunque modo.
-	defer file.Close()
-
-	//   - crea un decoder: dec := json.NewDecoder(f)
-	//     e chiama dec.DisallowUnknownFields(): una chiave sconosciuta (es. un
-	//     refuso come "tflite_dri") diventa un errore invece di essere ignorata.
-	dec := json.NewDecoder(file)
-	dec.DisallowUnknownFields()
-
-	cfg := Config{}
-
-	if err := dec.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config: %w", err)
-	}
-	//   - decodifica in una variabile cfg Config: dec.Decode(&cfg)
-	//     &cfg passa l'indirizzo di cfg, così Decode può riempirla.
-	//   - restituisci cfg, nil.
-	//panic("TODO") // rimuovi questa riga quando hai scritto il corpo
-	return cfg, nil
-}
 
 // ---------------------------------------------------------------------------
 // Hash dei segmenti
