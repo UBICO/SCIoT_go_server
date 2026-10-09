@@ -1,5 +1,5 @@
 // Package api contiene i tipi del protocollo v1: i messaggi JSON scambiati
-// tra client e server. Sono solo dati, senza logica.
+// tra client e server, e le regole di validità del contratto (validate.go).
 //
 // Il nome del package (api) è quello che si usa per riferirsi ai suoi tipi
 // dall'esterno: per esempio api.RegisterRequest.

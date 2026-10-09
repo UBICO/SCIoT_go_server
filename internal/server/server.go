@@ -6,6 +6,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -65,6 +66,7 @@ func (s *Server) Routes() http.Handler {
 	// s.handleRegister è un "method value": il metodo legato a questo s.
 	// Ha esattamente la firma che HandleFunc si aspetta.
 	mux.HandleFunc("POST /api/v1/register", s.handleRegister)
+	mux.HandleFunc("POST /api/v1/heartbeat", s.handleHeartbeat)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	return mux
 }
@@ -125,6 +127,39 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 // ---------------------------------------------------------------------------
+// Decodifica comune
+// ---------------------------------------------------------------------------
+
+// decodeJSON legge il corpo della richiesta in dst, che deve essere un
+// puntatore (es. &req). Applica il limite di dimensione e rifiuta le chiavi
+// sconosciute.
+//
+// Restituisce false se la decodifica è fallita: in quel caso ha GIÀ scritto
+// la risposta 400, e chi chiama deve solo fare return:
+//
+//	var req api.HeartbeatRequest
+//	if !s.decodeJSON(w, r, &req) {
+//		return
+//	}
+//
+// È un metodo di Server (e non una funzione) perché gli serve s.cfg.
+func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	//var req api.RegisterRequest
+
+	if err := dec.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "invalid JSON body")
+		return false
+	}
+
+	return true
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/v1/register
 // ---------------------------------------------------------------------------
 
@@ -144,16 +179,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	//   - r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
 	//     Oltre il limite, la lettura restituisce un errore invece di
 	//     continuare a leggere.
-	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
 
 	var req api.RegisterRequest
 
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "invalid JSON body")
+	if !s.decodeJSON(w, r, &req) {
 		return
 	}
+
 	//   - dec := json.NewDecoder(r.Body) + dec.DisallowUnknownFields()
 	//   - var req api.RegisterRequest
 	//   - se dec.Decode(&req) fallisce:
@@ -215,4 +247,65 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Policy:              d.Policy,
 		HeartbeatIntervalMS: int(s.cfg.HeartbeatInterval.Milliseconds()),
 	})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/heartbeat
+// ---------------------------------------------------------------------------
+
+// handleHeartbeat registra la telemetria del device e restituisce la policy
+// corrente (sempre, opzione A).
+//
+// Esiti:
+//
+//	200 → api.HeartbeatResponse
+//	400 invalid_request  → JSON malformato, device_id o session_id vuoti,
+//	                       mode non valido, telemetria fuori range
+//	409 session_expired  → device sconosciuto o session_id non corrente:
+//	                       il client torna in LOCAL e si registra di nuovo
+//
+// Nessun log per gli heartbeat riusciti: a 1 Hz × N device sarebbe rumore.
+// Si registrano solo gli eventi (sessione scaduta).
+func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	var req api.HeartbeatRequest
+
+	if !s.decodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "device_id is required")
+		return
+	}
+
+	if req.SessionID == "" {
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "session_id is required")
+		return
+	}
+
+	if !req.Mode.Valid() {
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, fmt.Sprintf("invalid mode %q", req.Mode))
+		return
+	}
+
+	if err := req.Telemetry.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, fmt.Sprintf("invalid telemetry: %v", err))
+		return
+	}
+
+	policy, err := s.devices.Heartbeat(req.DeviceID, req.SessionID, req.PolicyVersion, req.Telemetry)
+
+	if errors.Is(err, device.ErrSessionExpired) {
+		log.Printf("session expired: device=%s session=%s", req.DeviceID, req.SessionID)
+		writeError(w, http.StatusConflict, api.ErrCodeSessionExpired, "session expired")
+		return
+	}
+
+	if err != nil {
+		log.Printf("heartbeat error: device=%s: %v", req.DeviceID, err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, api.HeartbeatResponse{Policy: policy})
 }

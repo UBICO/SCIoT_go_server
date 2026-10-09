@@ -214,3 +214,103 @@ func TestHealthz(t *testing.T) {
 		t.Errorf("body = %s", got)
 	}
 }
+
+// --- Heartbeat ---------------------------------------------------------------
+
+// registerSession registra web_192 via HTTP e restituisce il session_id.
+func registerSession(t *testing.T, s *Server, modelHash string) string {
+	t.Helper()
+	rec := do(t, s, http.MethodPost, "/api/v1/register", registerBody(modelHash))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("register: status %d, body %s", rec.Code, rec.Body)
+	}
+	var resp api.RegisterResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp.SessionID
+}
+
+func heartbeatBody(session string) string {
+	return `{
+		"device_id": "web_192",
+		"session_id": "` + session + `",
+		"policy_version": 1,
+		"mode": "LOCAL",
+		"telemetry": {"inference_time_ms": 41.5, "cpu_load": 0.4}
+	}`
+}
+
+func TestHeartbeatOK(t *testing.T) {
+	s, modelHash, store := testServer(t)
+	session := registerSession(t, s, modelHash)
+
+	rec := do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody(session))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	got := strings.TrimSpace(rec.Body.String())
+	if want := `{"policy":{"mode":"LOCAL","split_point":null,"policy_version":1}}`; got != want {
+		t.Errorf("body\n got: %s\nwant: %s", got, want)
+	}
+
+	d, _ := store.Get("web_192")
+	if d.AppliedPolicyVersion != 1 || d.LastTelemetry.InferenceTimeMS != 41.5 {
+		t.Errorf("stato non aggiornato: %+v", d)
+	}
+}
+
+func TestHeartbeatErrors(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+	session := registerSession(t, s, modelHash)
+
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{"JSON malformato", `{"device_id":`, 400, api.ErrCodeInvalidRequest},
+		{"chiave sconosciuta", strings.Replace(heartbeatBody(session), `"mode"`, `"mdoe"`, 1), 400, api.ErrCodeInvalidRequest},
+		{"device_id vuoto", strings.Replace(heartbeatBody(session), `"web_192"`, `""`, 1), 400, api.ErrCodeInvalidRequest},
+		{"session_id vuoto", heartbeatBody(""), 400, api.ErrCodeInvalidRequest},
+		{"mode non valido", strings.Replace(heartbeatBody(session), `"LOCAL"`, `"REMOTE"`, 1), 400, api.ErrCodeInvalidRequest},
+		{"telemetria fuori range", strings.Replace(heartbeatBody(session), `0.4`, `1.5`, 1), 400, api.ErrCodeInvalidRequest},
+		{"sessione sconosciuta", heartbeatBody("SESSIONE-VECCHIA"), 409, api.ErrCodeSessionExpired},
+		{"device sconosciuto", strings.Replace(heartbeatBody(session), `"web_192"`, `"mai-visto"`, 1), 409, api.ErrCodeSessionExpired},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, s, http.MethodPost, "/api/v1/heartbeat", tc.body)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.wantStatus, rec.Body)
+			}
+			var resp api.ErrorResponse
+			dec := json.NewDecoder(rec.Body)
+			if err := dec.Decode(&resp); err != nil {
+				t.Fatalf("errore non decodificabile: %v", err)
+			}
+			if resp.Error.Code != tc.wantCode || resp.Error.Message == "" {
+				t.Errorf("errore = %+v, want code %q", resp.Error, tc.wantCode)
+			}
+			if dec.More() {
+				t.Error("il corpo contiene più di una risposta JSON: manca un return?")
+			}
+		})
+	}
+}
+
+// TestHeartbeatAfterReRegister: dopo una nuova registrazione, la sessione
+// precedente non è più valida (es. il client si è riavviato).
+func TestHeartbeatAfterReRegister(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+	first := registerSession(t, s, modelHash)
+	second := registerSession(t, s, modelHash)
+
+	if rec := do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody(first)); rec.Code != http.StatusConflict {
+		t.Errorf("sessione vecchia: status = %d, want 409", rec.Code)
+	}
+	if rec := do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody(second)); rec.Code != http.StatusOK {
+		t.Errorf("sessione nuova: status = %d, want 200", rec.Code)
+	}
+}
