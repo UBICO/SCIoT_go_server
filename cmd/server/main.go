@@ -1,66 +1,81 @@
-// Il package "main" è speciale: indica un programma eseguibile.
-// La funzione main() qui sotto è il punto d'ingresso.
+// Il package "main" è il programma eseguibile: assembla i package interni
+// e avvia il server HTTP. Non contiene logica propria.
 package main
 
-// Gli import usano il path completo del package.
-// Questi sono tutti della libreria standard: niente da installare.
 import (
-	"encoding/json"
+	"flag"
 	"log"
 	"net/http"
+	"time"
+
+	"github.com/UBICO/sciot-go-server/internal/device"
+	"github.com/UBICO/sciot-go-server/internal/registry"
+	"github.com/UBICO/sciot-go-server/internal/server"
 )
 
-// healthResponse è il corpo JSON di GET /healthz.
-//
-// Il tag `json:"status"` dice al package encoding/json come chiamare
-// il campo nel JSON. Il campo Status inizia con la maiuscola: è
-// "esportato", e solo i campi esportati vengono serializzati.
-type healthResponse struct {
-	Status string `json:"status"`
-}
+func main() {
+	// --- 1. Argomenti da riga di comando ------------------------------------
 
-// handleHealthz risponde a GET /healthz con {"status":"ok"}.
-//
-// Firma standard di un handler HTTP:
-//   - w http.ResponseWriter: dove scrivi header, status code e corpo.
-//   - r *http.Request: la richiesta (qui non ci serve).
-func handleHealthz(w http.ResponseWriter, r *http.Request) {
-	// imposta l'header "Content-Type" a "application/json".
-	//   Suggerimento: w.Header().Set(chiave, valore)
-	w.Header().Set("Content-Type", "application/json")
+	// flag.String registra un argomento e restituisce un *string: il valore
+	// vero arriva solo dopo flag.Parse(), quindi si legge con *configPath.
+	//
+	//   go run ./cmd/server -config config.json -addr :23456
+	//   go run ./cmd/server -h      ← stampa l'help generato automaticamente
+	configPath := flag.String("config", "config.json", "path del file di configurazione JSON")
+	addr := flag.String("addr", ":8080", "address of the sciot-server")
+	flag.Parse()
 
-	// imposta lo status code 200.
-	//   Suggerimento: w.WriteHeader(...) — esiste la costante http.StatusOK.
-	//   Attenzione: va chiamato DOPO aver impostato gli header,
-	//   altrimenti gli header non vengono più inviati.
-	w.WriteHeader(http.StatusOK)
-	// crea un valore healthResponse con Status "ok" e scrivilo
-	//   come JSON su w.
-	//   Suggerimento: json.NewEncoder(w).Encode(valore) restituisce un error.
-	//   Se err != nil, registralo con log.Printf("...: %v", err).
-	//   (Non puoi più cambiare lo status code: è già stato inviato.)
-	hResponse := healthResponse{Status: "ok"}
-	err := json.NewEncoder(w).Encode(hResponse)
+	// --- 2. Registry dei modelli ---------------------------------------------
+
+	//     se err != nil → log.Fatalf("load config: %v", err)
+	//     log.Fatalf stampa ed esce con codice 1: il server non deve partire
+	//     con una configurazione rotta.
+	cfg, err := registry.LoadConfig(*configPath)
 	if err != nil {
-		log.Printf("Error: %v", err)
+		log.Fatalf("load config: %v", err)
 	}
 
-}
+	//     Nota: qui err esiste già, quindi si usa = e non :=. Però := è
+	//     ammesso se ALMENO UNA variabile a sinistra è nuova (reg lo è).
+	reg, err := registry.New(cfg)
+	if err != nil {
+		log.Fatalf("build registry: %v", err)
+	}
+	log.Printf("loaded %d models", reg.Len())
 
-func main() {
-	// Il router: associa "METODO /path" a un handler.
-	mux := http.NewServeMux()
+	// --- 3. Store e Server ---------------------------------------------------
 
-	// registra handleHealthz sul pattern "GET /healthz".
-	//   Suggerimento: mux.HandleFunc(pattern, funzione)
+	devices := device.NewStore()
+	srv := server.New(reg, devices, server.DefaultConfig())
 
-	mux.HandleFunc("GET /healthz", handleHealthz)
+	// --- 4. Server HTTP con timeout ------------------------------------------
 
-	addr := ":8080"
-	log.Printf("server in ascolto su %s", addr)
+	// http.ListenAndServe(addr, handler) usa un http.Server senza timeout:
+	// un client che apre una connessione e non invia nulla la tiene
+	// occupata per sempre. Si costruisce quindi un http.Server esplicito.
+	//
+	// completa il letterale:
+	//   - Addr:    *addr
+	//   - Handler: srv.Routes()
+	httpServer := &http.Server{
+		Addr: *addr,
+		// ReadHeaderTimeout: tempo massimo per ricevere gli header.
+		ReadHeaderTimeout: 5 * time.Second,
+		// ReadTimeout / WriteTimeout: tempo massimo per leggere la richiesta
+		// intera e scrivere la risposta. Per il control plane i messaggi
+		// sono piccoli: 10 s è largo. Il data plane (activation) potrebbe
+		// richiedere valori diversi: lo rivedremo.
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		// IdleTimeout: quanto resta aperta una connessione keep-alive tra
+		// una richiesta e l'altra. È ciò che permette al client di
+		// RIUSARE la connessione (§7 e §18 del report): con heartbeat a
+		// 1 Hz la connessione non va mai in idle. 120 s come
+		// timeout_keep_alive del server Python.
+		IdleTimeout: 120 * time.Second,
+		Handler:     srv.Routes(),
+	}
 
-	// ListenAndServe blocca finché il server gira e restituisce un error
-	// solo se qualcosa va storto (es. porta già occupata).
-	// log.Fatal stampa l'errore ed esce dal programma con codice 1.
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Printf("listening on %s", httpServer.Addr)
+	log.Fatal(httpServer.ListenAndServe())
 }

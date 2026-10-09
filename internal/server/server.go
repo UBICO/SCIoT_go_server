@@ -65,7 +65,28 @@ func (s *Server) Routes() http.Handler {
 	// s.handleRegister è un "method value": il metodo legato a questo s.
 	// Ha esattamente la firma che HandleFunc si aspetta.
 	mux.HandleFunc("POST /api/v1/register", s.handleRegister)
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	return mux
+}
+
+// ---------------------------------------------------------------------------
+// GET /healthz
+// ---------------------------------------------------------------------------
+
+// healthResponse è il corpo di GET /healthz. Non fa parte del protocollo
+// client↔server (è per chi monitora il processo), quindi resta qui e non
+// in internal/api.
+type healthResponse struct {
+	Status string `json:"status"`
+}
+
+// handleHealthz risponde {"status":"ok"}.
+//
+// Prima era una funzione in main.go; ora è un metodo di Server, come gli
+// altri handler, così tutte le route sono definite in Routes().
+// Il parametro r non serve: si può chiamare _ per dirlo esplicitamente.
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, healthResponse{Status: "ok"})
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +101,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	// stesso schema di handleHealthz in main.go, ma con lo status
 	//   ricevuto come parametro invece di http.StatusOK.
 	//   Ordine: header → WriteHeader(status) → Encode.
-	//   TODO: Messaggio di log con contesto, es. "write json response: %v".
+	//   Messaggio di log con contesto, es. "write json response: %v".
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

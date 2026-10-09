@@ -201,3 +201,16 @@ func TestRegisterMethodNotAllowed(t *testing.T) {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}
 }
+
+func TestHealthz(t *testing.T) {
+	s, _, _ := testServer(t)
+	rec := do(t, s, http.MethodGet, "/healthz", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	// Encode aggiunge un "\n" finale: lo togliamo prima del confronto.
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"status":"ok"}` {
+		t.Errorf("body = %s", got)
+	}
+}

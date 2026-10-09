@@ -4,3 +4,6 @@
 
 # File di sistema
 .DS_Store
+
+# Config locale (path specifici della macchina)
+/config.json
