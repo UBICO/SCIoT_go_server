@@ -107,3 +107,22 @@ func TestServerConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestServerConfigVerbose(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name string
+		v    *bool
+		want bool
+	}{{"assente → false", nil, false}, {"true", &on, true}, {"false", &off, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := File{Server: Server{Verbose: tc.v}}.ServerConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Verbose != tc.want {
+				t.Errorf("Verbose = %v, want %v", cfg.Verbose, tc.want)
+			}
+		})
+	}
+}

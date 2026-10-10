@@ -24,6 +24,9 @@ func main() {
 	//   go run ./cmd/server -h      ← stampa l'help generato automaticamente
 	configPath := flag.String("config", "config.json", "path del file di configurazione JSON")
 	addr := flag.String("addr", ":8080", "address of the sciot-server")
+	// flag.Bool non distingue "non passato" da "false": il flag può solo
+	// ATTIVARE la tabella; per disattivarla si usa config.json.
+	verbose := flag.Bool("verbose", false, "stampa una riga per ogni heartbeat (sovrascrive config.json)")
 	flag.Parse()
 
 	// --- 2. Configurazione e registry -----------------------------------------
@@ -45,7 +48,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("server config: %v", err)
 	}
-	log.Printf("heartbeat interval %v", srvCfg.HeartbeatInterval)
+	if *verbose {
+		srvCfg.Verbose = true
+	}
+	log.Printf("heartbeat interval %v, verbose %v", srvCfg.HeartbeatInterval, srvCfg.Verbose)
 
 	// --- 3. Store e Server ---------------------------------------------------
 

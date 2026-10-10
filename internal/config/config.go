@@ -40,7 +40,8 @@ type File struct {
 // default di server.DefaultConfig(). Per distinguere "assente" da "0"
 // (che sarebbe un valore non valido) il campo è un puntatore.
 type Server struct {
-	HeartbeatIntervalMS *int `json:"heartbeat_interval_ms,omitempty"`
+	HeartbeatIntervalMS *int  `json:"heartbeat_interval_ms,omitempty"`
+	Verbose             *bool `json:"verbose,omitempty"`
 }
 
 // Load legge e decodifica il file di configurazione.
@@ -79,6 +80,8 @@ func (f File) ServerConfig() (server.Config, error) {
 		}
 		cfg.HeartbeatInterval = interval
 	}
+	if f.Server.Verbose != nil {
+		cfg.Verbose = *f.Server.Verbose
+	}
 	return cfg, nil
-	//panic("TODO")
 }

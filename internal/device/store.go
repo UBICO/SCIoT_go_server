@@ -142,12 +142,21 @@ func (s *Store) Len() int {
 	return len(s.devices)
 }
 
+// HeartbeatResult è l'esito di un heartbeat accettato.
+type HeartbeatResult struct {
+	Policy api.Policy
+	// SinceLastSeen è il tempo trascorso dal contatto precedente (heartbeat
+	// o registrazione): con un intervallo di 1 s dovrebbe valere ~1 s, e
+	// scostamenti grandi indicano un client o una rete in difficoltà.
+	SinceLastSeen time.Duration
+}
+
 // Heartbeat registra un heartbeat e restituisce la policy corrente.
 //
 // Restituisce ErrSessionExpired se il device non esiste o se sessionID non
 // coincide con la sessione attuale. In quel caso lo stato NON viene toccato:
 // un heartbeat vecchio non deve aggiornare la sessione nuova.
-func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Telemetry) (api.Policy, error) {
+func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Telemetry) (HeartbeatResult, error) {
 	//   - Lock + defer Unlock
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,14 +164,16 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 	d, ok := s.devices[id]
 
 	if !ok || d.SessionID != sessionID {
-		return api.Policy{}, ErrSessionExpired
+		return HeartbeatResult{}, ErrSessionExpired
 	}
 
-	d.LastSeen = s.now()
+	now := s.now()
+	since := now.Sub(d.LastSeen)
+	d.LastSeen = now
 	d.AppliedPolicyVersion = appliedVersion
 	d.LastTelemetry = t
 	s.devices[id] = d
-	return d.Policy, nil
+	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since}, nil
 }
 
 // newSessionID genera un identificatore casuale e non indovinabile.

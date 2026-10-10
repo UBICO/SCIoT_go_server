@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -313,5 +315,61 @@ func TestHeartbeatAfterReRegister(t *testing.T) {
 	}
 	if rec := do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody(second)); rec.Code != http.StatusOK {
 		t.Errorf("sessione nuova: status = %d, want 200", rec.Code)
+	}
+}
+
+// --- Verbose -------------------------------------------------------------------
+
+func TestHeartbeatVerbosePrintsRow(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+	var buf bytes.Buffer
+	s.table = newHeartbeatTable(&buf)
+	s.cfg.Verbose = true
+	s.now = func() time.Time { return time.Date(2026, 10, 10, 14, 3, 7, 0, time.UTC) }
+
+	session := registerSession(t, s, modelHash)
+	body := heartbeatBody(session)
+	if rec := do(t, s, http.MethodPost, "/api/v1/heartbeat", body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		tableHeader,
+		"14:03:07.000 | web_192 ",
+		"| LOCAL | 1/1 ",
+		"|   10 |", // inference_count di heartbeatBody
+		// HB req: il corpo esatto inviato, contato da countingReader.
+		fmt.Sprintf("| %10d", len(body)),
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output senza %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHeartbeatNotVerbosePrintsNothing(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+	var buf bytes.Buffer
+	s.table = newHeartbeatTable(&buf)
+
+	session := registerSession(t, s, modelHash)
+	do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody(session))
+
+	if buf.Len() != 0 {
+		t.Errorf("con Verbose=false non deve stampare nulla, got:\n%s", buf.String())
+	}
+}
+
+func TestRejectedHeartbeatPrintsNothing(t *testing.T) {
+	s, _, _ := testServer(t)
+	var buf bytes.Buffer
+	s.table = newHeartbeatTable(&buf)
+	s.cfg.Verbose = true
+
+	do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody("SESSIONE-VECCHIA"))
+
+	if buf.Len() != 0 {
+		t.Errorf("un heartbeat rifiutato non deve produrre righe, got:\n%s", buf.String())
 	}
 }

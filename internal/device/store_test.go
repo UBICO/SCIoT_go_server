@@ -126,12 +126,15 @@ func TestHeartbeatUpdatesState(t *testing.T) {
 	s.now = func() time.Time { return t1 } // il tempo avanza di 1 s
 	tel := api.Telemetry{InferenceCount: 47, InferenceTimeMS: ptr(41.7), InferenceTimeMaxMS: ptr(60.0), CPULoad: ptr(0.42)}
 
-	policy, err := s.Heartbeat("web_96", d.SessionID, 1, tel)
+	res, err := s.Heartbeat("web_96", d.SessionID, 1, tel)
 	if err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
-	if policy != d.Policy {
-		t.Errorf("policy = %+v, want %+v", policy, d.Policy)
+	if res.Policy != d.Policy {
+		t.Errorf("policy = %+v, want %+v", res.Policy, d.Policy)
+	}
+	if res.SinceLastSeen != time.Second {
+		t.Errorf("SinceLastSeen = %v, want 1s (dalla registrazione)", res.SinceLastSeen)
 	}
 
 	got, _ := s.Get("web_96")

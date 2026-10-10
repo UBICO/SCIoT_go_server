@@ -1,6 +1,7 @@
 {
   "server": {
-    "heartbeat_interval_ms": 1000
+    "heartbeat_interval_ms": 1000,
+    "verbose": false
   },
   "models": [
     {

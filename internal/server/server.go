@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/UBICO/sciot-go-server/internal/api"
@@ -30,6 +31,10 @@ type Config struct {
 	// MaxBodyBytes è la dimensione massima accettata per il corpo di una
 	// richiesta di controllo. Protegge da client che inviano corpi enormi.
 	MaxBodyBytes int64
+
+	// Verbose stampa una riga di tabella per ogni heartbeat accettato
+	// (vedi table.go). Disattivo di default: a 1 Hz × N device è molto output.
+	Verbose bool
 }
 
 // DefaultConfig restituisce i valori consigliati per la Fase 1.
@@ -49,11 +54,19 @@ type Server struct {
 	registry *registry.Registry
 	devices  *device.Store
 	cfg      Config
+	table    *heartbeatTable  // usata solo se cfg.Verbose
+	now      func() time.Time // orario delle righe; sostituibile nei test
 }
 
 // New crea un Server.
 func New(reg *registry.Registry, devices *device.Store, cfg Config) *Server {
-	return &Server{registry: reg, devices: devices, cfg: cfg}
+	return &Server{
+		registry: reg,
+		devices:  devices,
+		cfg:      cfg,
+		table:    newHeartbeatTable(os.Stdout),
+		now:      time.Now,
+	}
 }
 
 // Routes restituisce il router con tutti gli endpoint del protocollo.
@@ -265,8 +278,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 //	                       il client torna in LOCAL e si registra di nuovo
 //
 // Nessun log per gli heartbeat riusciti: a 1 Hz × N device sarebbe rumore.
-// Si registrano solo gli eventi (sessione scaduta).
+// Si registrano solo gli eventi (sessione scaduta). Con cfg.Verbose ogni
+// heartbeat accettato produce una riga di tabella (table.go).
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	// Conta i byte del corpo (colonna "HB req (B)"). Va avvolto PRIMA di
+	// decodeJSON, che a sua volta avvolge r.Body con MaxBytesReader.
+	body := &countingReader{r: r.Body}
+	r.Body = body
+
 	var req api.HeartbeatRequest
 
 	if !s.decodeJSON(w, r, &req) {
@@ -293,7 +312,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy, err := s.devices.Heartbeat(req.DeviceID, req.SessionID, req.PolicyVersion, req.Telemetry)
+	res, err := s.devices.Heartbeat(req.DeviceID, req.SessionID, req.PolicyVersion, req.Telemetry)
 
 	if errors.Is(err, device.ErrSessionExpired) {
 		log.Printf("session expired: device=%s session=%s", req.DeviceID, req.SessionID)
@@ -307,5 +326,18 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, api.HeartbeatResponse{Policy: policy})
+	if s.cfg.Verbose {
+		s.table.print(heartbeatRow{
+			at:             s.now(),
+			deviceID:       req.DeviceID,
+			appliedMode:    req.Mode,
+			appliedVersion: req.PolicyVersion,
+			serverVersion:  res.Policy.PolicyVersion,
+			telemetry:      req.Telemetry,
+			sinceLastSeen:  res.SinceLastSeen,
+			requestBytes:   body.n,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, api.HeartbeatResponse{Policy: res.Policy})
 }
