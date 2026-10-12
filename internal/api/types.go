@@ -106,6 +106,8 @@ const (
 	// ErrCodeSessionExpired: il server non riconosce (più) il session_id.
 	// Il client torna in LOCAL e ripete la registrazione.
 	ErrCodeSessionExpired = "session_expired"
+	// ErrCodeDeviceNotFound: l'endpoint admin riceve un device non registrato.
+	ErrCodeDeviceNotFound = "device_not_found"
 )
 
 // ErrorResponse è il corpo di ogni risposta di errore:
@@ -179,4 +181,47 @@ type HeartbeatRequest struct {
 //	{"policy": {"mode": "LOCAL", "split_point": null, "policy_version": 1}}
 type HeartbeatResponse struct {
 	Policy Policy `json:"policy"`
+}
+
+// ---------------------------------------------------------------------------
+// Modelli (GET /api/v1/models)
+// ---------------------------------------------------------------------------
+
+// ModelEntry è un modello del registry insieme al suo hash.
+//
+// ModelInfo è "embedded" (campo senza nome): i suoi campi vengono promossi,
+// quindi si scrive e.ModelKey invece di e.ModelInfo.ModelKey, e anche nel
+// JSON compaiono allo stesso livello di model_hash:
+//
+//	{"model_hash": "2b31...", "model_key": "fomo_96x96", "num_layers": 59, ...}
+type ModelEntry struct {
+	ModelHash string `json:"model_hash"`
+	ModelInfo
+}
+
+// ModelsResponse è il corpo di GET /api/v1/models.
+type ModelsResponse struct {
+	Models []ModelEntry `json:"models"`
+}
+
+// ---------------------------------------------------------------------------
+// Admin (POST /api/v1/admin/devices/{id}/policy)
+// ---------------------------------------------------------------------------
+
+// SetPolicyRequest forza la policy di un device. La versione non si passa:
+// la assegna il server (versione corrente + 1).
+//
+//	{"mode": "SPLIT", "split_point": 5}
+//	{"mode": "LOCAL", "split_point": null}
+type SetPolicyRequest struct {
+	Mode       ExecutionMode `json:"mode"`
+	SplitPoint *int          `json:"split_point"`
+}
+
+// SetPolicyResponse restituisce la policy che il device riceverà al
+// prossimo heartbeat.
+type SetPolicyResponse struct {
+	DeviceID  string `json:"device_id"`
+	SessionID string `json:"session_id"`
+	Policy    Policy `json:"policy"`
 }

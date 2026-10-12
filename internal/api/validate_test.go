@@ -49,3 +49,30 @@ func TestTelemetryValidate(t *testing.T) {
 		})
 	}
 }
+
+func intp(v int) *int { return &v }
+
+func TestSetPolicyRequestValidate(t *testing.T) {
+	model := ModelInfo{ModelKey: "fomo_96x96", NumLayers: 59, LastOffloadingLayer: 58}
+	cases := []struct {
+		name    string
+		req     SetPolicyRequest
+		wantErr bool
+	}{
+		{"local", SetPolicyRequest{Mode: ModeLocal}, false},
+		{"split al primo layer", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(0)}, false},
+		{"split all'ultimo layer", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(58)}, false},
+		{"local con split_point", SetPolicyRequest{Mode: ModeLocal, SplitPoint: intp(3)}, true},
+		{"split senza split_point", SetPolicyRequest{Mode: ModeSplit}, true},
+		{"split negativo", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(-1)}, true},
+		{"split oltre il modello", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(59)}, true},
+		{"mode sconosciuto", SetPolicyRequest{Mode: "REMOTE"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.req.Validate(model); (err != nil) != tc.wantErr {
+				t.Errorf("Validate() = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -35,6 +35,11 @@ type Config struct {
 	// Verbose stampa una riga di tabella per ogni heartbeat accettato
 	// (vedi table.go). Disattivo di default: a 1 Hz × N device è molto output.
 	Verbose bool
+
+	// Admin abilita POST /api/v1/admin/devices/{id}/policy. L'endpoint non
+	// ha autenticazione: è pensato per esperimenti in laboratorio, quindi è
+	// disattivo di default e la route non viene nemmeno registrata.
+	Admin bool
 }
 
 // DefaultConfig restituisce i valori consigliati per la Fase 1.
@@ -80,7 +85,13 @@ func (s *Server) Routes() http.Handler {
 	// Ha esattamente la firma che HandleFunc si aspetta.
 	mux.HandleFunc("POST /api/v1/register", s.handleRegister)
 	mux.HandleFunc("POST /api/v1/heartbeat", s.handleHeartbeat)
+	mux.HandleFunc("GET /api/v1/models", s.handleModels)
+	// {hash} è un "wildcard": il valore si legge con r.PathValue("hash").
+	mux.HandleFunc("GET /api/v1/models/{hash}", s.handleModel)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	if s.cfg.Admin {
+		mux.HandleFunc("POST /api/v1/admin/devices/{id}/policy", s.handleSetPolicy)
+	}
 	return mux
 }
 
@@ -186,78 +197,44 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, dst any) boo
 //	400 unsupported_protocol → protocol_version diverso da 1
 //	404 model_not_found      → model_hash non presente nel Registry
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	// --- 1. Decodifica -------------------------------------------------------
-
-	// limita il corpo e decodificalo.
-	//   - r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
-	//     Oltre il limite, la lettura restituisce un errore invece di
-	//     continuare a leggere.
-
 	var req api.RegisterRequest
-
 	if !s.decodeJSON(w, r, &req) {
 		return
 	}
 
-	//   - dec := json.NewDecoder(r.Body) + dec.DisallowUnknownFields()
-	//   - var req api.RegisterRequest
-	//   - se dec.Decode(&req) fallisce:
-	//       writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest,
-	//                  "invalid JSON body")
-	//     e poi return. ATTENZIONE: writeError NON interrompe l'handler.
-	//     Senza return il codice prosegue e scrive una seconda risposta.
-	//
-	//   Nota: non c'è bisogno di chiudere r.Body, lo fa net/http.
-
-	// --- 2. Validazione ------------------------------------------------------
-
-	//  in quest'ordine, ognuno con writeError + return:
-	//   - req.ProtocolVersion != supportedProtocolVersion
-	//       → 400, api.ErrCodeUnsupportedProtocol
-	//       Nel messaggio indica la versione supportata, usa fmt.Sprintf
-	//       (dovrai aggiungere "fmt" agli import).
-	//   - req.DeviceID == "" → 400, api.ErrCodeInvalidRequest, "device_id is required"
-	//   - req.ModelHash == "" → 400, api.ErrCodeInvalidRequest, "model_hash is required"
-
+	// writeError non interrompe l'handler: ogni errore va seguito da return,
+	// altrimenti si scriverebbe una seconda risposta.
 	if req.ProtocolVersion != supportedProtocolVersion {
-		message := fmt.Sprintf("unsupported protocol version: expected %d, got %d", supportedProtocolVersion, req.ProtocolVersion)
-		writeError(w, http.StatusBadRequest, api.ErrCodeUnsupportedProtocol, message)
+		writeError(w, http.StatusBadRequest, api.ErrCodeUnsupportedProtocol,
+			fmt.Sprintf("unsupported protocol version: expected %d, got %d",
+				supportedProtocolVersion, req.ProtocolVersion))
 		return
 	}
-
 	if req.DeviceID == "" {
 		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "device_id is required")
 		return
 	}
-
 	if req.ModelHash == "" {
 		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, "model_hash is required")
 		return
 	}
 
-	// --- 3. Modello ----------------------------------------------------------
-
-	//  model, ok := s.registry.Lookup(req.ModelHash)
-	//   se !ok → 404, api.ErrCodeModelNotFound, + return
 	model, ok := s.registry.Lookup(req.ModelHash)
 	if !ok {
-		writeError(w, http.StatusNotFound, api.ErrCodeModelNotFound, "model not found")
+		writeError(w, http.StatusNotFound, api.ErrCodeModelNotFound,
+			fmt.Sprintf("unknown model_hash %q", req.ModelHash))
 		return
 	}
-	// --- 4. Registrazione e risposta -----------------------------------------
-	//   - d := s.devices.Register(req.DeviceID, req.DeviceType, model, req.Capabilities)
-	//   - log.Printf con device_id, model_key e session_id: è utile vedere
-	//     nel log del server ogni registrazione.
-	//   - writeJSON(w, http.StatusOK, api.RegisterResponse{...})
-	//       * HeartbeatIntervalMS: int(s.cfg.HeartbeatInterval.Milliseconds())
-	//         Milliseconds() restituisce int64: in Go le conversioni tra tipi
-	//         numerici sono sempre esplicite, quindi serve int(...).
+
 	d := s.devices.Register(req.DeviceID, req.DeviceType, model, req.Capabilities)
-	log.Printf("registered device=%s type=%s model=%s session=%s", req.DeviceID, d.Type, d.Model.ModelKey, d.SessionID)
+	log.Printf("registered device=%s type=%s model=%s session=%s",
+		req.DeviceID, d.Type, d.Model.ModelKey, d.SessionID)
 	writeJSON(w, http.StatusOK, api.RegisterResponse{
-		SessionID:           d.SessionID,
-		Model:               d.Model,
-		Policy:              d.Policy,
+		SessionID: d.SessionID,
+		Model:     d.Model,
+		Policy:    d.Policy,
+		// Milliseconds() restituisce int64: le conversioni numeriche in Go
+		// sono sempre esplicite.
 		HeartbeatIntervalMS: int(s.cfg.HeartbeatInterval.Milliseconds()),
 	})
 }
@@ -340,4 +317,68 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, api.HeartbeatResponse{Policy: res.Policy})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/models, GET /api/v1/models/{hash}
+// ---------------------------------------------------------------------------
+
+// handleModels elenca i modelli serviti, ordinati per model_key.
+func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, api.ModelsResponse{Models: s.registry.Models()})
+}
+
+// handleModel restituisce un modello dato il suo hash, o 404 model_not_found.
+func (s *Server) handleModel(w http.ResponseWriter, r *http.Request) {
+	hash := r.PathValue("hash")
+	info, ok := s.registry.Lookup(hash)
+	if !ok {
+		writeError(w, http.StatusNotFound, api.ErrCodeModelNotFound,
+			fmt.Sprintf("unknown model_hash %q", hash))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ModelEntry{ModelHash: hash, ModelInfo: info})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/admin/devices/{id}/policy
+// ---------------------------------------------------------------------------
+
+// handleSetPolicy forza la policy di un device (solo con cfg.Admin).
+//
+// Esiti:
+//
+//	200 → api.SetPolicyResponse
+//	400 invalid_request  → JSON malformato o policy non valida per il modello
+//	404 device_not_found → device non registrato
+func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req api.SetPolicyRequest
+	if !s.decodeJSON(w, r, &req) {
+		return
+	}
+
+	d, err := s.devices.SetPolicy(id, req)
+	switch {
+	case errors.Is(err, device.ErrDeviceNotFound):
+		writeError(w, http.StatusNotFound, api.ErrCodeDeviceNotFound,
+			fmt.Sprintf("device %q is not registered", id))
+		return
+	case errors.Is(err, device.ErrInvalidPolicy):
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, err.Error())
+		return
+	case err != nil:
+		log.Printf("set policy error: device=%s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+
+	log.Printf("admin policy: device=%s session=%s policy=%s v%d",
+		id, d.SessionID, d.Policy.Mode, d.Policy.PolicyVersion)
+	writeJSON(w, http.StatusOK, api.SetPolicyResponse{
+		DeviceID:  id,
+		SessionID: d.SessionID,
+		Policy:    d.Policy,
+	})
 }

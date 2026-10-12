@@ -101,3 +101,27 @@ func TestNewDuplicateHash(t *testing.T) {
 		t.Fatal("New deve fallire con due modelli dallo stesso hash")
 	}
 }
+
+func TestModelsSortedByKey(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	writeFiles(t, a, map[string]string{"s.tflite": "AAA"})
+	writeFiles(t, b, map[string]string{"s.tflite": "BBB"})
+
+	reg, err := New(Config{Models: []ModelConfig{
+		{ModelKey: "yolo_small", TFLiteDir: a, LastOffloadingLayer: 7},
+		{ModelKey: "fomo_96x96", TFLiteDir: b, LastOffloadingLayer: 58},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ripetuto: l'ordine di una map è casuale, quello di Models no.
+	for range 20 {
+		models := reg.Models()
+		if len(models) != 2 || models[0].ModelKey != "fomo_96x96" || models[1].ModelKey != "yolo_small" {
+			t.Fatalf("ordine errato: %+v", models)
+		}
+		if models[0].ModelHash != md5Hex("BBB") || models[1].NumLayers != 8 {
+			t.Fatalf("contenuto errato: %+v", models)
+		}
+	}
+}

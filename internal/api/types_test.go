@@ -173,3 +173,19 @@ func TestHeartbeatResponseJSON(t *testing.T) {
 		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
 	}
 }
+
+func TestModelEntryJSONIsFlat(t *testing.T) {
+	// L'embedding promuove i campi di ModelInfo allo stesso livello di model_hash.
+	e := ModelEntry{
+		ModelHash: "h1",
+		ModelInfo: ModelInfo{ModelKey: "fomo_96x96", NumLayers: 59, LastOffloadingLayer: 58, InputSizeBytes: 18432},
+	}
+	got, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"model_hash":"h1","model_key":"fomo_96x96","num_layers":59,"last_offloading_layer":58,"input_size_bytes":18432}`
+	if string(got) != want {
+		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
+	}
+}

@@ -27,6 +27,7 @@ func main() {
 	// flag.Bool non distingue "non passato" da "false": il flag può solo
 	// ATTIVARE la tabella; per disattivarla si usa config.json.
 	verbose := flag.Bool("verbose", false, "stampa una riga per ogni heartbeat (sovrascrive config.json)")
+	admin := flag.Bool("admin", false, "abilita l'endpoint admin per forzare la policy (senza autenticazione)")
 	flag.Parse()
 
 	// --- 2. Configurazione e registry -----------------------------------------
@@ -51,6 +52,12 @@ func main() {
 	if *verbose {
 		srvCfg.Verbose = true
 	}
+	if *admin {
+		srvCfg.Admin = true
+	}
+	if srvCfg.Admin {
+		log.Printf("WARNING: admin endpoint enabled without authentication: bind to localhost (-addr 127.0.0.1:PORT)")
+	}
 	log.Printf("heartbeat interval %v, verbose %v", srvCfg.HeartbeatInterval, srvCfg.Verbose)
 
 	// --- 3. Store e Server ---------------------------------------------------
@@ -63,10 +70,6 @@ func main() {
 	// http.ListenAndServe(addr, handler) usa un http.Server senza timeout:
 	// un client che apre una connessione e non invia nulla la tiene
 	// occupata per sempre. Si costruisce quindi un http.Server esplicito.
-	//
-	// completa il letterale:
-	//   - Addr:    *addr
-	//   - Handler: srv.Routes()
 	httpServer := &http.Server{
 		Addr: *addr,
 		// ReadHeaderTimeout: tempo massimo per ricevere gli header.

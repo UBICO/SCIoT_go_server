@@ -56,3 +56,25 @@ func (t Telemetry) Validate() error {
 
 	return nil
 }
+
+// Validate controlla una richiesta di policy rispetto al modello del device:
+// LOCAL senza split_point, SPLIT con 0 <= split_point <= last_offloading_layer.
+func (r SetPolicyRequest) Validate(m ModelInfo) error {
+	switch r.Mode {
+	case ModeLocal:
+		if r.SplitPoint != nil {
+			return fmt.Errorf("LOCAL policy must not have a split_point, got %d", *r.SplitPoint)
+		}
+	case ModeSplit:
+		if r.SplitPoint == nil {
+			return errors.New("SPLIT policy requires a split_point")
+		}
+		if sp := *r.SplitPoint; sp < 0 || sp > m.LastOffloadingLayer {
+			return fmt.Errorf("split_point %d out of range [0, %d] for model %q",
+				sp, m.LastOffloadingLayer, m.ModelKey)
+		}
+	default:
+		return fmt.Errorf("invalid mode %q", r.Mode)
+	}
+	return nil
+}

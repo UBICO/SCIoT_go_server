@@ -373,3 +373,102 @@ func TestRejectedHeartbeatPrintsNothing(t *testing.T) {
 		t.Errorf("un heartbeat rifiutato non deve produrre righe, got:\n%s", buf.String())
 	}
 }
+
+// --- Models ----------------------------------------------------------------------
+
+func TestModels(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+
+	rec := do(t, s, http.MethodGet, "/api/v1/models", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var resp api.ModelsResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].ModelHash != modelHash || resp.Models[0].ModelKey != "fomo_96x96" {
+		t.Errorf("models = %+v", resp.Models)
+	}
+
+	rec = do(t, s, http.MethodGet, "/api/v1/models/"+modelHash, "")
+	var entry api.ModelEntry
+	if err := json.NewDecoder(rec.Body).Decode(&entry); err != nil || rec.Code != http.StatusOK || entry.NumLayers != 59 {
+		t.Errorf("model by hash: status %d, entry %+v, err %v", rec.Code, entry, err)
+	}
+
+	rec = do(t, s, http.MethodGet, "/api/v1/models/sconosciuto", "")
+	var e api.ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&e); err != nil || rec.Code != http.StatusNotFound || e.Error.Code != api.ErrCodeModelNotFound {
+		t.Errorf("hash sconosciuto: status %d, %+v", rec.Code, e)
+	}
+}
+
+// --- Admin -----------------------------------------------------------------------
+
+func adminServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	s, modelHash, _ := testServer(t)
+	s.cfg.Admin = true
+	return s, modelHash
+}
+
+func TestAdminDisabledByDefault(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+	registerSession(t, s, modelHash)
+	rec := do(t, s, http.MethodPost, "/api/v1/admin/devices/web_192/policy", `{"mode":"LOCAL","split_point":null}`)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("con Admin=false la route non deve esistere: status %d", rec.Code)
+	}
+}
+
+func TestAdminSetPolicyReachesHeartbeat(t *testing.T) {
+	s, modelHash := adminServer(t)
+	session := registerSession(t, s, modelHash)
+
+	rec := do(t, s, http.MethodPost, "/api/v1/admin/devices/web_192/policy", `{"mode":"SPLIT","split_point":5}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body %s", rec.Code, rec.Body)
+	}
+	var resp api.SetPolicyResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.SessionID != session || resp.Policy.Mode != api.ModeSplit || resp.Policy.PolicyVersion != 2 {
+		t.Errorf("risposta = %+v", resp)
+	}
+
+	rec = do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody(session))
+	got := strings.TrimSpace(rec.Body.String())
+	if want := `{"policy":{"mode":"SPLIT","split_point":5,"policy_version":2}}`; got != want {
+		t.Errorf("heartbeat\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestAdminSetPolicyErrors(t *testing.T) {
+	s, modelHash := adminServer(t)
+	registerSession(t, s, modelHash)
+
+	cases := []struct {
+		name, path, body string
+		wantStatus       int
+		wantCode         string
+	}{
+		{"device sconosciuto", "/api/v1/admin/devices/mai-visto/policy", `{"mode":"LOCAL","split_point":null}`, 404, api.ErrCodeDeviceNotFound},
+		{"split oltre il modello", "/api/v1/admin/devices/web_192/policy", `{"mode":"SPLIT","split_point":59}`, 400, api.ErrCodeInvalidRequest},
+		{"local con split_point", "/api/v1/admin/devices/web_192/policy", `{"mode":"LOCAL","split_point":2}`, 400, api.ErrCodeInvalidRequest},
+		{"chiave sconosciuta", "/api/v1/admin/devices/web_192/policy", `{"mode":"LOCAL","version":9}`, 400, api.ErrCodeInvalidRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, s, http.MethodPost, tc.path, tc.body)
+			var e api.ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&e); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != tc.wantStatus || e.Error.Code != tc.wantCode {
+				t.Errorf("status %d code %q, want %d %q", rec.Code, e.Error.Code, tc.wantStatus, tc.wantCode)
+			}
+		})
+	}
+}

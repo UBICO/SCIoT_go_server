@@ -126,3 +126,14 @@ func TestServerConfigVerbose(t *testing.T) {
 		})
 	}
 }
+
+func TestServerConfigAdmin(t *testing.T) {
+	on := true
+	cfg, err := File{Server: Server{Admin: &on}}.ServerConfig()
+	if err != nil || !cfg.Admin {
+		t.Errorf("Admin = %v, err %v", cfg.Admin, err)
+	}
+	if cfg, _ := (File{}).ServerConfig(); cfg.Admin {
+		t.Error("Admin deve essere false di default")
+	}
+}

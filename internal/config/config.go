@@ -42,6 +42,7 @@ type File struct {
 type Server struct {
 	HeartbeatIntervalMS *int  `json:"heartbeat_interval_ms,omitempty"`
 	Verbose             *bool `json:"verbose,omitempty"`
+	Admin               *bool `json:"admin,omitempty"`
 }
 
 // Load legge e decodifica il file di configurazione.
@@ -82,6 +83,9 @@ func (f File) ServerConfig() (server.Config, error) {
 	}
 	if f.Server.Verbose != nil {
 		cfg.Verbose = *f.Server.Verbose
+	}
+	if f.Server.Admin != nil {
+		cfg.Admin = *f.Server.Admin
 	}
 	return cfg, nil
 }

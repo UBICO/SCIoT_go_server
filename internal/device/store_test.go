@@ -208,3 +208,70 @@ func TestConcurrentHeartbeat(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// --- SetPolicy -----------------------------------------------------------------
+
+func TestSetPolicyBumpsVersion(t *testing.T) {
+	s := NewStore()
+	reg := s.Register("web_96", "python", fomo, api.Capabilities{})
+
+	sp := 5
+	d, err := s.SetPolicy("web_96", api.SetPolicyRequest{Mode: api.ModeSplit, SplitPoint: &sp})
+	if err != nil {
+		t.Fatalf("SetPolicy: %v", err)
+	}
+	if d.Policy.Mode != api.ModeSplit || *d.Policy.SplitPoint != 5 || d.Policy.PolicyVersion != 2 {
+		t.Errorf("policy = %+v", d.Policy)
+	}
+	if d.SessionID != reg.SessionID {
+		t.Error("SetPolicy non deve cambiare la sessione")
+	}
+
+	// Il prossimo heartbeat restituisce la nuova policy.
+	res, err := s.Heartbeat("web_96", reg.SessionID, 1, api.Telemetry{})
+	if err != nil || res.Policy.PolicyVersion != 2 {
+		t.Errorf("heartbeat: %+v, %v", res.Policy, err)
+	}
+
+	// Il valore è stato copiato: modificare sp non tocca lo Store.
+	sp = 40
+	got, _ := s.Get("web_96")
+	if *got.Policy.SplitPoint != 5 {
+		t.Errorf("lo Store condivide memoria con la richiesta: split_point = %d", *got.Policy.SplitPoint)
+	}
+
+	d, _ = s.SetPolicy("web_96", api.SetPolicyRequest{Mode: api.ModeLocal})
+	if d.Policy.Mode != api.ModeLocal || d.Policy.SplitPoint != nil || d.Policy.PolicyVersion != 3 {
+		t.Errorf("policy = %+v", d.Policy)
+	}
+}
+
+func TestSetPolicyErrors(t *testing.T) {
+	s := NewStore()
+	s.Register("web_96", "python", fomo, api.Capabilities{})
+
+	if _, err := s.SetPolicy("mai-visto", api.SetPolicyRequest{Mode: api.ModeLocal}); !errors.Is(err, ErrDeviceNotFound) {
+		t.Errorf("err = %v, want ErrDeviceNotFound", err)
+	}
+	tooFar := 59 // fomo ha last_offloading_layer 58
+	_, err := s.SetPolicy("web_96", api.SetPolicyRequest{Mode: api.ModeSplit, SplitPoint: &tooFar})
+	if !errors.Is(err, ErrInvalidPolicy) {
+		t.Errorf("err = %v, want ErrInvalidPolicy", err)
+	}
+	if got, _ := s.Get("web_96"); got.Policy.PolicyVersion != 1 {
+		t.Errorf("una policy rifiutata non deve cambiare la versione: %+v", got.Policy)
+	}
+}
+
+func TestReRegisterResetsAdminPolicy(t *testing.T) {
+	s := NewStore()
+	s.Register("web_96", "python", fomo, api.Capabilities{})
+	sp := 3
+	if _, err := s.SetPolicy("web_96", api.SetPolicyRequest{Mode: api.ModeSplit, SplitPoint: &sp}); err != nil {
+		t.Fatal(err)
+	}
+	d := s.Register("web_96", "python", fomo, api.Capabilities{})
+	if d.Policy.Mode != api.ModeLocal || d.Policy.PolicyVersion != 1 {
+		t.Errorf("la nuova sessione deve ripartire da LOCAL v1: %+v", d.Policy)
+	}
+}

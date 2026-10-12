@@ -8,6 +8,7 @@ package device
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -42,6 +43,13 @@ type Device struct {
 // session_id di una registrazione precedente.
 var ErrSessionExpired = errors.New("session expired")
 
+// ErrDeviceNotFound: SetPolicy su un device mai registrato.
+var ErrDeviceNotFound = errors.New("device not found")
+
+// ErrInvalidPolicy avvolge l'errore di validazione di una policy, così chi
+// chiama può distinguerlo con errors.Is senza conoscerne il testo.
+var ErrInvalidPolicy = errors.New("invalid policy")
+
 // Store contiene i device registrati, indicizzati per ID.
 type Store struct {
 	// mu protegge devices. Convenzione Go: il mutex si dichiara subito
@@ -61,14 +69,7 @@ type Store struct {
 
 // NewStore crea uno Store vuoto.
 func NewStore() *Store {
-	// restituisci un puntatore a uno Store con:
-	//   - devices inizializzata con make(...). Una map nil si può leggere
-	//     ma scriverci provoca un panic: va sempre creata.
-	//   - now impostato a time.Now (senza parentesi: passi la funzione,
-	//     non il risultato della chiamata).
-	//   mu non va inizializzato: il valore zero di sync.Mutex è un mutex
-	//   pronto all'uso e sbloccato.
-
+	// mu non va inizializzato: il valore zero di sync.Mutex è pronto all'uso.
 	return &Store{
 		devices: make(map[string]Device),
 		now:     time.Now,
@@ -84,19 +85,6 @@ func NewStore() *Store {
 // Restituisce una COPIA del Device (valore, non puntatore): chi chiama può
 // usarla liberamente senza mutex, e non può modificare lo Store per sbaglio.
 func (s *Store) Register(id, deviceType string, model api.ModelInfo, caps api.Capabilities) Device {
-	//
-	//   - s.mu.Lock() e subito defer s.mu.Unlock()
-	//     Coppia Lock + defer Unlock: il mutex viene rilasciato anche se la
-	//     funzione esce in anticipo o va in panic.
-	//   - now := s.now()
-	//   - costruisci il Device:
-	//       * SessionID: newSessionID()
-	//       * Policy: modalità ModeLocal, SplitPoint nil, PolicyVersion 1
-	//         (ogni sessione parte in LOCAL, la policy è numerata per sessione)
-	//       * RegisteredAt e LastSeen: now
-	//   - salvalo nella map con chiave id (sovrascrive l'eventuale precedente)
-	//   - restituiscilo
-	//panic("TODO")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -123,11 +111,8 @@ func (s *Store) Register(id, deviceType string, model api.ModelInfo, caps api.Ca
 
 // Get restituisce lo stato del device e true, oppure Device{} e false.
 func (s *Store) Get(id string) (Device, bool) {
-	// anche le letture vanno protette. Una lettura in parallelo
-	//   a una scrittura sulla stessa map è una "data race": Go può
-	//   interrompere il programma con "concurrent map read and map write".
-	//   Poi usa il "comma ok" come in Registry.Lookup.
-	//panic("TODO")
+	// Anche le letture vanno protette: lettura e scrittura in parallelo
+	// sulla stessa map sono una data race.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	device, ok := s.devices[id]
@@ -136,7 +121,6 @@ func (s *Store) Get(id string) (Device, bool) {
 
 // Len restituisce il numero di device registrati.
 func (s *Store) Len() int {
-	// come Get, ma restituisce len(...) della map.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.devices)
@@ -157,7 +141,6 @@ type HeartbeatResult struct {
 // coincide con la sessione attuale. In quel caso lo stato NON viene toccato:
 // un heartbeat vecchio non deve aggiornare la sessione nuova.
 func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Telemetry) (HeartbeatResult, error) {
-	//   - Lock + defer Unlock
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -183,4 +166,42 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 // a differenza di math/rand.
 func newSessionID() string {
 	return rand.Text()
+}
+
+// SetPolicy sostituisce la policy del device con req, incrementandone la
+// versione. Il device la riceverà nella risposta al prossimo heartbeat.
+//
+// La validazione avviene sotto lo stesso lock della scrittura: se il device
+// si ri-registra con un altro modello tra un controllo esterno e la
+// scrittura, uno split_point valido per il vecchio modello potrebbe non
+// esserlo per il nuovo.
+//
+// La policy vale per la sessione corrente: una ri-registrazione riparte da
+// LOCAL v1.
+func (s *Store) SetPolicy(id string, req api.SetPolicyRequest) (Device, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	d, ok := s.devices[id]
+	if !ok {
+		return Device{}, ErrDeviceNotFound
+	}
+	if err := req.Validate(d.Model); err != nil {
+		return Device{}, fmt.Errorf("%w: %v", ErrInvalidPolicy, err)
+	}
+
+	var splitPoint *int
+	if req.SplitPoint != nil {
+		// Copia del valore: lo Store non deve condividere memoria con la
+		// richiesta del chiamante.
+		sp := *req.SplitPoint
+		splitPoint = &sp
+	}
+	d.Policy = api.Policy{
+		Mode:          req.Mode,
+		SplitPoint:    splitPoint,
+		PolicyVersion: d.Policy.PolicyVersion + 1,
+	}
+	s.devices[id] = d
+	return d, nil
 }

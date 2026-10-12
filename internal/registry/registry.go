@@ -7,6 +7,7 @@
 package registry
 
 import (
+	"cmp"
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/UBICO/sciot-go-server/internal/api"
 )
@@ -48,34 +50,22 @@ var errNoTFLiteFiles = errors.New("no .tflite files found")
 
 // hashTFLiteDir calcola l'MD5 (in esadecimale) dei file *.tflite di dir.
 func hashTFLiteDir(dir string) (string, error) {
-	//   - files, err := filepath.Glob(filepath.Join(dir, "*.tflite"))
-	//     Glob restituisce i path già ordinati per nome, come sorted() in Python.
-
+	// Glob restituisce i path già ordinati per nome, come sorted() in Python.
 	files, err := filepath.Glob(filepath.Join(dir, "*.tflite"))
-	//   - se len(files) == 0 restituisci un errore che avvolge la sentinella:
-	//     fmt.Errorf("%s: %w", dir, errNoTFLiteFiles)
-
 	if err != nil {
 		return "", fmt.Errorf("glob %s: %w", dir, err)
 	}
-
 	if len(files) == 0 {
 		return "", fmt.Errorf("%s: %w", dir, errNoTFLiteFiles)
 	}
 
-	//   - h := md5.New()  → h è un hash.Hash, che è anche un io.Writer.
-	//   - per ogni file (for _, path := range files { ... }) chiama
-	//     addFile(h, path) e gestisci l'errore.
-	//   - risultato: hex.EncodeToString(h.Sum(nil))
-	//panic("TODO")
+	// Un hash.Hash è anche un io.Writer: addFile ci copia dentro i file.
 	h := md5.New()
-
 	for _, path := range files {
 		if err := addFile(h, path); err != nil {
 			return "", err
 		}
 	}
-
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
@@ -86,18 +76,13 @@ func hashTFLiteDir(dir string) (string, error) {
 // defer f.Close(), resterebbero tutti aperti fino alla fine. Qui invece ogni
 // file viene chiuso appena addFile ritorna.
 func addFile(h hash.Hash, path string) error {
-	//   - os.Open(path), errore con contesto.
-
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
-	//   - defer f.Close()
 	defer f.Close()
 
-	//   - io.Copy(h, f) copia il file nell'hasher a blocchi, senza caricarlo
-	//     tutto in memoria. Restituisce (byte copiati, error): il primo valore
-	//     non ci serve, scartalo con _.
+	// io.Copy legge a blocchi: il file non viene caricato tutto in memoria.
 	if _, err := io.Copy(h, f); err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -119,55 +104,30 @@ type Registry struct {
 // New calcola l'hash di ogni modello in cfg e costruisce il Registry.
 // Restituisce un puntatore (*Registry): il valore viene condiviso, non copiato.
 func New(cfg Config) (*Registry, error) {
-	//   - crea la map: byHash := make(map[string]api.ModelInfo)
 	byHash := make(map[string]api.ModelInfo)
-
 	for _, m := range cfg.Models {
 		h, err := hashTFLiteDir(m.TFLiteDir)
-		//       * calcola l'hash di m.TFLiteDir; in caso di errore restituisci
-		//         nil e fmt.Errorf("model %q: %w", m.ModelKey, err)
-		//         (%q stampa la stringa tra virgolette)
 		if err != nil {
 			return nil, fmt.Errorf("model %q: %w", m.ModelKey, err)
 		}
-
-		//       * se l'hash è già presente nella map, errore: due modelli con gli
-		//         stessi segmenti sono ambigui. Controllo "comma ok":
-		//           if existing, ok := byHash[h]; ok { ... existing.ModelKey ... }
-
+		// Due modelli con gli stessi segmenti sarebbero ambigui.
 		if existing, ok := byHash[h]; ok {
-			return nil, fmt.Errorf(
-				"models %q and %q have the same segments",
-				existing.ModelKey,
-				m.ModelKey,
-			)
+			return nil, fmt.Errorf("models %q and %q have the same segments",
+				existing.ModelKey, m.ModelKey)
 		}
-		//       * inserisci api.ModelInfo con NumLayers = m.LastOffloadingLayer + 1
-		//         (stessa regola del server Python).
-
 		byHash[h] = api.ModelInfo{
 			ModelKey:            m.ModelKey,
-			NumLayers:           m.LastOffloadingLayer + 1,
+			NumLayers:           m.LastOffloadingLayer + 1, // stessa regola del server Python
 			LastOffloadingLayer: m.LastOffloadingLayer,
 			InputSizeBytes:      m.InputSizeBytes,
 		}
 	}
-	//   - per ogni m in cfg.Models:
-
 	return &Registry{byHash: byHash}, nil
-	//   - restituisci &Registry{byHash: byHash}, nil
-	//panic("TODO")
 }
 
 // Lookup restituisce il modello associato a hash e true, oppure il valore
 // zero di api.ModelInfo e false se l'hash non è noto.
 func (r *Registry) Lookup(hash string) (api.ModelInfo, bool) {
-	// (r *Registry) prima del nome rende Lookup un "metodo" di Registry:
-	// si chiama come reg.Lookup("..."). r è l'equivalente di self.
-	//
-	// TODO(5): una riga, usando l'idioma "comma ok" della map.
-
-	//panic("TODO")
 	info, ok := r.byHash[hash]
 	return info, ok
 }
@@ -175,4 +135,18 @@ func (r *Registry) Lookup(hash string) (api.ModelInfo, bool) {
 // Len restituisce il numero di modelli registrati.
 func (r *Registry) Len() int {
 	return len(r.byHash)
+}
+
+// Models restituisce tutti i modelli con il loro hash, ordinati per
+// model_key. L'ordine di iterazione di una map in Go è volutamente casuale:
+// senza ordinamento la risposta HTTP cambierebbe a ogni chiamata.
+func (r *Registry) Models() []api.ModelEntry {
+	entries := make([]api.ModelEntry, 0, len(r.byHash))
+	for hash, info := range r.byHash {
+		entries = append(entries, api.ModelEntry{ModelHash: hash, ModelInfo: info})
+	}
+	slices.SortFunc(entries, func(a, b api.ModelEntry) int {
+		return cmp.Compare(a.ModelKey, b.ModelKey)
+	})
+	return entries
 }
