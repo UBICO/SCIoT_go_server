@@ -1,4 +1,4 @@
-# sciot-go-server
+# SCIoT_go_server
 
 Go server for SCIoT distributed inference. It is the **control plane**: it
 pairs edge devices, knows the models they run, collects their telemetry and

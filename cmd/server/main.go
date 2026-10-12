@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/UBICO/sciot-go-server/internal/config"
-	"github.com/UBICO/sciot-go-server/internal/device"
-	"github.com/UBICO/sciot-go-server/internal/registry"
-	"github.com/UBICO/sciot-go-server/internal/server"
+	"github.com/UBICO/SCIoT_go_server/internal/config"
+	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/registry"
+	"github.com/UBICO/SCIoT_go_server/internal/server"
 )
 
 func main() {

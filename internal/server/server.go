@@ -13,9 +13,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/UBICO/sciot-go-server/internal/api"
-	"github.com/UBICO/sciot-go-server/internal/device"
-	"github.com/UBICO/sciot-go-server/internal/registry"
+	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/registry"
 )
 
 // supportedProtocolVersion è l'unica versione del protocollo accettata.

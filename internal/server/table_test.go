@@ -9,7 +9,7 @@ import (
 	"testing/iotest"
 	"time"
 
-	"github.com/UBICO/sciot-go-server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/api"
 )
 
 func f64(v float64) *float64 { return &v }

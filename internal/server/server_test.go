@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/UBICO/sciot-go-server/internal/api"
-	"github.com/UBICO/sciot-go-server/internal/device"
-	"github.com/UBICO/sciot-go-server/internal/registry"
+	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/registry"
 )
 
 // testServer crea un Server con un solo modello ("fomo_96x96") e restituisce

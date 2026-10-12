@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/UBICO/sciot-go-server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/api"
 )
 
 var fomo = api.ModelInfo{

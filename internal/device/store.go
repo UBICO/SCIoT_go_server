@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/UBICO/sciot-go-server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/api"
 )
 
 // Device è lo stato di un device registrato.

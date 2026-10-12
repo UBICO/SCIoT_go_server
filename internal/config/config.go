@@ -18,8 +18,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/UBICO/sciot-go-server/internal/registry"
-	"github.com/UBICO/sciot-go-server/internal/server"
+	"github.com/UBICO/SCIoT_go_server/internal/registry"
+	"github.com/UBICO/SCIoT_go_server/internal/server"
 )
 
 // Limiti accettati per l'intervallo di heartbeat. Sotto i 100 ms il traffico
