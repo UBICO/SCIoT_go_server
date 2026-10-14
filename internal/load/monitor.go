@@ -119,8 +119,8 @@ func (m *Monitor) Sample() Snapshot {
 
 	if cpuErr == nil {
 		v := ewma(m.cpuEWMA, cpuRaw, m.cfg.CPUEWMAAlpha)
-		m.cpuEWMA = &v
-		snap.CPUPercent = &v
+		m.cpuEWMA = ptr(v)
+		snap.CPUPercent = ptr(v)
 	}
 	m.current = snap
 	return snap
