@@ -1,0 +1,25 @@
+// Contratto tra il server Go e il worker Python che esegue i segmenti TFLite.
+// Solo per lo spike 2.2: il formato definitivo si decide al punto 2.4.
+syntax = "proto3";
+
+package sciot.worker.v1;
+
+option go_package = "github.com/UBICO/SCIoT_go_server/spike/ml-runtime/workerpb";
+
+service PartitionWorker {
+  // Esegue il modello dal segmento split_point+1 fino all'ultimo.
+  rpc RunFrom(RunRequest) returns (RunResponse);
+}
+
+message RunRequest {
+  string model_key = 1;   // nello spike il worker serve un solo modello: è solo verificato
+  int32 split_point = 2;  // ultimo segmento eseguito dal device
+  bytes tensor = 3;       // activation float32 grezza; shape e dtype dal manifest
+}
+
+message RunResponse {
+  bytes output = 1;             // output del modello, float32 grezzo
+  repeated double layer_ms = 2; // tempo di invoke() di ogni segmento eseguito
+  double queue_wait_ms = 3;     // attesa di uno slot libero dentro il worker
+  int32 slot = 4;               // quale set di interpreti ha eseguito la richiesta
+}
