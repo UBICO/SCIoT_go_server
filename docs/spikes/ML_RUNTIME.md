@@ -159,10 +159,15 @@ S3 (2 slots, 4 clients): 1 thread 30 req/s, 2 threads 55, 4 threads 87.
 
 ## Still open
 
-- Run the same scenarios on the lab machine (Linux x86_64): a package with the
-  Go client built for `linux/amd64`, the worker in a container and the run
-  script, so that whoever has access can run it with one command.
-- Recheck Unix socket vs TCP on Linux.
+- **Numbers on the lab machine (Linux x86_64)** are not collected by a separate
+  spike run. The decision does not depend on them: the architecture follows
+  from portability and memory, slots and threads are configuration, TCP works
+  everywhere. They will come with the deployment of the real server, which
+  measures per-segment times at startup (2.4), exposes the load and dispatcher
+  metrics, and can be benchmarked remotely (2.7). The slots × threads defaults
+  are tuned there.
+- Recheck Unix socket vs TCP on Linux at that point: switching is a change of
+  address, not of code.
 
 ## Reproducing
 
