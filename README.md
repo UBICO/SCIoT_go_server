@@ -15,7 +15,8 @@ Status (phase 1):
 - [x] registration, model information, heartbeat with windowed telemetry,
   versioned `LOCAL`/`SPLIT` policy, session expiry
 - [x] opt-in admin endpoint to force a policy (experiments)
-- [ ] data plane (activation upload, remote partition execution)
+- [ ] data plane (activation upload, remote partition execution); runtime
+  decided in [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md)
 - [ ] offloading algorithm (the policy is static until then)
 
 The reference client is `client/python/http_go_client.py` in
