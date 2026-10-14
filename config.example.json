@@ -2,7 +2,9 @@
   "server": {
     "heartbeat_interval_ms": 1000,
     "verbose": false,
-    "admin": false
+    "admin": false,
+    "load_sample_interval_ms": 1000,
+    "load_cpu_ewma_alpha": 0.35
   },
   "models": [
     {

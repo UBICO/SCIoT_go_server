@@ -137,3 +137,52 @@ func TestServerConfigAdmin(t *testing.T) {
 		t.Error("Admin deve essere false di default")
 	}
 }
+
+func TestLoadMonitorConfig(t *testing.T) {
+	alpha := func(v float64) *float64 { return &v }
+	cases := []struct {
+		name         string
+		ms           *int
+		alpha        *float64
+		wantInterval time.Duration
+		wantAlpha    float64
+		wantErr      bool
+	}{
+		{"assenti → default", nil, nil, time.Second, 0.35, false},
+		{"250 ms", ms(250), nil, 250 * time.Millisecond, 0.35, false},
+		{"alpha 1", nil, alpha(1), time.Second, 1, false},
+		{"intervallo sotto il minimo", ms(99), nil, 0, 0, true},
+		{"intervallo sopra il massimo", ms(60_001), nil, 0, 0, true},
+		{"alpha zero", nil, alpha(0), 0, 0, true},
+		{"alpha negativo", nil, alpha(-0.1), 0, 0, true},
+		{"alpha sopra 1", nil, alpha(1.5), 0, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := File{Server: Server{LoadSampleIntervalMS: tc.ms, LoadCPUEWMAAlpha: tc.alpha}}
+			cfg, err := f.LoadConfig()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("errore atteso, got %+v", cfg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Interval != tc.wantInterval || cfg.CPUEWMAAlpha != tc.wantAlpha {
+				t.Errorf("cfg = %+v, want %v / %v", cfg, tc.wantInterval, tc.wantAlpha)
+			}
+		})
+	}
+}
+
+func TestLoadAcceptsLoadKeys(t *testing.T) {
+	f, err := Load(writeConfig(t, `{"server": {"load_sample_interval_ms": 500, "load_cpu_ewma_alpha": 0.5}, "models": []}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *f.Server.LoadSampleIntervalMS != 500 || *f.Server.LoadCPUEWMAAlpha != 0.5 {
+		t.Errorf("server = %+v", f.Server)
+	}
+}

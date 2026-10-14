@@ -3,13 +3,19 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/config"
 	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
 )
@@ -60,10 +66,28 @@ func main() {
 	}
 	log.Printf("heartbeat interval %v, verbose %v", srvCfg.HeartbeatInterval, srvCfg.Verbose)
 
-	// --- 3. Store e Server ---------------------------------------------------
+	// --- 3. Store, monitor del carico e Server -------------------------------
 
 	devices := device.NewStore()
-	srv := server.New(reg, devices, srvCfg)
+
+	loadCfg, err := f.LoadConfig()
+	if err != nil {
+		log.Fatalf("load monitor config: %v", err)
+	}
+	if loadCfg.Interval > srvCfg.HeartbeatInterval {
+		log.Printf("WARNING: load sample interval %v is longer than heartbeat interval %v: each heartbeat will see a sample older than one interval",
+			loadCfg.Interval, srvCfg.HeartbeatInterval)
+	}
+
+	monitor := load.NewMonitor(load.HostReader{}, loadCfg)
+
+	// Il context viene cancellato al primo Ctrl+C o SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go monitor.Run(ctx)
+
+	srv := server.New(reg, devices, srvCfg, monitor)
 
 	// --- 4. Server HTTP con timeout ------------------------------------------
 
@@ -89,6 +113,27 @@ func main() {
 		Handler:     srv.Routes(),
 	}
 
+	// --- 5. Avvio e shutdown ordinato ----------------------------------------
+
 	log.Printf("listening on %s", httpServer.Addr)
-	log.Fatal(httpServer.ListenAndServe())
+
+	// ListenAndServe blocca: va in una goroutine, così il main può aspettare
+	// il segnale. Dopo Shutdown restituisce http.ErrServerClosed, che è l'esito
+	// normale e non va trattato come errore.
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("http server: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Printf("shutting down")
+
+	// ctx è già cancellato: il contesto dello shutdown parte da Background,
+	// altrimenti Shutdown scadrebbe subito.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
 }
