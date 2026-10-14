@@ -190,6 +190,20 @@ against the device's model. `200`:
 
 Errors: `400 invalid_request`, `404 device_not_found`.
 
+### `GET /api/v1/server/status`
+
+Load of the server machine (sampled every `load_sample_interval_ms`), plus
+counters. Like `/healthz` it is for monitoring and experiments, not for clients.
+Load fields are omitted when they could not be measured (absent ≠ 0).
+
+```json
+{"load": {"cpu_percent": 9.2, "cpu_count": 12, "load_avg_1_min": 1.45,
+          "memory_total_bytes": 25769803776, "memory_available_bytes": 7240630272,
+          "goroutines": 5, "sampled_at": "2026-10-14T15:56:39.81+02:00"},
+ "devices": 0, "models": 2,
+ "started_at": "2026-10-14T15:56:37.81+02:00", "uptime_seconds": 2.0}
+```
+
 ### `GET /healthz`
 
 `200 {"status":"ok"}`. Not versioned: it is for process monitoring, not for

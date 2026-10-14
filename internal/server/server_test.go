@@ -16,6 +16,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 )
 
@@ -44,7 +45,7 @@ func testServer(t *testing.T) (*Server, string, *device.Store) {
 
 	store := device.NewStore()
 	cfg := Config{HeartbeatInterval: time.Second, MaxBodyBytes: 1024}
-	return New(reg, store, cfg), modelHash, store
+	return New(reg, store, cfg, nil), modelHash, store
 }
 
 // do esegue una richiesta sul router SENZA avviare un server vero:
@@ -470,5 +471,66 @@ func TestAdminSetPolicyErrors(t *testing.T) {
 				t.Errorf("status %d code %q, want %d %q", rec.Code, e.Error.Code, tc.wantStatus, tc.wantCode)
 			}
 		})
+	}
+}
+
+// --- Server status ---------------------------------------------------------------
+
+// fixedLoad è un LoadSource che restituisce sempre lo stesso snapshot.
+type fixedLoad struct{ snap load.Snapshot }
+
+func (f fixedLoad) Snapshot() load.Snapshot { return f.snap }
+
+func TestServerStatus(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+	cpu, mem := 23.5, uint64(4096<<20)
+	s.load = fixedLoad{load.Snapshot{CPUPercent: &cpu, MemoryAvailableBytes: &mem, Goroutines: 9}}
+	started := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	s.startedAt = started
+	s.now = func() time.Time { return started.Add(90 * time.Second) }
+	registerSession(t, s, modelHash)
+
+	rec := do(t, s, http.MethodGet, "/api/v1/server/status", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var got statusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Devices != 1 || got.Models != 1 || got.UptimeSeconds != 90 || !got.StartedAt.Equal(started) {
+		t.Errorf("contatori errati: %+v", got)
+	}
+	if got.Load.CPUPercent == nil || *got.Load.CPUPercent != 23.5 || got.Load.Goroutines != 9 {
+		t.Errorf("load = %+v", got.Load)
+	}
+}
+
+func TestServerStatusWithoutLoadSource(t *testing.T) {
+	s, _, _ := testServer(t) // testServer passa nil: si usa noLoad
+	rec := do(t, s, http.MethodGet, "/api/v1/server/status", "")
+	var got map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("status %d, err %v", rec.Code, err)
+	}
+	// Nessuna metrica misurata: "load" contiene solo goroutines (0).
+	if l := got["load"].(map[string]any); len(l) != 1 {
+		t.Errorf("load senza sorgente = %v", l)
+	}
+}
+
+func TestHeartbeatVerboseShowsServerLoad(t *testing.T) {
+	s, modelHash, _ := testServer(t)
+	var buf bytes.Buffer
+	s.table = newHeartbeatTable(&buf)
+	s.cfg.Verbose = true
+	cpu := 12.0
+	s.load = fixedLoad{load.Snapshot{CPUPercent: &cpu}}
+
+	session := registerSession(t, s, modelHash)
+	do(t, s, http.MethodPost, "/api/v1/heartbeat", heartbeatBody(session))
+
+	if !strings.Contains(buf.String(), "|      12.0 |          N/A") {
+		t.Errorf("colonne del server mancanti:\n%s", buf.String())
 	}
 }

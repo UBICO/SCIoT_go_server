@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/load"
 )
 
 func f64(v float64) *float64 { return &v }
 func i64(v int64) *int64     { return &v }
+func u64(v uint64) *uint64   { return &v }
 
 var rowTime = time.Date(2026, 10, 10, 14, 3, 7, 123_000_000, time.UTC)
 
@@ -34,6 +36,7 @@ var fullRow = heartbeatRow{
 	},
 	sinceLastSeen: 1001 * time.Millisecond,
 	requestBytes:  178,
+	serverLoad:    load.Snapshot{CPUPercent: f64(23.44), MemoryAvailableBytes: u64(4096 << 20)},
 }
 
 // emptyRow: nessuna inferenza, nessun opzionale, device id lungo, gap 0.
@@ -48,8 +51,8 @@ var emptyRow = heartbeatRow{
 }
 
 const (
-	wantFullRow  = "14:03:07.123 | web_192          | LOCAL | 1/1         |   16 |  16.0 |          61.82 |         74.10 |  38.0 |     8123 |        1.21 |        1001 |        178"
-	wantEmptyRow = "14:03:07.123 | a-very-long-devi | LOCAL | 2/3         |    0 |   0.0 |            N/A |           N/A |   N/A |      N/A |         N/A |           0 |         95"
+	wantFullRow  = "14:03:07.123 | web_192          | LOCAL | 1/1         |   16 |  16.0 |          61.82 |         74.10 |  38.0 |     8123 |        1.21 |        1001 |        178 |      23.4 |         4096"
+	wantEmptyRow = "14:03:07.123 | a-very-long-devi | LOCAL | 2/3         |    0 |   0.0 |            N/A |           N/A |   N/A |      N/A |         N/A |           0 |         95 |       N/A |          N/A"
 )
 
 // --- countingReader ----------------------------------------------------------

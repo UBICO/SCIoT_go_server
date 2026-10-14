@@ -23,7 +23,7 @@ The reference client is `client/python/http_go_client.py` in
 
 ## Requirements
 
-Go 1.27 or newer. No external dependencies: only the standard library.
+Go 1.27 or newer. One external dependency: gopsutil, for the server load metrics.
 
 ## Configuration
 
@@ -35,7 +35,9 @@ paths):
   "server": {
     "heartbeat_interval_ms": 1000,
     "verbose": false,
-    "admin": false
+    "admin": false,
+    "load_sample_interval_ms": 1000,
+    "load_cpu_ewma_alpha": 0.35
   },
   "models": [
     {
@@ -53,6 +55,8 @@ paths):
 | `server.heartbeat_interval_ms` | 1000 | interval sent to clients, 100–60000 |
 | `server.verbose` | false | one table row per accepted heartbeat |
 | `server.admin` | false | enable the unauthenticated admin endpoint |
+| `server.load_sample_interval_ms` | 1000 | how often the server samples its own CPU/memory load, 100–60000 |
+| `server.load_cpu_ewma_alpha` | 0.35 | weight of the newest CPU sample in the moving average, (0, 1] |
 | `models[].tflite_dir` | — | directory with the `*.tflite` segments; their MD5 is the model hash |
 | `models[].last_offloading_layer` | — | index of the last segment |
 | `models[].input_size_bytes` | — | size of the raw RGB565 input |
@@ -90,6 +94,7 @@ internal/api/        protocol types and their validation (no dependencies)
 internal/config/     config.json → registry.Config, server.Config
 internal/registry/   model_hash → model info, computed at startup
 internal/device/     in-memory device state (sessions, policy, telemetry)
+internal/load/       server host load, sampled in its own goroutine (gopsutil)
 internal/server/     HTTP handlers, verbose heartbeat table
 ```
 

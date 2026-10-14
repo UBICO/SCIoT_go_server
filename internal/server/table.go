@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/load"
 )
 
 // ---------------------------------------------------------------------------
@@ -27,10 +28,11 @@ const (
 // tableHeader definisce le colonne e la loro larghezza. formatRow deve
 // produrre righe con le STESSE larghezze, separate da " | ".
 var tableHeader = fmt.Sprintf(
-	"%-12s | %-*s | %-5s | %-11s | %4s | %5s | %14s | %13s | %5s | %8s | %11s | %11s | %10s",
+	"%-12s | %-*s | %-5s | %-11s | %4s | %5s | %14s | %13s | %5s | %8s | %11s | %11s | %10s | %9s | %12s",
 	"Time", deviceColumnWidth, "Device", "Mode", "Ver app/srv", "Inf", "Inf/s",
 	"Comp mean (ms)", "Comp max (ms)", "CPU %", "Mem (MB)",
 	"HB RTT (ms)", "HB gap (ms)", "HB req (B)",
+	"Srv CPU %", "Srv mem (MB)",
 )
 
 // heartbeatRow contiene i valori di una riga.
@@ -43,6 +45,7 @@ type heartbeatRow struct {
 	telemetry      api.Telemetry
 	sinceLastSeen  time.Duration // "HB gap": tempo dal contatto precedente
 	requestBytes   int64         // "HB req": byte del corpo dell'heartbeat
+	serverLoad     load.Snapshot // carico del server al momento dell'heartbeat
 }
 
 // ---------------------------------------------------------------------------
@@ -108,10 +111,16 @@ func formatRow(r heartbeatRow) string {
 		memMiB = &v
 	}
 
+	var srvMemMiB *float64
+	if m := r.serverLoad.MemoryAvailableBytes; m != nil {
+		v := float64(*m) / (1 << 20)
+		srvMemMiB = &v
+	}
+
 	gapMS := float64(r.sinceLastSeen) / float64(time.Millisecond)
 
 	return fmt.Sprintf(
-		"%-12s | %-*s | %-5s | %-11s | %4d | %5.1f | %14s | %13s | %5s | %8s | %11s | %11.0f | %10d",
+		"%-12s | %-*s | %-5s | %-11s | %4d | %5.1f | %14s | %13s | %5s | %8s | %11s | %11.0f | %10d | %9s | %12s",
 		r.at.Format(tableTimeFormat),
 		deviceColumnWidth, device,
 		r.appliedMode,
@@ -125,6 +134,8 @@ func formatRow(r heartbeatRow) string {
 		formatOpt(r.telemetry.RTTMS, 1, 2),
 		gapMS,
 		r.requestBytes,
+		formatOpt(r.serverLoad.CPUPercent, 1, 1),
+		formatOpt(srvMemMiB, 1, 0),
 	)
 }
 

@@ -18,6 +18,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
 )
@@ -28,6 +29,10 @@ import (
 const (
 	MinHeartbeatInterval = 100 * time.Millisecond
 	MaxHeartbeatInterval = 60 * time.Second
+
+	// Stesso range per il campionamento del carico del server.
+	MinLoadSampleInterval = 100 * time.Millisecond
+	MaxLoadSampleInterval = 60 * time.Second
 )
 
 // File è il contenuto completo di config.json.
@@ -43,6 +48,10 @@ type Server struct {
 	HeartbeatIntervalMS *int  `json:"heartbeat_interval_ms,omitempty"`
 	Verbose             *bool `json:"verbose,omitempty"`
 	Admin               *bool `json:"admin,omitempty"`
+
+	// Campionamento del carico della macchina del server (internal/load).
+	LoadSampleIntervalMS *int     `json:"load_sample_interval_ms,omitempty"`
+	LoadCPUEWMAAlpha     *float64 `json:"load_cpu_ewma_alpha,omitempty"`
 }
 
 // Load legge e decodifica il file di configurazione.
@@ -87,5 +96,36 @@ func (f File) ServerConfig() (server.Config, error) {
 	if f.Server.Admin != nil {
 		cfg.Admin = *f.Server.Admin
 	}
+	return cfg, nil
+}
+
+// LoadConfig restituisce la configurazione del monitor di carico:
+// load.DefaultConfig() con sopra i valori presenti nel file.
+func (f File) LoadConfig() (load.Config, error) {
+
+	cfg := load.DefaultConfig()
+	if f.Server.LoadSampleIntervalMS != nil {
+		interval := time.Duration(*f.Server.LoadSampleIntervalMS) * time.Millisecond
+
+		if interval < MinLoadSampleInterval || interval > MaxLoadSampleInterval {
+			return load.Config{}, fmt.Errorf("load_sample_interval_ms out of range [%v, %v], got %v", MinLoadSampleInterval, MaxLoadSampleInterval, interval)
+		}
+		cfg.Interval = interval
+	}
+	//   - load_sample_interval_ms, se presente: converti in Duration e
+	//     verifica [MinLoadSampleInterval, MaxLoadSampleInterval]
+	//   - load_cpu_ewma_alpha, se presente: deve stare in (0, 1].
+	//     alpha = 0 significherebbe "ignora sempre i campioni nuovi": la media
+	//     resterebbe ferma al primo valore, quindi va rifiutato.
+	//   - errori con il nome JSON del campo, il valore e il range atteso.
+	if f.Server.LoadCPUEWMAAlpha != nil {
+		alpha := *f.Server.LoadCPUEWMAAlpha
+
+		if alpha <= 0 || alpha > 1 {
+			return load.Config{}, fmt.Errorf("load_cpu_ewma_alpha out of range (0, 1], got %v", alpha)
+		}
+		cfg.CPUEWMAAlpha = alpha
+	}
+
 	return cfg, nil
 }

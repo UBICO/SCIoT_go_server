@@ -15,6 +15,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 )
 
@@ -55,22 +56,45 @@ func DefaultConfig() Config {
 // È "dependency injection" senza framework: invece di variabili globali,
 // le dipendenze sono campi della struct e gli handler sono metodi. Nei test
 // si costruisce un Server con un Registry e uno Store di prova.
+// LoadSource fornisce l'ultimo campione del carico del server.
+//
+// *load.Monitor la soddisfa. Il Server dipende solo da questa interfaccia,
+// non dal Monitor: nei test basta una struct che restituisce uno snapshot
+// fisso, senza goroutine né letture dal sistema operativo.
+// Convenzione Go: l'interfaccia la definisce chi la USA, non chi la implementa.
+type LoadSource interface {
+	Snapshot() load.Snapshot
+}
+
+// noLoad è il LoadSource usato quando non ne viene passato uno: nessuna metrica.
+type noLoad struct{}
+
+func (noLoad) Snapshot() load.Snapshot { return load.Snapshot{} }
+
 type Server struct {
-	registry *registry.Registry
-	devices  *device.Store
-	cfg      Config
-	table    *heartbeatTable  // usata solo se cfg.Verbose
-	now      func() time.Time // orario delle righe; sostituibile nei test
+	registry  *registry.Registry
+	devices   *device.Store
+	load      LoadSource
+	startedAt time.Time
+	cfg       Config
+	table     *heartbeatTable  // usata solo se cfg.Verbose
+	now       func() time.Time // orario delle righe; sostituibile nei test
 }
 
 // New crea un Server.
-func New(reg *registry.Registry, devices *device.Store, cfg Config) *Server {
+// src può essere nil: lo stato del server riporterà allora un carico vuoto.
+func New(reg *registry.Registry, devices *device.Store, cfg Config, src LoadSource) *Server {
+	if src == nil {
+		src = noLoad{}
+	}
 	return &Server{
-		registry: reg,
-		devices:  devices,
-		cfg:      cfg,
-		table:    newHeartbeatTable(os.Stdout),
-		now:      time.Now,
+		registry:  reg,
+		devices:   devices,
+		load:      src,
+		startedAt: time.Now(),
+		cfg:       cfg,
+		table:     newHeartbeatTable(os.Stdout),
+		now:       time.Now,
 	}
 }
 
@@ -88,6 +112,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/models", s.handleModels)
 	// {hash} è un "wildcard": il valore si legge con r.PathValue("hash").
 	mux.HandleFunc("GET /api/v1/models/{hash}", s.handleModel)
+	mux.HandleFunc("GET /api/v1/server/status", s.handleServerStatus)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	if s.cfg.Admin {
 		mux.HandleFunc("POST /api/v1/admin/devices/{id}/policy", s.handleSetPolicy)
@@ -313,6 +338,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			telemetry:      req.Telemetry,
 			sinceLastSeen:  res.SinceLastSeen,
 			requestBytes:   body.n,
+			serverLoad:     s.load.Snapshot(),
 		})
 	}
 
@@ -380,5 +406,37 @@ func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
 		DeviceID:  id,
 		SessionID: d.SessionID,
 		Policy:    d.Policy,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/server/status
+// ---------------------------------------------------------------------------
+
+// statusResponse è lo stato del server. Come /healthz serve a chi monitora il
+// processo (e agli esperimenti), non ai client: per questo il tipo è qui e
+// non in internal/api.
+type statusResponse struct {
+	Load          load.Snapshot `json:"load"`
+	Devices       int           `json:"devices"`
+	Models        int           `json:"models"`
+	StartedAt     time.Time     `json:"started_at"`
+	UptimeSeconds float64       `json:"uptime_seconds"`
+}
+
+// handleServerStatus restituisce l'ultimo campione di carico e i contatori.
+func (s *Server) handleServerStatus(w http.ResponseWriter, _ *http.Request) {
+	// una sola writeJSON con statusResponse:
+	//   - Load: lo snapshot di s.load
+	//   - Devices / Models: Len() di Store e Registry
+	//   - StartedAt: s.startedAt
+	//   - UptimeSeconds: tempo trascorso da s.startedAt, misurato con s.now()
+	//     (così nei test è deterministico). Una Duration ha .Seconds().
+	writeJSON(w, http.StatusOK, statusResponse{
+		Load:          s.load.Snapshot(),
+		Devices:       s.devices.Len(),
+		Models:        s.registry.Len(),
+		StartedAt:     s.startedAt,
+		UptimeSeconds: s.now().Sub(s.startedAt).Seconds(),
 	})
 }
