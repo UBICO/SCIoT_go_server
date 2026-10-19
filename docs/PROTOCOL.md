@@ -1,10 +1,13 @@
-# SCIoT control-plane protocol — v1
+# SCIoT protocol — v1
 
 This document is the contract between the SCIoT Go server and its clients
-(the Python reference client today, the ESP32-S3-EYE later). It covers the
-**control plane** only: pairing, model information, telemetry and the
-execution policy (`LOCAL` / `SPLIT`). The data plane (activation tensors and
-results) is not part of v1.
+(the Python reference client today, the ESP32-S3-EYE later). It has two parts:
+
+- the **control plane** (HTTP + JSON): pairing, model information, telemetry
+  and the execution policy (`LOCAL` / `SPLIT`);
+- the **data plane** (WebSocket, see [Data plane](#data-plane)): activation
+  tensors sent by devices in `SPLIT` and the results of the remote partition.
+  **Status: draft**, being implemented in phase 2.
 
 The source of truth for field names is `internal/api`; the tests in
 `internal/api/types_test.go` pin the exact JSON.
@@ -234,3 +237,252 @@ client                                   server
   │◀──────────── 409 session_expired ──────│
   │ fall back to LOCAL, register again     │
 ```
+
+## Data plane
+
+> **Draft.** This section is the contract for phase 2; it becomes normative
+> when the implementation lands. Field names may still change until then.
+
+In `SPLIT` the device runs segments `0..k` and sends the activation (the output
+of segment `k`) to the server, which runs `k+1..last` and returns the output of
+the model. The data plane carries those tensors; everything else stays on the
+control plane.
+
+### Design principles
+
+- **Asynchronous.** A device may send frame `N+1` before the result of `N`
+  arrives. Results can come back **out of order**; the device matches them by
+  `sequence_id`.
+- **Bounded.** Each device has at most `max_inflight` frames in flight (told by
+  the server on connect). The server queue has **no fixed length**: a frame is
+  admitted only if it can be served within its deadline (see
+  [Admission](#admission)); otherwise it is rejected with `server_busy` and the
+  device runs **that frame** `LOCAL`. A frame is never retried: by the time it
+  could be retried, it is old.
+- **Frames carry their own split point.** The policy is decided by the server,
+  but a frame is computed with the policy in force when the device started it.
+  The server runs each frame from **its** `split_point + 1`, even if the policy
+  has changed in the meantime: the device has already executed `0..k` and that
+  work cannot be moved. `policy_version` attributes the measurement to the
+  policy that produced it.
+- **Self-contained results.** A result follows one schema,
+  `inference-result.v1`, whoever computed it (the device in `LOCAL`, the server
+  in `SPLIT`) and whatever carries it (the stream, an MQTT topic). It contains
+  the **interpreted** output (detections), so consumers do not need the model.
+- **Tensors travel as raw bytes.** Shape and dtype are implied by the model and
+  the split point (the worker reports them at startup), so they are never sent.
+
+### Connection
+
+```http
+GET /api/v1/stream HTTP/1.1
+Upgrade: websocket
+X-SCIoT-Device: web_96
+X-SCIoT-Session: YVOFM5HEJSRDMW2JBQU4ADGDD6
+```
+
+The device opens **one** stream after registering, with the `device_id` and
+`session_id` of its current session. Before the upgrade the server answers
+with the usual JSON errors: `409 session_expired` (unknown session),
+`400 invalid_request` (missing header), `503 worker_unavailable` (no data plane
+for this model yet). If the device opens a second stream, the first one is
+closed (code `4002`).
+
+Right after the upgrade the server sends a `hello` message:
+
+```json
+{"type": "hello", "max_inflight": 3, "max_message_bytes": 4194304,
+ "policy": {"mode": "SPLIT", "split_point": 5, "policy_version": 2},
+ "segments": [{"split_point": -1, "input_bytes": 1228800},
+              {"split_point": 0,  "input_bytes": 3276800}, "..."]}
+```
+
+`segments` lists, for every valid split point, the exact size of the activation
+the server expects (from the worker's `Describe`).
+
+### Message format
+
+WebSocket gives message boundaries; inside a message the layout is:
+
+- **text messages** (control): a JSON object with a `type` field;
+- **binary messages** (data): a small JSON header followed by the raw tensor.
+
+```text
+binary message
+┌──────────────────────┬────────────────────────┬──────────────────────────┐
+│ header_length (u32,  │ header: JSON object,   │ payload: raw tensor      │
+│ little-endian)       │ UTF-8, header_length B │ (rest of the message)    │
+└──────────────────────┴────────────────────────┴──────────────────────────┘
+```
+
+A JSON header (~150 bytes against 0.8–3.2 MB of tensor) keeps the format easy
+to extend and to parse on every client (cJSON on the ESP32) without a custom
+binary layout to version.
+
+| `type` | Direction | Kind | Purpose |
+|---|---|---|---|
+| `hello` | server → device | text | limits, current policy, expected tensor sizes |
+| `frame` | device → server | binary | an activation to run from `split_point + 1` |
+| `result` | server → device | binary | an `inference-result.v1` for a frame; the raw tensor only if requested |
+| `error` | server → device | text | a frame was not executed |
+| `policy` | server → device | text | the policy changed (fast path; the heartbeat stays the reliable path) |
+
+### `frame` (device → server)
+
+```json
+{"type": "frame", "sequence_id": 1042, "policy_version": 2,
+ "split_point": 5, "encoding": "float32",
+ "captured_at": "2026-10-19T10:15:03.120Z", "deadline_ms": 45.0, "want_raw": false}
+```
+
+| Field | Rule |
+|---|---|
+| `sequence_id` | uint64, starts at 1, strictly increasing within a session; unique among frames in flight |
+| `policy_version` | version of the policy the frame was computed with |
+| `split_point` | last segment executed by the device: `-1` (raw model input) .. `last_offloading_layer - 1` |
+| `encoding` | `float32` in v1; `rgb565` reserved for `split_point = -1` (6× smaller than `float32`); `float16`, `int8` reserved for later |
+| `captured_at` | wall-clock time (NTP-synchronized) at which the frame was acquired; copied into the result |
+| `deadline_ms` | optional: how long the result is still useful, from when the server reads the frame. The natural value is the time the device would need to finish the frame `LOCAL`: a later result is worse than running locally |
+| `want_raw` | optional, default `false`: also return the raw output tensor |
+| payload | exactly the `input_bytes` announced in `hello` for that `split_point` |
+
+### `result` (server → device)
+
+The header is an `inference-result.v1` (see [Inference result](#inference-result))
+with `"type": "result"`. The payload is the raw output tensor (`float32`) if the
+frame asked for it with `want_raw`, otherwise empty.
+
+`timing.server_ms` is the time from the moment the frame was read to the
+moment the result was ready, queue included; the device obtains the network
+time as its own round-trip time minus `server_ms`. `server_policy_version` is
+the policy version of the server now: if it is newer than the device's, a
+policy change is on its way (as a `policy` message or with the next
+heartbeat).
+
+### `error` (server → device)
+
+```json
+{"type": "error", "sequence_id": 1042, "code": "server_busy",
+ "message": "predicted wait 61 ms + service 8 ms > deadline 45 ms"}
+```
+
+| `code` | Meaning | Device action |
+|---|---|---|
+| `server_busy` | not admitted: the predicted completion exceeds the deadline | run this frame `LOCAL` |
+| `deadline_exceeded` | admitted, but the deadline expired while waiting: dropped without running | run this frame `LOCAL` (it is usually already done) |
+| `inflight_limit` | the device exceeded `max_inflight` | run this frame `LOCAL`, respect the window |
+| `invalid_frame` | bad header, unknown `split_point` or `encoding`, wrong payload size, duplicate `sequence_id` | bug: log it, run `LOCAL` |
+| `worker_unavailable` | the worker failed or timed out | run this frame `LOCAL` |
+
+Errors about a frame never close the stream.
+
+### Admission
+
+The server does not cap the queue at a fixed length. When a frame arrives it
+computes its **predicted completion time** from the current state of the
+queue, which it knows exactly:
+
+```text
+predicted_wait = max(0, queued + running − c + 1) / c × S
+predicted      = predicted_wait + S
+```
+
+- `c`: slots of the worker (requests it can run at the same time);
+- `queued`, `running`: frames waiting and frames being executed now;
+- `S`: mean service time for that model and split point, a moving average of
+  the measured `server_ms` without queue.
+
+The frame is admitted if `predicted ≤ deadline_ms`, rejected with
+`server_busy` otherwise. A frame without `deadline_ms` uses a server-side
+default (configurable). An admitted frame whose deadline expires while it waits
+is dropped with `deadline_exceeded`, so no slot is spent on a result nobody
+will use.
+
+The admitted queue length therefore adapts by itself (Little's law,
+`L = λ · W`): it shrinks when the service slows down, grows when slots are
+added. The arrival rate λ, the service rate μ = 1/S, the utilization
+ρ = λ / (c · μ) and the predicted wait are exposed in the server metrics. The
+offloading algorithm (phase 3) uses them with a queueing model (M/G/c, or
+M/M/c as a conservative bound) to predict how the wait would change before
+moving a device to or from `SPLIT`; admission itself needs no model.
+
+### `policy` (server → device)
+
+```json
+{"type": "policy", "policy": {"mode": "LOCAL", "split_point": null, "policy_version": 4}}
+```
+
+Sent when the policy of the device changes. The device applies it with the
+same rules as a policy received in a heartbeat (only if newer).
+
+### Closing
+
+| Close code | Meaning | Device action |
+|---|---|---|
+| `1001` | server shutting down | `LOCAL`, reconnect with back-off |
+| `1009` | message larger than `max_message_bytes` | bug: log it |
+| `4001` | session expired (the device registered again, or the server lost the session) | `LOCAL`, register again, then reconnect |
+| `4002` | replaced by a newer stream of the same device | none (the newer stream is the one in use) |
+
+When the stream is down the device keeps running `LOCAL`; frames in flight at
+that moment are considered lost.
+
+### Typical exchange
+
+```text
+device                                              server
+  │ GET /api/v1/stream (upgrade)                       │
+  │───────────────────────────────────────────────────▶│
+  │◀──────────── hello (max_inflight 3, SPLIT@5 v2) ───│
+  │ frame #1 (split 5)                                 │
+  │───────────────────────────────────────────────────▶│ queue → worker
+  │ frame #2 (split 5)                                 │
+  │───────────────────────────────────────────────────▶│ queue → worker
+  │◀────────────── result #2 ──────────────────────────│ (out of order)
+  │◀────────────── result #1 ──────────────────────────│
+  │                                                    │ policy → LOCAL v3
+  │◀────────────── policy (LOCAL v3) ──────────────────│
+  │ (next frames run LOCAL, nothing more is sent)      │
+```
+
+### Inference result
+
+`inference-result.v1` is the single schema of an inference outcome, used on
+the stream and, later, on MQTT. It is produced by whoever computed the output:
+the **device** for `LOCAL` frames, the **server** for `SPLIT` frames.
+
+```json
+{"schema": "inference-result.v1",
+ "device_id": "web_96", "session_id": "YVOF…", "sequence_id": 1042,
+ "model_key": "yolo_small_320", "mode": "SPLIT", "split_point": 5,
+ "policy_version": 2, "server_policy_version": 3, "computed_by": "server",
+ "captured_at": "2026-10-19T10:15:03.120Z",
+ "timing": {"device_ms": 18.4, "queue_wait_ms": 0.1, "server_ms": 7.3,
+            "layer_ms": [1.1, 0.9, 2.0]},
+ "detections": [{"label": "stop_sign", "score": 0.91,
+                 "box": {"x": 0.42, "y": 0.18, "w": 0.21, "h": 0.25}}]}
+```
+
+| Field | Rule |
+|---|---|
+| `mode`, `computed_by` | `LOCAL` / `device`, or `SPLIT` / `server` |
+| `split_point` | `null` in `LOCAL` |
+| `captured_at` | from the frame (NTP wall clock): lets consumers order and correlate results of different devices |
+| `timing.device_ms` | compute time on the device (segments `0..k`, or the whole model in `LOCAL`) |
+| `timing.queue_wait_ms`, `server_ms`, `layer_ms` | `SPLIT` only |
+| `detections` | interpreted output: label, confidence, box normalized to `[0, 1]` (x, y = top-left). The post-processing (decoding, thresholds, NMS) is the same on device and server |
+
+On the stream the result also carries `"type": "result"`; `server_policy_version`
+is present only in results computed by the server.
+
+### MQTT (planned)
+
+Not implemented in v1; recorded here so that the result format already fits it.
+
+- Topic: `sciot/<device_id>/results`, payload: the `inference-result.v1` JSON
+  (detections only, no raw tensor).
+- Publisher: whoever computed the output. The device publishes its `LOCAL`
+  results, the server publishes the `SPLIT` results; no extra traffic is added
+  to carry `LOCAL` results to the server.
+- Consumers (applications, dashboards, loggers) read one stream per device
+  regardless of where each frame was computed; `computed_by` tells them.
