@@ -1,0 +1,59 @@
+// Contratto tra il server Go e il worker Python che esegue i segmenti TFLite
+// (docs/spikes/ML_RUNTIME.md). Codice generato: internal/workerpb (Go) e
+// worker/sciot_worker/v1 (Python); vedi worker/README.md per rigenerarlo.
+syntax = "proto3";
+
+package sciot.worker.v1;
+
+option go_package = "github.com/UBICO/SCIoT_go_server/internal/workerpb";
+
+service PartitionWorker {
+  // Modelli caricati, con le dimensioni dei tensori a ogni segmento.
+  // Il server lo chiama all'avvio per costruire il catalogo del data plane.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // Esegue un modello dal segmento split_point+1 fino all'ultimo.
+  // Errori (codici gRPC): NOT_FOUND modello sconosciuto, INVALID_ARGUMENT
+  // split point o dimensione del tensore errati, DEADLINE_EXCEEDED scadenza
+  // della chiamata raggiunta mentre aspettava uno slot.
+  rpc RunFrom(RunRequest) returns (RunResponse);
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  repeated ModelDescription models = 1;
+  int32 slots = 2;    // richieste eseguibili in parallelo
+  int32 threads = 3;  // thread TFLite per interprete
+}
+
+message ModelDescription {
+  string model_key = 1;
+  // MD5 dei file *.tflite concatenati in ordine di NOME: la stessa regola del
+  // registry Go e dei client, così il server verifica che il worker abbia
+  // caricato esattamente i file che conosce.
+  string model_hash = 2;
+  repeated Segment segments = 3;  // in ordine di esecuzione (0, 1, ..., last)
+}
+
+message Segment {
+  int32 index = 1;
+  repeated int32 input_shape = 2;
+  string input_dtype = 3;   // "float32"
+  int64 input_bytes = 4;
+  repeated int32 output_shape = 5;
+  int64 output_bytes = 6;
+}
+
+message RunRequest {
+  string model_key = 1;
+  int32 split_point = 2;  // ultimo segmento eseguito dal device (-1 = input del modello)
+  bytes tensor = 3;       // activation grezza; shape e dtype da Describe
+}
+
+message RunResponse {
+  bytes output = 1;             // output del modello, grezzo
+  repeated double layer_ms = 2; // tempo di invoke() di ogni segmento eseguito
+  double queue_wait_ms = 3;     // attesa di uno slot libero dentro il worker
+  int32 slot = 4;
+}
