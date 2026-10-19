@@ -104,6 +104,10 @@ type Handler struct {
 	exec     Executor
 	cfg      Config
 	now      func() time.Time
+
+	// afterSend, se non nil, viene chiamata dopo l'invio di un risultato o di
+	// un errore. Solo per i test: simula una goroutine lenta.
+	afterSend func()
 }
 
 // NewHandler crea un Handler.
@@ -213,8 +217,9 @@ func (h *Handler) readLoop(ctx context.Context, c *conn) {
 			continue
 		}
 
+		// Il frame resta "in volo" fino alla fine dell'esecuzione: lo libera
+		// handleFrame, PRIMA di inviare l'esito (vedi lì).
 		c.wg.Go(func() {
-			defer c.release(hdr.SequenceID)
 			h.handleFrame(ctx, c, hdr, payload, received)
 		})
 	}
@@ -256,6 +261,16 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 		Deadline:   deadline,
 		WantRaw:    hdr.WantRaw,
 	})
+	// Il frame esce dalla finestra PRIMA che il device riceva l'esito: un
+	// device che, appena ricevuto il risultato, invia il frame successivo
+	// deve trovare il posto libero. Liberarlo dopo l'invio (per esempio con
+	// un defer) lascia una finestra in cui il nuovo frame viene rifiutato con
+	// inflight_limit anche se il device rispetta max_inflight.
+	c.release(hdr.SequenceID)
+	if h.afterSend != nil {
+		defer h.afterSend()
+	}
+
 	if err != nil {
 		code, message := errorCode(err), err.Error()
 		// server_busy e deadline_exceeded sono esiti previsti dell'ammissione

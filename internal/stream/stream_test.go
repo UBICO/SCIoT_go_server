@@ -343,6 +343,25 @@ func TestInflightLimitAndDuplicates(t *testing.T) {
 	}
 }
 
+// TestSlotFreedBeforeResult: un device con max_inflight 1 invia il frame
+// successivo appena riceve il risultato. Il posto deve essere già libero, anche
+// se la goroutine del frame precedente è lenta a terminare dopo l'invio
+// (come su un runner di CI carico: era la causa di un test intermittente).
+func TestSlotFreedBeforeResult(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxInflight = 1
+	h := newHarness(t, &FakeExecutor{}, cfg)
+	h.handler.afterSend = func() { time.Sleep(100 * time.Millisecond) }
+	ws := h.open(t)
+
+	for seq := uint64(1); seq <= 3; seq++ {
+		sendFrame(t, ws, frame(seq), make([]byte, split4Bytes))
+		if r, _ := readResult(t, ws); r.SequenceID != seq {
+			t.Fatalf("risultato %d, want %d", r.SequenceID, seq)
+		}
+	}
+}
+
 // --- errori -------------------------------------------------------------------------
 
 func TestInvalidFramesKeepStreamOpen(t *testing.T) {
