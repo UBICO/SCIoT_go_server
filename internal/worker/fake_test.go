@@ -127,9 +127,14 @@ func TestHelperWorker(t *testing.T) {
 	}
 
 	_, _, stop := serveFake(t, listen)
-	if mode == "crash" { // pronto per un po', poi muore
+	switch mode {
+	case "crash": // pronto per un po', poi muore
 		time.Sleep(400 * time.Millisecond)
 		os.Exit(3)
+	case "ignore-term":
+		// Non arrivare a signal.Notify qui sotto: riattiverebbe SIGTERM
+		// (annulla signal.Ignore) e il worker uscirebbe subito.
+		select {}
 	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM)

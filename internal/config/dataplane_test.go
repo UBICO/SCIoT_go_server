@@ -1,0 +1,131 @@
+package config
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/stream"
+)
+
+const modelsJSON = `"models": [{
+	"model_key": "fomo_96x96",
+	"tflite_dir": "/models/fomo_96x96",
+	"last_offloading_layer": 58,
+	"input_size_bytes": 18432
+}]`
+
+var known = []api.ModelEntry{{ModelHash: "h", ModelInfo: api.ModelInfo{ModelKey: "fomo_96x96", NumLayers: 59}}}
+
+func loadSections(t *testing.T, sections string) File {
+	t.Helper()
+	f, err := Load(writeConfig(t, "{"+sections+modelsJSON+"}"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return f
+}
+
+func TestWorkerOptionsDisabledWithoutSection(t *testing.T) {
+	opts, enabled, err := loadSections(t, "").WorkerOptions(known)
+	if err != nil || enabled {
+		t.Errorf("senza sezione worker: enabled %v, err %v, opts %+v", enabled, err, opts)
+	}
+}
+
+func TestWorkerOptionsManaged(t *testing.T) {
+	f := loadSections(t, `"worker": {"command": ["uv", "run", "sciot-worker"], "address": "127.0.0.1:50051",
+		"slots": 2, "threads": 6, "startup_timeout_ms": 30000},`)
+	opts, enabled, err := f.WorkerOptions(known)
+	if err != nil || !enabled {
+		t.Fatalf("enabled %v, err %v", enabled, err)
+	}
+	if strings.Join(opts.Command, " ") != "uv run sciot-worker" || opts.Address != "127.0.0.1:50051" ||
+		opts.Slots != 2 || opts.Threads != 6 || opts.StartupTimeout != 30*time.Second {
+		t.Errorf("opts = %+v", opts)
+	}
+	if len(opts.Models) != 1 || opts.Models[0].Key != "fomo_96x96" || opts.Models[0].Dir != "/models/fomo_96x96" {
+		t.Errorf("Models = %+v", opts.Models)
+	}
+	if len(opts.Known) != 1 {
+		t.Errorf("Known = %+v", opts.Known)
+	}
+	if opts.MinBackoff != workerMinBackoff || opts.MaxBackoff != workerMaxBackoff ||
+		opts.StopGrace != workerStopGrace || opts.HealthInterval != workerHealthInterval {
+		t.Errorf("durate fisse = %+v", opts)
+	}
+}
+
+func TestWorkerOptionsExternal(t *testing.T) {
+	// Worker esterno: slots e threads li decide chi lo avvia.
+	opts, enabled, err := loadSections(t, `"worker": {"address": "127.0.0.1:50051"},`).WorkerOptions(known)
+	if err != nil || !enabled || len(opts.Command) != 0 {
+		t.Fatalf("enabled %v, err %v, opts %+v", enabled, err, opts)
+	}
+	if opts.StartupTimeout != DefaultWorkerStartupTimeout {
+		t.Errorf("StartupTimeout = %v, atteso il default", opts.StartupTimeout)
+	}
+}
+
+func TestWorkerOptionsErrors(t *testing.T) {
+	cases := []struct {
+		name, worker, field string
+	}{
+		{"address mancante", `{"command": ["w"], "slots": 1, "threads": 1}`, "address"},
+		{"slots zero", `{"command": ["w"], "address": "a:1", "slots": 0, "threads": 1}`, "slots"},
+		{"threads zero", `{"command": ["w"], "address": "a:1", "slots": 1, "threads": 0}`, "threads"},
+		{"startup timeout zero", `{"address": "a:1", "startup_timeout_ms": 0}`, "startup_timeout_ms"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := loadSections(t, `"worker": `+tc.worker+`,`).WorkerOptions(known)
+			if err == nil || !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("err = %v, atteso un errore che nomina %q", err, tc.field)
+			}
+		})
+	}
+}
+
+func TestStreamConfig(t *testing.T) {
+	cfg, err := loadSections(t, "").StreamConfig()
+	if err != nil || cfg != stream.DefaultConfig() {
+		t.Errorf("senza sezione: %+v, %v", cfg, err)
+	}
+
+	f := loadSections(t, `"stream": {"max_inflight": 5, "default_deadline_ms": 250, "max_message_bytes": 2048},`)
+	cfg, err = f.StreamConfig()
+	if err != nil || cfg.MaxInflight != 5 || cfg.DefaultDeadline != 250*time.Millisecond || cfg.MaxMessageBytes != 2048 {
+		t.Errorf("cfg = %+v, err %v", cfg, err)
+	}
+}
+
+func TestStreamConfigErrors(t *testing.T) {
+	cases := []struct{ name, stream, field string }{
+		{"max_inflight zero", `{"max_inflight": 0}`, "max_inflight"},
+		{"deadline zero", `{"default_deadline_ms": 0}`, "default_deadline_ms"},
+		{"messaggio troppo piccolo", `{"max_message_bytes": 100}`, "max_message_bytes"},
+		{"messaggio oltre il limite gRPC", `{"max_message_bytes": 1073741824}`, "max_message_bytes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadSections(t, `"stream": `+tc.stream+`,`).StreamConfig()
+			if err == nil || !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("err = %v, atteso un errore che nomina %q", err, tc.field)
+			}
+		})
+	}
+}
+
+func TestExampleConfigLoads(t *testing.T) {
+	f, err := Load("../../config.example.json")
+	if err != nil {
+		t.Fatalf("config.example.json: %v", err)
+	}
+	if _, err := f.StreamConfig(); err != nil {
+		t.Errorf("stream: %v", err)
+	}
+	if _, enabled, err := f.WorkerOptions(nil); err != nil || !enabled {
+		t.Errorf("worker: enabled %v, err %v", enabled, err)
+	}
+}

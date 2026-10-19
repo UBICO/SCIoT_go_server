@@ -27,6 +27,12 @@ const (
 	MsgPolicy = "policy"
 )
 
+// Codici di chiusura dello stream (docs/PROTOCOL.md, "Closing").
+const (
+	CloseSessionExpired = 4001 // il device si è registrato di nuovo, o la sessione non esiste più
+	CloseReplaced       = 4002 // sostituito da uno stream più recente dello stesso device
+)
+
 // EncodingFloat32 è l'unico encoding dei tensori accettato in v1.
 const EncodingFloat32 = "float32"
 

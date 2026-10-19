@@ -40,6 +40,24 @@ paths):
     "load_sample_interval_ms": 1000,
     "load_cpu_ewma_alpha": 0.35
   },
+  "worker": {
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "worker",
+      "sciot-worker"
+    ],
+    "address": "127.0.0.1:50051",
+    "slots": 2,
+    "threads": 6,
+    "startup_timeout_ms": 120000
+  },
+  "stream": {
+    "max_inflight": 3,
+    "default_deadline_ms": 1000,
+    "max_message_bytes": 8388608
+  },
   "models": [
     {
       "model_key": "fomo_96x96",
@@ -58,6 +76,14 @@ paths):
 | `server.admin` | false | enable the unauthenticated admin endpoint |
 | `server.load_sample_interval_ms` | 1000 | how often the server samples its own CPU/memory load, 100–60000 |
 | `server.load_cpu_ewma_alpha` | 0.35 | weight of the newest CPU sample in the moving average, (0, 1] |
+| `worker` | absent | data plane on/off: without this section `/api/v1/stream` does not exist and every device stays LOCAL |
+| `worker.command` | [] | command that starts the Python worker (the server adds `--listen`, `--slots`, `--threads`, `--model`); empty = external worker, started by someone else |
+| `worker.address` | — | worker gRPC address, `host:port` on the same machine |
+| `worker.slots`, `worker.threads` | — | parallel inferences × TFLite threads each; required when `command` is set |
+| `worker.startup_timeout_ms` | 120000 | time for the worker to load TensorFlow and the models before a restart |
+| `stream.max_inflight` | 3 | frames per device in flight at the same time |
+| `stream.default_deadline_ms` | 1000 | frame deadline when the client sends none |
+| `stream.max_message_bytes` | 8388608 | largest WebSocket message, 1024–67108864 |
 | `models[].tflite_dir` | — | directory with the `*.tflite` segments; their MD5 is the model hash |
 | `models[].last_offloading_layer` | — | index of the last segment |
 | `models[].input_size_bytes` | — | size of the raw RGB565 input |
@@ -97,6 +123,9 @@ internal/registry/   model_hash → model info, computed at startup
 internal/device/     in-memory device state (sessions, policy, telemetry)
 internal/load/       server host load, sampled in its own goroutine (gopsutil)
 internal/server/     HTTP handlers, verbose heartbeat table
+internal/stream/     data plane WebSocket (/api/v1/stream)
+internal/worker/     gRPC client, catalog and supervisor of the Python worker
+worker/              Python worker (TFLite segments over gRPC)
 ```
 
 Dependencies point one way: `cmd/server → config → server → registry, device → api`.

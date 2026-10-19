@@ -17,6 +17,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
+	"github.com/UBICO/SCIoT_go_server/internal/stream"
 )
 
 // supportedProtocolVersion è l'unica versione del protocollo accettata.
@@ -77,8 +78,13 @@ type Server struct {
 	load      LoadSource
 	startedAt time.Time
 	cfg       Config
-	table     *heartbeatTable  // usata solo se cfg.Verbose
-	now       func() time.Time // orario delle righe; sostituibile nei test
+
+	// Data plane (opzionale, vedi SetStream).
+	stream   http.Handler
+	notifier StreamNotifier
+
+	table *heartbeatTable  // usata solo se cfg.Verbose
+	now   func() time.Time // orario delle righe; sostituibile nei test
 }
 
 // New crea un Server.
@@ -114,6 +120,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/models/{hash}", s.handleModel)
 	mux.HandleFunc("GET /api/v1/server/status", s.handleServerStatus)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	if s.stream != nil {
+		mux.Handle("GET /api/v1/stream", s.stream)
+	}
 	if s.cfg.Admin {
 		mux.HandleFunc("POST /api/v1/admin/devices/{id}/policy", s.handleSetPolicy)
 	}
@@ -252,6 +261,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d := s.devices.Register(req.DeviceID, req.DeviceType, model, req.Capabilities)
+	// La registrazione crea una sessione nuova: lo stream ancora aperto della
+	// sessione precedente va chiuso. notifier è nil senza data plane.
+	if s.notifier != nil {
+		s.notifier.EndSession(req.DeviceID)
+	}
 	log.Printf("registered device=%s type=%s model=%s session=%s",
 		req.DeviceID, d.Type, d.Model.ModelKey, d.SessionID)
 	writeJSON(w, http.StatusOK, api.RegisterResponse{
@@ -402,6 +416,11 @@ func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("admin policy: device=%s session=%s policy=%s v%d",
 		id, d.SessionID, d.Policy.Mode, d.Policy.PolicyVersion)
+	// Via veloce: la policy arriva subito sullo stream, se aperto. L'heartbeat
+	// resta la via affidabile. notifier è nil senza data plane.
+	if s.notifier != nil {
+		s.notifier.NotifyPolicy(id, d.Policy)
+	}
 	writeJSON(w, http.StatusOK, api.SetPolicyResponse{
 		DeviceID:  id,
 		SessionID: d.SessionID,
@@ -439,4 +458,37 @@ func (s *Server) handleServerStatus(w http.ResponseWriter, _ *http.Request) {
 		StartedAt:     s.startedAt,
 		UptimeSeconds: s.now().Sub(s.startedAt).Seconds(),
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Data plane
+// ---------------------------------------------------------------------------
+
+// StreamNotifier è ciò che il control plane deve poter dire agli stream
+// aperti. *stream.Handler lo soddisfa.
+type StreamNotifier interface {
+	NotifyPolicy(deviceID string, p api.Policy)
+	EndSession(deviceID string)
+}
+
+// SetStream abilita il data plane: registra GET /api/v1/stream (alla prossima
+// chiamata di Routes) e collega le notifiche dal control plane.
+func (s *Server) SetStream(h http.Handler, n StreamNotifier) {
+	s.stream = h
+	s.notifier = n
+}
+
+// Sessions adatta il device.Store all'interfaccia stream.Sessions.
+func Sessions(devices *device.Store) stream.Sessions { return storeSessions{devices} }
+
+type storeSessions struct{ devices *device.Store }
+
+// Lookup implementa stream.Sessions.
+func (s storeSessions) Lookup(deviceID, sessionID string) (stream.Session, bool) {
+	// Una sessione vecchia non apre lo stream: serve esattamente il session_id corrente.
+	d, ok := s.devices.Get(deviceID)
+	if !ok || d.SessionID != sessionID {
+		return stream.Session{}, false
+	}
+	return stream.Session{ModelKey: d.Model.ModelKey, Policy: d.Policy}, true
 }

@@ -18,9 +18,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
+	"github.com/UBICO/SCIoT_go_server/internal/stream"
+	"github.com/UBICO/SCIoT_go_server/internal/worker"
 )
 
 // Limiti accettati per l'intervallo di heartbeat. Sotto i 100 ms il traffico
@@ -39,6 +42,36 @@ const (
 type File struct {
 	Server Server                 `json:"server"`
 	Models []registry.ModelConfig `json:"models"`
+
+	// Worker e Stream sono opzionali: senza la sezione "worker" il server
+	// gira solo con il control plane (nessun data plane, tutti LOCAL).
+	Worker *Worker `json:"worker,omitempty"`
+	Stream Stream  `json:"stream"`
+}
+
+// Worker è la sezione "worker": il processo che esegue i segmenti TFLite.
+//
+//	"worker": {
+//	  "command": ["uv", "run", "--project", "worker", "sciot-worker"],
+//	  "address": "127.0.0.1:50051",
+//	  "slots": 2, "threads": 6,
+//	  "startup_timeout_ms": 120000
+//	}
+//
+// Con "command" vuoto il worker è esterno: avviato da altri su "address".
+type Worker struct {
+	Command          []string `json:"command,omitempty"`
+	Address          string   `json:"address"`
+	Slots            int      `json:"slots"`
+	Threads          int      `json:"threads"`
+	StartupTimeoutMS *int     `json:"startup_timeout_ms,omitempty"`
+}
+
+// Stream è la sezione "stream": i limiti del data plane. Tutto opzionale.
+type Stream struct {
+	MaxInflight       *int `json:"max_inflight,omitempty"`
+	DefaultDeadlineMS *int `json:"default_deadline_ms,omitempty"`
+	MaxMessageBytes   *int `json:"max_message_bytes,omitempty"`
 }
 
 // Server è la sezione "server". Ogni campo è opzionale: se manca vale il
@@ -127,5 +160,91 @@ func (f File) LoadConfig() (load.Config, error) {
 		cfg.CPUEWMAAlpha = alpha
 	}
 
+	return cfg, nil
+}
+
+// Valori fissi del supervisore: non serve esporli in config.json.
+const (
+	DefaultWorkerStartupTimeout = 2 * time.Minute // import di TensorFlow + caricamento dei modelli
+	workerMinBackoff            = time.Second
+	workerMaxBackoff            = 30 * time.Second
+	workerStopGrace             = 10 * time.Second
+	workerHealthInterval        = 5 * time.Second
+)
+
+// WorkerOptions restituisce le opzioni del supervisore e true, oppure false
+// se la sezione "worker" manca (data plane disabilitato).
+//
+// known sono i modelli del registry (registry.Models()): il worker carica gli
+// stessi modelli del file, e il supervisore ne verifica gli hash.
+func (f File) WorkerOptions(known []api.ModelEntry) (worker.Options, bool, error) {
+	if f.Worker == nil {
+		return worker.Options{}, false, nil
+	}
+	w := f.Worker
+	if w.Address == "" {
+		return worker.Options{}, false, fmt.Errorf("worker.address is required")
+	}
+	// Per un worker esterno (command vuoto) slots e threads li decide chi lo
+	// avvia: si validano solo quando li passa il supervisore.
+	if len(w.Command) > 0 {
+		if w.Slots < 1 {
+			return worker.Options{}, false, fmt.Errorf("worker.slots must be >= 1, got %d", w.Slots)
+		}
+		if w.Threads < 1 {
+			return worker.Options{}, false, fmt.Errorf("worker.threads must be >= 1, got %d", w.Threads)
+		}
+	}
+	startupTimeout := DefaultWorkerStartupTimeout
+	if w.StartupTimeoutMS != nil {
+		if *w.StartupTimeoutMS < 1 {
+			return worker.Options{}, false, fmt.Errorf("worker.startup_timeout_ms must be >= 1, got %d", *w.StartupTimeoutMS)
+		}
+		startupTimeout = time.Duration(*w.StartupTimeoutMS) * time.Millisecond
+	}
+
+	models := make([]worker.ModelArg, len(f.Models))
+	for i, m := range f.Models {
+		models[i] = worker.ModelArg{Key: m.ModelKey, Dir: m.TFLiteDir}
+	}
+	return worker.Options{
+		Command:        w.Command,
+		Address:        w.Address,
+		Models:         models,
+		Slots:          w.Slots,
+		Threads:        w.Threads,
+		Known:          known,
+		StartupTimeout: startupTimeout,
+		MinBackoff:     workerMinBackoff,
+		MaxBackoff:     workerMaxBackoff,
+		StopGrace:      workerStopGrace,
+		HealthInterval: workerHealthInterval,
+	}, true, nil
+}
+
+// StreamConfig restituisce i limiti dello stream: stream.DefaultConfig() con
+// sopra i valori presenti nel file.
+func (f File) StreamConfig() (stream.Config, error) {
+	cfg := stream.DefaultConfig()
+	s := f.Stream
+	if s.MaxInflight != nil {
+		if *s.MaxInflight < 1 {
+			return stream.Config{}, fmt.Errorf("stream.max_inflight must be >= 1, got %d", *s.MaxInflight)
+		}
+		cfg.MaxInflight = *s.MaxInflight
+	}
+	if s.DefaultDeadlineMS != nil {
+		if *s.DefaultDeadlineMS < 1 {
+			return stream.Config{}, fmt.Errorf("stream.default_deadline_ms must be >= 1, got %d", *s.DefaultDeadlineMS)
+		}
+		cfg.DefaultDeadline = time.Duration(*s.DefaultDeadlineMS) * time.Millisecond
+	}
+	if s.MaxMessageBytes != nil {
+		if *s.MaxMessageBytes < 1<<10 || *s.MaxMessageBytes > worker.MaxMessageBytes {
+			return stream.Config{}, fmt.Errorf("stream.max_message_bytes must be in [1024, %d], got %d",
+				worker.MaxMessageBytes, *s.MaxMessageBytes)
+		}
+		cfg.MaxMessageBytes = *s.MaxMessageBytes
+	}
 	return cfg, nil
 }
