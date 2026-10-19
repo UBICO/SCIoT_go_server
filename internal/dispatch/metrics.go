@@ -1,0 +1,138 @@
+package dispatch
+
+import (
+	"cmp"
+	"slices"
+	"time"
+)
+
+// Totals sono i contatori dall'avvio. Insieme a λ e ρ dicono alla Fase 3
+// quanto il server riesce davvero a servire.
+type Totals struct {
+	Rejected    uint64 `json:"rejected"`    // server_busy: non ammessi
+	Expired     uint64 `json:"expired"`     // deadline_exceeded in coda: previsione sbagliata
+	Completed   uint64 `json:"completed"`   // eseguiti con successo
+	Failed      uint64 `json:"failed"`      // ammessi, ma l'esecuzione è fallita
+	Unavailable uint64 `json:"unavailable"` // arrivati senza un worker pronto
+}
+
+// ServiceTime è la S stimata per un modello e uno split point.
+type ServiceTime struct {
+	ModelKey   string  `json:"model_key"`
+	SplitPoint int     `json:"split_point"`
+	MeanMS     float64 `json:"mean_ms"`
+}
+
+// Snapshot è lo stato della coda in un istante: esposto in
+// GET /api/v1/server/status e, nella Fase 3, ingresso dell'algoritmo.
+type Snapshot struct {
+	Slots   int `json:"slots"` // c
+	Running int `json:"running"`
+	Queued  int `json:"queued"`
+
+	WindowSeconds  float64 `json:"window_s"`
+	OfferedPerSec  float64 `json:"offered_per_s"`  // λ offerta: frame arrivati, ammessi o no
+	AdmittedPerSec float64 `json:"admitted_per_s"` // λ ammessa
+	// Utilization è ρ misurata: tempo di slot occupato / (c × finestra).
+	// Assente senza worker (c = 0).
+	Utilization *float64 `json:"utilization,omitzero"`
+	// PredictedWaitMS è l'attesa in coda che vedrebbe un frame in arrivo adesso.
+	PredictedWaitMS float64 `json:"predicted_wait_ms"`
+
+	Service []ServiceTime `json:"service"`
+	Totals  Totals        `json:"totals"`
+}
+
+// Snapshot restituisce lo stato attuale.
+func (d *Dispatcher) Snapshot() Snapshot {
+	now := d.now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	slots := d.backend.Slots()
+	sum := d.window.sum(now)
+	w := d.window.length().Seconds()
+	snap := Snapshot{
+		Slots:          slots,
+		Running:        len(d.running),
+		Queued:         len(d.queue),
+		WindowSeconds:  w,
+		OfferedPerSec:  float64(sum.offered) / w,
+		AdmittedPerSec: float64(sum.admitted) / w,
+		Service:        make([]ServiceTime, 0, len(d.service)),
+		Totals:         d.totals,
+	}
+	if slots > 0 {
+		rho := sum.busy.Seconds() / (float64(slots) * w)
+		snap.Utilization = &rho
+		snap.PredictedWaitMS = ms(predictWait(slots, d.remainingLocked(now), d.queuedLocked()))
+	}
+	for k, s := range d.service {
+		snap.Service = append(snap.Service, ServiceTime{ModelKey: k.model, SplitPoint: k.split, MeanMS: ms(s)})
+	}
+	// Ordine stabile: le mappe in Go non hanno ordine, il JSON sì.
+	slices.SortFunc(snap.Service, func(a, b ServiceTime) int {
+		return cmp.Or(cmp.Compare(a.ModelKey, b.ModelKey), cmp.Compare(a.SplitPoint, b.SplitPoint))
+	})
+	return snap
+}
+
+// ---------------------------------------------------------------------------
+// Finestra scorrevole
+// ---------------------------------------------------------------------------
+
+// bucket accumula gli eventi di un secondo.
+type bucket struct {
+	sec      int64 // secondo Unix a cui si riferisce
+	offered  int
+	admitted int
+	busy     time.Duration // tempo di slot occupato dai job terminati in quel secondo
+}
+
+// window è un anello di bucket da un secondo: la memoria non cresce con il
+// traffico e una lettura costa len(ring) somme, qualunque sia il carico.
+//
+// Il busy di un job viene contato tutto nel secondo in cui termina: con job
+// molto più brevi della finestra (ms contro 10 s) l'errore è trascurabile.
+type window struct {
+	ring []bucket
+}
+
+func newWindow(d time.Duration) *window {
+	n := max(1, int(d/time.Second))
+	return &window{ring: make([]bucket, n)}
+}
+
+func (w *window) length() time.Duration { return time.Duration(len(w.ring)) * time.Second }
+
+// add somma b (sec escluso) al bucket del secondo di now.
+func (w *window) add(now time.Time, b bucket) {
+	sec := now.Unix()
+	n := int64(len(w.ring))
+	i := ((sec % n) + n) % n
+	if w.ring[i].sec != sec {
+		// Il bucket contiene un secondo vecchio, di un giro precedente dell'anello.
+		w.ring[i] = bucket{sec: sec}
+	}
+	w.ring[i].offered += b.offered
+	w.ring[i].admitted += b.admitted
+	w.ring[i].busy += b.busy
+}
+
+// sum restituisce la somma dei bucket degli ultimi len(ring) secondi,
+// secondo corrente compreso.
+func (w *window) sum(now time.Time) bucket {
+	// Solo i bucket con sec in (now-len(ring), now]: gli altri sono vecchi
+	// (nessun evento da allora) e non vanno contati.
+	cur := now.Unix()
+	oldest := cur - int64(len(w.ring))
+	var total bucket
+	for _, b := range w.ring {
+		if b.sec > oldest && b.sec <= cur {
+			total.offered += b.offered
+			total.admitted += b.admitted
+			total.busy += b.busy
+		}
+	}
+	return total
+}

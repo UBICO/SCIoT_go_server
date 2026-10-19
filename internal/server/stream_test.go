@@ -1,11 +1,14 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 )
 
 // fakeNotifier registra le chiamate del control plane.
@@ -97,5 +100,28 @@ func TestHooksWithoutDataPlane(t *testing.T) {
 	registerSession(t, s, modelHash)
 	if rec := do(t, s, http.MethodPost, "/api/v1/admin/devices/web_192/policy", `{"mode":"LOCAL","split_point":null}`); rec.Code != http.StatusOK {
 		t.Errorf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+type fixedQueue struct{ snap dispatch.Snapshot }
+
+func (f fixedQueue) Snapshot() dispatch.Snapshot { return f.snap }
+
+func TestServerStatusDispatchSection(t *testing.T) {
+	s, _, _ := testServer(t)
+	if body := do(t, s, http.MethodGet, "/api/v1/server/status", "").Body.String(); strings.Contains(body, `"dispatch"`) {
+		t.Errorf("senza data plane la sezione non deve esserci: %s", body)
+	}
+
+	s.SetQueue(fixedQueue{dispatch.Snapshot{Slots: 2, Queued: 3}})
+	var resp struct {
+		Dispatch *dispatch.Snapshot `json:"dispatch"`
+	}
+	rec := do(t, s, http.MethodGet, "/api/v1/server/status", "")
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Dispatch == nil || resp.Dispatch.Slots != 2 || resp.Dispatch.Queued != 3 {
+		t.Errorf("dispatch = %+v", resp.Dispatch)
 	}
 }

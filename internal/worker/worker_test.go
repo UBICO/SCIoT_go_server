@@ -224,6 +224,9 @@ func TestSupervisorStartsAndStopsTheWorker(t *testing.T) {
 	if s, ok := catalog.Segments("tiny"); !ok || len(s) != 3 {
 		t.Errorf("catalogo = %v, %v", s, ok)
 	}
+	if n := sup.Slots(); n != 2 {
+		t.Errorf("Slots = %d, attesi 2 (dal Describe)", n)
+	}
 	out, err := sup.Execute(context.Background(), stream.Job{ModelKey: "tiny", WantRaw: true,
 		Deadline: time.Now().Add(time.Second)})
 	if err != nil || string(out.Output) != "OUTPUT" {
@@ -237,6 +240,9 @@ func TestSupervisorStartsAndStopsTheWorker(t *testing.T) {
 	}
 	if _, ok := catalog.Segments("tiny"); ok {
 		t.Error("dopo lo spegnimento il catalogo deve essere vuoto")
+	}
+	if n := sup.Slots(); n != 0 {
+		t.Errorf("Slots dopo lo spegnimento = %d", n)
 	}
 }
 

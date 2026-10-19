@@ -60,6 +60,7 @@ type Supervisor struct {
 	mu     sync.Mutex
 	client *Client
 	ready  bool
+	slots  int // dal Describe: vale anche per un worker esterno
 }
 
 var _ stream.Executor = (*Supervisor)(nil)
@@ -104,6 +105,14 @@ func (s *Supervisor) reconnect() error {
 	return old.Close()
 }
 
+// Slots restituisce i job che il worker esegue in parallelo, 0 se non è
+// pronto. Il dispatcher non gliene manda mai di più.
+func (s *Supervisor) Slots() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.slots
+}
+
 // Ready riporta se il worker ha risposto a Describe ed è in uso.
 func (s *Supervisor) Ready() bool {
 	s.mu.Lock()
@@ -114,9 +123,13 @@ func (s *Supervisor) Ready() bool {
 // setReady aggiorna lo stato e il catalogo insieme: un worker non pronto non
 // deve avere modelli nel catalogo (lo stream rifiuterebbe comunque i frame,
 // ma con 503 già all'apertura dello stream è più chiaro per il device).
-func (s *Supervisor) setReady(models map[string][]api.SegmentSize) {
+func (s *Supervisor) setReady(models map[string][]api.SegmentSize, slots int) {
 	s.mu.Lock()
 	s.ready = models != nil
+	s.slots = 0
+	if s.ready {
+		s.slots = slots
+	}
 	s.mu.Unlock()
 	s.catalog.Replace(models)
 }
@@ -152,10 +165,10 @@ func (s *Supervisor) runManaged(ctx context.Context) {
 
 			select {
 			case err := <-exited:
-				s.setReady(nil)
+				s.setReady(nil, 0)
 				log.Printf("worker exited: %v", err)
 			case <-ctx.Done():
-				s.setReady(nil)
+				s.setReady(nil, 0)
 				stop()
 				<-exited
 				return
@@ -183,11 +196,11 @@ func (s *Supervisor) runExternal(ctx context.Context) {
 			}
 		} else if _, err := s.currentClient().Describe(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("worker %s lost: %v", s.opts.Address, err)
-			s.setReady(nil)
+			s.setReady(nil, 0)
 		}
 		select {
 		case <-ctx.Done():
-			s.setReady(nil)
+			s.setReady(nil, 0)
 			return
 		case <-ticker.C:
 		}
@@ -212,7 +225,7 @@ func (s *Supervisor) waitReady(ctx context.Context) error {
 			}
 			log.Printf("worker ready: %d models enabled, %d slots, %d threads",
 				len(models), desc.GetSlots(), desc.GetThreads())
-			s.setReady(models)
+			s.setReady(models, int(desc.GetSlots()))
 			return nil
 		}
 		select {

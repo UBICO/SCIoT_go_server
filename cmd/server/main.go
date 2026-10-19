@@ -15,6 +15,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/config"
 	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
@@ -121,8 +122,11 @@ func main() {
 			sup.Run(ctx)
 		}()
 
-		// Il Supervisor è l'Executor, finché non c'è il dispatcher (2.4c).
-		streamHandler = stream.NewHandler(server.Sessions(devices), catalog, sup, streamCfg)
+		// Il dispatcher sta davanti al Supervisor: ammissione per scadenza,
+		// coda FIFO, mai più job in volo degli slot del worker.
+		dispatcher := dispatch.New(sup, dispatch.DefaultConfig())
+		srv.SetQueue(dispatcher)
+		streamHandler = stream.NewHandler(server.Sessions(devices), catalog, dispatcher, streamCfg)
 		// Prima di srv.Routes(), che legge la rotta una volta sola.
 		srv.SetStream(streamHandler, streamHandler)
 
