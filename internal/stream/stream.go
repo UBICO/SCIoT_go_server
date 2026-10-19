@@ -135,6 +135,10 @@ type conn struct {
 	mu       sync.Mutex
 	inflight map[uint64]bool // sequence_id dei frame in esecuzione
 
+	// ready viene chiuso dopo l'invio dell'hello: NotifyPolicy lo aspetta,
+	// perché l'hello deve essere il primo messaggio dello stream.
+	ready chan struct{}
+
 	wg sync.WaitGroup // frame in esecuzione, da attendere prima di chiudere
 }
 
@@ -173,9 +177,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := &conn{
 		ws: ws, deviceID: deviceID, sessionID: sessionID, modelKey: sess.ModelKey,
 		sizes: make(map[int]int, len(segments)), inflight: make(map[uint64]bool),
+		ready: make(chan struct{}),
 	}
 	for _, s := range segments {
 		c.sizes[s.SplitPoint] = s.InputBytes
+	}
+
+	// Lo stream si registra PRIMA dell'hello: quando il device lo riceve,
+	// EndSession, NotifyPolicy e CloseAll lo trovano già.
+	if old := h.register(c); old != nil {
+		// Un device ha al massimo uno stream: il precedente viene chiuso. In
+		// una goroutine: il closing handshake può attendere secondi un device
+		// che non risponde, e intanto questo stream deve già leggere.
+		go old.ws.Close(websocket.StatusCode(api.CloseReplaced), "replaced by a newer stream")
+	}
+	defer h.unregister(c)
+
+	// Una nuova registrazione arrivata tra il primo Lookup e register non ha
+	// trovato questo stream da chiudere (EndSession): si ricontrolla. Da qui
+	// in poi ogni nuova registrazione lo trova nel registro.
+	sess, ok = h.sessions.Lookup(deviceID, sessionID)
+	if !ok {
+		ws.Close(websocket.StatusCode(api.CloseSessionExpired), "session expired")
+		return
 	}
 
 	ctx := r.Context()
@@ -185,12 +209,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		return
 	}
-
-	if old := h.register(c); old != nil {
-		// Un device ha al massimo uno stream: il precedente viene chiuso.
-		old.ws.Close(websocket.StatusCode(api.CloseReplaced), "replaced by a newer stream")
-	}
-	defer h.unregister(c)
+	close(c.ready)
 
 	h.readLoop(ctx, c)
 	c.wg.Wait() // non chiudere mentre dei frame stanno ancora scrivendo
@@ -432,6 +451,14 @@ func (h *Handler) NotifyPolicy(deviceID string, p api.Policy) {
 	c := h.lookup(deviceID)
 	if c == nil {
 		return // nessuno stream: il device la riceverà con il prossimo heartbeat
+	}
+	// Lo stream è registrato ma l'hello potrebbe non essere ancora partito:
+	// la policy non deve precederlo. Se l'hello non parte (stream chiuso
+	// subito) ci pensa l'heartbeat.
+	select {
+	case <-c.ready:
+	case <-time.After(h.cfg.WriteTimeout):
+		return
 	}
 	// context.Background() e non il ctx di una richiesta: la notifica parte
 	// dall'handler admin, la cui richiesta finisce subito dopo. writeJSON

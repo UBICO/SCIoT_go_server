@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -131,5 +132,39 @@ func eventually(t *testing.T, check func() bool) {
 			t.Fatal("condizione non raggiunta")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// endedDuringUpgrade: la sessione è valida al primo Lookup (prima
+// dell'upgrade) e scaduta al secondo, come se il device si fosse registrato
+// di nuovo proprio mentre lo stream si apriva.
+type endedDuringUpgrade struct {
+	*fakeSessions
+	calls atomic.Int32
+}
+
+func (e *endedDuringUpgrade) Lookup(deviceID, sessionID string) (Session, bool) {
+	if e.calls.Add(1) > 1 {
+		return Session{}, false
+	}
+	return e.fakeSessions.Lookup(deviceID, sessionID)
+}
+
+func TestSessionEndedDuringUpgrade(t *testing.T) {
+	h := newHarness(t, &FakeExecutor{}, testConfig())
+	h.srv.Config.Handler = NewHandler(&endedDuringUpgrade{fakeSessions: h.sessions},
+		fakeCatalog{"yolo": sizes}, &FakeExecutor{}, testConfig())
+
+	ws, _, err := h.dial(t, "web_96", "S1")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.CloseNow()
+	// Niente hello: la prima lettura deve essere già la chiusura con 4001.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, msg, err := ws.Read(ctx)
+	if code := websocket.CloseStatus(err); code != api.CloseSessionExpired {
+		t.Errorf("prima lettura: messaggio %q, err %v; attesa la chiusura %d", msg, err, api.CloseSessionExpired)
 	}
 }
