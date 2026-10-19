@@ -15,6 +15,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
@@ -82,6 +83,7 @@ type Server struct {
 	// Data plane (opzionale, vedi SetStream).
 	stream   http.Handler
 	notifier StreamNotifier
+	queue    QueueSource // nil senza data plane
 
 	table *heartbeatTable  // usata solo se cfg.Verbose
 	now   func() time.Time // orario delle righe; sostituibile nei test
@@ -441,6 +443,8 @@ type statusResponse struct {
 	Models        int           `json:"models"`
 	StartedAt     time.Time     `json:"started_at"`
 	UptimeSeconds float64       `json:"uptime_seconds"`
+	// Dispatch è lo stato della coda del data plane; assente se è disabilitato.
+	Dispatch *dispatch.Snapshot `json:"dispatch,omitempty"`
 }
 
 // handleServerStatus restituisce l'ultimo campione di carico e i contatori.
@@ -451,13 +455,18 @@ func (s *Server) handleServerStatus(w http.ResponseWriter, _ *http.Request) {
 	//   - StartedAt: s.startedAt
 	//   - UptimeSeconds: tempo trascorso da s.startedAt, misurato con s.now()
 	//     (così nei test è deterministico). Una Duration ha .Seconds().
-	writeJSON(w, http.StatusOK, statusResponse{
+	resp := statusResponse{
 		Load:          s.load.Snapshot(),
 		Devices:       s.devices.Len(),
 		Models:        s.registry.Len(),
 		StartedAt:     s.startedAt,
 		UptimeSeconds: s.now().Sub(s.startedAt).Seconds(),
-	})
+	}
+	if s.queue != nil {
+		snap := s.queue.Snapshot()
+		resp.Dispatch = &snap
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ---------------------------------------------------------------------------
@@ -492,3 +501,12 @@ func (s storeSessions) Lookup(deviceID, sessionID string) (stream.Session, bool)
 	}
 	return stream.Session{ModelKey: d.Model.ModelKey, Policy: d.Policy}, true
 }
+
+// QueueSource fornisce lo stato della coda del data plane.
+// *dispatch.Dispatcher la soddisfa.
+type QueueSource interface {
+	Snapshot() dispatch.Snapshot
+}
+
+// SetQueue aggiunge lo stato della coda a GET /api/v1/server/status.
+func (s *Server) SetQueue(q QueueSource) { s.queue = q }

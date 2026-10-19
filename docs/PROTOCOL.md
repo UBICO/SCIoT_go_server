@@ -378,19 +378,32 @@ Errors about a frame never close the stream.
 
 ### Admission
 
-The server does not cap the queue at a fixed length. When a frame arrives it
-computes its **predicted completion time** from the current state of the
-queue, which it knows exactly:
+The server does not cap the queue at a fixed length. The queue lives in the
+Go server (FIFO, shared by all devices) and never sends the worker more frames
+than its slots, so the server knows exactly what is waiting and what is
+running. When a frame arrives it computes its **predicted completion time**:
 
 ```text
-predicted_wait = max(0, queued + running − c + 1) / c × S
+predicted_wait = when the first slot frees up, after every queued frame
+                 has taken the earliest free slot for its own S
 predicted      = predicted_wait + S
 ```
 
-- `c`: slots of the worker (requests it can run at the same time);
-- `queued`, `running`: frames waiting and frames being executed now;
-- `S`: mean service time for that model and split point, a moving average of
-  the measured `server_ms` without queue.
+- `c`: slots of the worker (requests it can run at the same time), from
+  `Describe`;
+- each running frame frees its slot after its remaining service time
+  (`S − elapsed`, at least 0); a free slot is free now;
+- `S`: mean service time for that model and split point, a moving average
+  (EWMA) of the measured execution time without queue. Frames of different
+  models or split points have different `S`, which is why the wait is
+  simulated slot by slot instead of using a single `S`. With the same `S` for
+  every frame it reduces to `(queued + running − c + 1) / c × S`;
+- a split point never measured: if every segment it would run on the server
+  has been measured (for other split points), `S` is the sum of the segments'
+  mean `layer_ms` plus the model's mean overhead (measured `S` minus the
+  segments: gRPC, tensor copy). Otherwise the longest known `S` is used for
+  the other frames' predictions, and the frame itself is admitted only if a
+  slot is free (its first run gives the first measure).
 
 The frame is admitted if `predicted ≤ deadline_ms`, rejected with
 `server_busy` otherwise. A frame without `deadline_ms` uses a server-side
@@ -400,8 +413,9 @@ will use.
 
 The admitted queue length therefore adapts by itself (Little's law,
 `L = λ · W`): it shrinks when the service slows down, grows when slots are
-added. The arrival rate λ, the service rate μ = 1/S, the utilization
-ρ = λ / (c · μ) and the predicted wait are exposed in the server metrics. The
+added. The offered and admitted arrival rates λ, the mean service time `S` per
+model and split point, the measured utilization ρ (busy slot time / (c × window))
+and the predicted wait are exposed in `GET /api/v1/server/status` (`dispatch`). The
 offloading algorithm (phase 3) uses them with a queueing model (M/G/c, or
 M/M/c as a conservative bound) to predict how the wait would change before
 moving a device to or from `SPLIT`; admission itself needs no model.
