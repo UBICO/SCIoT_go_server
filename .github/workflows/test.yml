@@ -44,7 +44,8 @@ jobs:
       # uv installs Python and the locked dependencies (worker/uv.lock).
       # The cache keeps TensorFlow (~500 MB) between runs; it is rebuilt only
       # when the lockfile changes.
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes only full version tags from v8 on (no floating "v10").
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: "3.12"
           enable-cache: true
