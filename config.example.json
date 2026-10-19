@@ -6,6 +6,24 @@
     "load_sample_interval_ms": 1000,
     "load_cpu_ewma_alpha": 0.35
   },
+  "worker": {
+    "command": [
+      "uv",
+      "run",
+      "--project",
+      "worker",
+      "sciot-worker"
+    ],
+    "address": "127.0.0.1:50051",
+    "slots": 2,
+    "threads": 6,
+    "startup_timeout_ms": 120000
+  },
+  "stream": {
+    "max_inflight": 3,
+    "default_deadline_ms": 1000,
+    "max_message_bytes": 8388608
+  },
   "models": [
     {
       "model_key": "fomo_96x96",

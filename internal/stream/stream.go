@@ -108,11 +108,20 @@ type Handler struct {
 	// afterSend, se non nil, viene chiamata dopo l'invio di un risultato o di
 	// un errore. Solo per i test: simula una goroutine lenta.
 	afterSend func()
+
+	// mu protegge conns: lo stream aperto di ogni device (al massimo uno).
+	// Lo scrivono ServeHTTP (apertura e chiusura), lo leggono NotifyPolicy ed
+	// EndSession, chiamati dagli handler del control plane.
+	mu    sync.Mutex
+	conns map[string]*conn
 }
 
 // NewHandler crea un Handler.
 func NewHandler(sessions Sessions, catalog Catalog, exec Executor, cfg Config) *Handler {
-	return &Handler{sessions: sessions, catalog: catalog, exec: exec, cfg: cfg, now: time.Now}
+	return &Handler{
+		sessions: sessions, catalog: catalog, exec: exec, cfg: cfg, now: time.Now,
+		conns: map[string]*conn{},
+	}
 }
 
 // conn è lo stato di uno stream aperto.
@@ -176,6 +185,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		return
 	}
+
+	if old := h.register(c); old != nil {
+		// Un device ha al massimo uno stream: il precedente viene chiuso.
+		old.ws.Close(websocket.StatusCode(api.CloseReplaced), "replaced by a newer stream")
+	}
+	defer h.unregister(c)
 
 	h.readLoop(ctx, c)
 	c.wg.Wait() // non chiudere mentre dei frame stanno ancora scrivendo
@@ -378,4 +393,85 @@ func writeHTTPError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(api.ErrorResponse{Error: api.ErrorDetail{Code: code, Message: message}})
+}
+
+// ---------------------------------------------------------------------------
+// Stream aperti: notifiche dal control plane
+// ---------------------------------------------------------------------------
+
+// register rende c lo stream del suo device e restituisce quello precedente
+// (nil se non c'era).
+func (h *Handler) register(c *conn) *conn {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	old := h.conns[c.deviceID]
+	h.conns[c.deviceID] = c
+	return old
+}
+
+// unregister toglie c, ma solo se è ancora lo stream del device: se nel
+// frattempo è stato sostituito, il nuovo non va toccato.
+func (h *Handler) unregister(c *conn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.conns[c.deviceID] == c {
+		delete(h.conns, c.deviceID)
+	}
+}
+
+// lookup restituisce lo stream aperto del device, o nil.
+func (h *Handler) lookup(deviceID string) *conn {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.conns[deviceID]
+}
+
+// NotifyPolicy invia al device, se ha uno stream aperto, la sua nuova policy
+// (messaggio "policy": la via veloce; l'heartbeat resta quella affidabile).
+func (h *Handler) NotifyPolicy(deviceID string, p api.Policy) {
+	c := h.lookup(deviceID)
+	if c == nil {
+		return // nessuno stream: il device la riceverà con il prossimo heartbeat
+	}
+	// context.Background() e non il ctx di una richiesta: la notifica parte
+	// dall'handler admin, la cui richiesta finisce subito dopo. writeJSON
+	// applica comunque WriteTimeout.
+	if err := h.writeJSON(context.Background(), c, api.PolicyMessage{Type: api.MsgPolicy, Policy: p}); err != nil {
+		// Lo stream si sta chiudendo: l'heartbeat consegnerà la policy.
+		log.Printf("stream: device=%s: write policy: %v", deviceID, err)
+	}
+}
+
+// EndSession chiude lo stream del device con il codice 4001 (sessione
+// scaduta): va chiamato quando il device si registra di nuovo, perché lo
+// stream appartiene alla sessione precedente.
+func (h *Handler) EndSession(deviceID string) {
+	c := h.lookup(deviceID)
+	if c == nil {
+		return
+	}
+	// Close fa il closing handshake e può attendere qualche secondo che il
+	// device risponda: in una goroutine, per non rallentare la risposta alla
+	// registrazione.
+	go c.ws.Close(websocket.StatusCode(api.CloseSessionExpired), "session expired")
+}
+
+// CloseAll chiude tutti gli stream con il codice 1001 (server in spegnimento).
+//
+// http.Server.Shutdown NON chiude le connessioni WebSocket: dopo l'upgrade la
+// connessione non è più gestita dal server HTTP ("hijacked"). Va chiamato
+// esplicitamente prima di Shutdown.
+func (h *Handler) CloseAll() {
+	h.mu.Lock()
+	conns := make([]*conn, 0, len(h.conns))
+	for _, c := range h.conns {
+		conns = append(conns, c)
+	}
+	h.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, c := range conns {
+		wg.Go(func() { c.ws.Close(websocket.StatusGoingAway, "server shutting down") })
+	}
+	wg.Wait()
 }

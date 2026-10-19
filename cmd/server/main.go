@@ -18,6 +18,8 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
+	"github.com/UBICO/SCIoT_go_server/internal/stream"
+	"github.com/UBICO/SCIoT_go_server/internal/worker"
 )
 
 func main() {
@@ -89,6 +91,50 @@ func main() {
 
 	srv := server.New(reg, devices, srvCfg, monitor)
 
+	// --- 3b. Data plane (solo se config.json ha la sezione "worker") ---------
+
+	// streamHandler resta nil senza data plane: lo shutdown lo controlla.
+	var streamHandler *stream.Handler
+	// workerDone viene chiuso quando sup.Run è terminato, cioè quando il
+	// processo del worker è uscito. nil senza data plane: il main non aspetta.
+	var workerDone chan struct{}
+
+	workerOpts, dataPlane, err := f.WorkerOptions(reg.Models())
+	if err != nil {
+		log.Fatalf("worker config: %v", err)
+	}
+	streamCfg, err := f.StreamConfig()
+	if err != nil {
+		log.Fatalf("stream config: %v", err)
+	}
+	if dataPlane {
+		catalog := worker.NewCatalog()
+		sup, err := worker.NewSupervisor(workerOpts, catalog)
+		if err != nil {
+			log.Fatalf("worker supervisor: %v", err)
+		}
+		// Run avvia il worker, lo riavvia se muore e lo ferma quando ctx viene
+		// cancellato; workerDone dice al main che il processo è uscito.
+		workerDone = make(chan struct{})
+		go func() {
+			defer close(workerDone)
+			sup.Run(ctx)
+		}()
+
+		// Il Supervisor è l'Executor, finché non c'è il dispatcher (2.4c).
+		streamHandler = stream.NewHandler(server.Sessions(devices), catalog, sup, streamCfg)
+		// Prima di srv.Routes(), che legge la rotta una volta sola.
+		srv.SetStream(streamHandler, streamHandler)
+
+		mode := "external"
+		if len(workerOpts.Command) > 0 {
+			mode = "managed"
+		}
+		log.Printf("data plane enabled: worker %s (%s)", workerOpts.Address, mode)
+	} else {
+		log.Printf("data plane disabled: no \"worker\" section in config")
+	}
+
 	// --- 4. Server HTTP con timeout ------------------------------------------
 
 	// http.ListenAndServe(addr, handler) usa un http.Server senza timeout:
@@ -100,8 +146,9 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		// ReadTimeout / WriteTimeout: tempo massimo per leggere la richiesta
 		// intera e scrivere la risposta. Per il control plane i messaggi
-		// sono piccoli: 10 s è largo. Il data plane (activation) potrebbe
-		// richiedere valori diversi: lo rivedremo.
+		// sono piccoli: 10 s è largo. Non limitano lo stream del data plane:
+		// dopo l'upgrade la connessione WebSocket esce da http.Server
+		// (verificato da TestStreamOutlivesHTTPServerTimeouts).
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		// IdleTimeout: quanto resta aperta una connessione keep-alive tra
@@ -133,6 +180,20 @@ func main() {
 	// altrimenti Shutdown scadrebbe subito.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Shutdown non chiude le connessioni WebSocket (sono "hijacked": non più
+	// gestite da http.Server) e aspetterebbe fino al timeout. Si chiudono
+	// prima, con 1001 going away: il device sa che può riconnettersi.
+	if streamHandler != nil {
+		streamHandler.CloseAll()
+	}
+	defer func() {
+		// Senza questa attesa il main uscirebbe mentre il worker sta ancora
+		// ricevendo SIGTERM: il processo Python resterebbe orfano.
+		if workerDone != nil {
+			<-workerDone
+			log.Printf("worker stopped")
+		}
+	}()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
