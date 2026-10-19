@@ -18,9 +18,10 @@ import (
 // in esecuzione insieme. Con hold non nil ogni job aspetta che il test lo
 // liberi (un valore sul canale = un job terminato).
 type fakeBackend struct {
-	slots atomic.Int32
-	hold  chan struct{}
-	err   error
+	slots  atomic.Int32
+	hold   chan struct{}
+	err    error
+	layers []float64 // layer_ms restituiti; nil = []float64{1}
 
 	mu         sync.Mutex
 	order      []byte
@@ -61,7 +62,11 @@ func (b *fakeBackend) Execute(ctx context.Context, job stream.Job) (stream.Outco
 	if b.err != nil {
 		return stream.Outcome{}, b.err
 	}
-	return stream.Outcome{LayerMS: []float64{1}, QueueWaitMS: 0.25}, nil
+	layers := b.layers
+	if layers == nil {
+		layers = []float64{1}
+	}
+	return stream.Outcome{LayerMS: layers, QueueWaitMS: 0.25}, nil
 }
 
 func (b *fakeBackend) seen() []byte {
@@ -408,5 +413,95 @@ func TestConcurrentLoad(t *testing.T) {
 	}
 	if b.maxRunning > 3 {
 		t.Errorf("max in esecuzione = %d, slot 3", b.maxRunning)
+	}
+}
+
+// --- stima per segmento ------------------------------------------------------------------
+
+const msD = time.Millisecond
+
+func TestObserveSegments(t *testing.T) {
+	d := New(newBackend(1, false), Config{ServiceEWMAAlpha: 0.5, Window: time.Second})
+	// split 4, il worker esegue i segmenti 5, 6, 7.
+	d.observeSegmentsLocked("yolo", 4, []float64{1, 2, 3.5}, 10*msD)
+
+	want := map[segKey]time.Duration{{"yolo", 5}: msD, {"yolo", 6}: 2 * msD, {"yolo", 7}: 3500 * time.Microsecond}
+	for k, w := range want {
+		if got := d.segments[k]; got != w {
+			t.Errorf("segmento %d = %v, want %v (i decimali di layer_ms non vanno persi)", k.index, got, w)
+		}
+	}
+	if d.last["yolo"] != 7 {
+		t.Errorf("ultimo segmento = %d, atteso 7", d.last["yolo"])
+	}
+	if got := d.overhead["yolo"]; got != 3500*time.Microsecond {
+		t.Errorf("overhead = %v, atteso 10 − 6.5 = 3.5ms", got)
+	}
+
+	// Secondo campione: EWMA anche sui segmenti (alpha 0.5).
+	d.observeSegmentsLocked("yolo", 6, []float64{5.5}, 6*msD)
+	if got := d.segments[segKey{"yolo", 7}]; got != 4500*time.Microsecond {
+		t.Errorf("segmento 7 dopo due campioni = %v, atteso 4.5ms", got)
+	}
+}
+
+func TestObserveSegmentsOverheadNeverNegative(t *testing.T) {
+	d := New(newBackend(1, false), DefaultConfig())
+	// Orologi diversi: Go misura meno della somma di Python.
+	d.observeSegmentsLocked("yolo", 4, []float64{3, 3}, 5*msD)
+	if got := d.overhead["yolo"]; got != 0 {
+		t.Errorf("overhead = %v, atteso 0", got)
+	}
+}
+
+func TestEstimateFromSegments(t *testing.T) {
+	d := New(newBackend(1, false), DefaultConfig())
+	d.observeLocked(key{"yolo", 4}, 10*msD)
+	d.observeSegmentsLocked("yolo", 4, []float64{1, 2, 3}, 10*msD) // overhead 4
+
+	// Split 5 mai usato: segmenti 6 e 7 noti → 2 + 3 + 4.
+	if s, known := d.estimate(key{"yolo", 5}); s != 9*msD || !known {
+		t.Errorf("split 5 = %v, %v; atteso 9ms ricavato dai segmenti", s, known)
+	}
+	// Split 3: il segmento 4 non è mai stato eseguito → ripiego prudente.
+	if s, known := d.estimate(key{"yolo", 3}); s != 10*msD || known {
+		t.Errorf("split 3 = %v, %v; atteso il ripiego (10ms, non noto)", s, known)
+	}
+	// Split 7 = ultimo segmento: nulla da eseguire sul server.
+	if _, ok := d.fromSegments(key{"yolo", 7}); ok {
+		t.Error("split = ultimo segmento non è un job valido")
+	}
+	// Modello mai eseguito.
+	if _, ok := d.fromSegments(key{"fomo", 0}); ok {
+		t.Error("modello sconosciuto: niente stima dai segmenti")
+	}
+}
+
+func TestDirectMeasureBeatsSegments(t *testing.T) {
+	d := New(newBackend(1, false), DefaultConfig())
+	d.observeSegmentsLocked("yolo", 4, []float64{1, 2, 3}, 10*msD)
+	d.observeLocked(key{"yolo", 5}, 20*msD) // misura diretta, diversa dalla somma (9ms)
+	if s, _ := d.estimate(key{"yolo", 5}); s != 20*msD {
+		t.Errorf("S = %v: la misura diretta ha la precedenza", s)
+	}
+}
+
+func TestSegmentsLearnedFromExecute(t *testing.T) {
+	b := newBackend(1, false)
+	b.layers = []float64{1, 2, 3}
+	d := New(b, DefaultConfig())
+	if _, err := d.Execute(context.Background(), job(1, time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	snap := d.Snapshot()
+	if len(snap.Segments) != 3 || snap.Segments[0].Index != 5 || snap.Segments[2].Index != 7 {
+		t.Errorf("segments = %+v", snap.Segments)
+	}
+	if len(snap.Overhead) != 1 || snap.Overhead[0].ModelKey != "yolo" {
+		t.Errorf("overhead = %+v", snap.Overhead)
+	}
+	// Uno split mai usato ora è ammesso anche con la coda piena.
+	if _, known := d.estimate(key{"yolo", 6}); !known {
+		t.Error("split 6 deve essere stimabile dai segmenti")
 	}
 }

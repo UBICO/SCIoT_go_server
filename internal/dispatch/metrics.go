@@ -23,6 +23,20 @@ type ServiceTime struct {
 	MeanMS     float64 `json:"mean_ms"`
 }
 
+// SegmentTime è il tempo medio di invoke() di un segmento.
+type SegmentTime struct {
+	ModelKey string  `json:"model_key"`
+	Index    int     `json:"index"`
+	MeanMS   float64 `json:"mean_ms"`
+}
+
+// OverheadTime è il tempo medio, per modello, che S misura oltre ai
+// segmenti (gRPC, copia del tensore, attesa nel worker).
+type OverheadTime struct {
+	ModelKey string  `json:"model_key"`
+	MeanMS   float64 `json:"mean_ms"`
+}
+
 // Snapshot è lo stato della coda in un istante: esposto in
 // GET /api/v1/server/status e, nella Fase 3, ingresso dell'algoritmo.
 type Snapshot struct {
@@ -39,8 +53,10 @@ type Snapshot struct {
 	// PredictedWaitMS è l'attesa in coda che vedrebbe un frame in arrivo adesso.
 	PredictedWaitMS float64 `json:"predicted_wait_ms"`
 
-	Service []ServiceTime `json:"service"`
-	Totals  Totals        `json:"totals"`
+	Service  []ServiceTime  `json:"service"`  // S misurata per split point
+	Segments []SegmentTime  `json:"segments"` // per stimare S degli split mai usati
+	Overhead []OverheadTime `json:"overhead"`
+	Totals   Totals         `json:"totals"`
 }
 
 // Snapshot restituisce lo stato attuale.
@@ -60,6 +76,8 @@ func (d *Dispatcher) Snapshot() Snapshot {
 		OfferedPerSec:  float64(sum.offered) / w,
 		AdmittedPerSec: float64(sum.admitted) / w,
 		Service:        make([]ServiceTime, 0, len(d.service)),
+		Segments:       make([]SegmentTime, 0, len(d.segments)),
+		Overhead:       make([]OverheadTime, 0, len(d.overhead)),
 		Totals:         d.totals,
 	}
 	if slots > 0 {
@@ -74,6 +92,16 @@ func (d *Dispatcher) Snapshot() Snapshot {
 	slices.SortFunc(snap.Service, func(a, b ServiceTime) int {
 		return cmp.Or(cmp.Compare(a.ModelKey, b.ModelKey), cmp.Compare(a.SplitPoint, b.SplitPoint))
 	})
+	for k, s := range d.segments {
+		snap.Segments = append(snap.Segments, SegmentTime{ModelKey: k.model, Index: k.index, MeanMS: ms(s)})
+	}
+	slices.SortFunc(snap.Segments, func(a, b SegmentTime) int {
+		return cmp.Or(cmp.Compare(a.ModelKey, b.ModelKey), cmp.Compare(a.Index, b.Index))
+	})
+	for m, s := range d.overhead {
+		snap.Overhead = append(snap.Overhead, OverheadTime{ModelKey: m, MeanMS: ms(s)})
+	}
+	slices.SortFunc(snap.Overhead, func(a, b OverheadTime) int { return cmp.Compare(a.ModelKey, b.ModelKey) })
 	return snap
 }
 

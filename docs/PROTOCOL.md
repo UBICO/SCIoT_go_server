@@ -398,7 +398,10 @@ predicted      = predicted_wait + S
   models or split points have different `S`, which is why the wait is
   simulated slot by slot instead of using a single `S`. With the same `S` for
   every frame it reduces to `(queued + running − c + 1) / c × S`;
-- a model and split point never measured: the longest known `S` is used for
+- a split point never measured: if every segment it would run on the server
+  has been measured (for other split points), `S` is the sum of the segments'
+  mean `layer_ms` plus the model's mean overhead (measured `S` minus the
+  segments: gRPC, tensor copy). Otherwise the longest known `S` is used for
   the other frames' predictions, and the frame itself is admitted only if a
   slot is free (its first run gives the first measure).
 

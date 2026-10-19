@@ -54,12 +54,19 @@ type key struct {
 	split int
 }
 
+// segKey identifica un segmento di un modello: il tempo di invoke() di un
+// segmento non dipende da quale split point lo ha raggiunto.
+type segKey struct {
+	model string
+	index int
+}
+
 // entry è un job ammesso: in coda o in esecuzione.
 type entry struct {
 	job     stream.Job
 	arrived time.Time
 	service time.Duration // S previsto all'ammissione
-	known   bool          // S viene da misure di questo stesso key
+	known   bool          // S viene da misure (di questo key o dei suoi segmenti)
 
 	granted chan struct{} // chiuso quando il job ottiene uno slot
 	started time.Time     // quando ha ottenuto lo slot; zero = in coda
@@ -77,8 +84,15 @@ type Dispatcher struct {
 	queue   []*entry            // in attesa di uno slot, in ordine di arrivo
 	running map[*entry]struct{} // in esecuzione nel worker
 	service map[key]time.Duration
-	window  *window
-	totals  Totals
+
+	// Stima per segmento: permette di prevedere S anche per uno split point
+	// mai usato, se i suoi segmenti sono già stati eseguiti per altri split.
+	segments map[segKey]time.Duration // EWMA di layer_ms per segmento
+	overhead map[string]time.Duration // EWMA per modello di (S misurata − Σ layer_ms)
+	last     map[string]int           // indice dell'ultimo segmento di ogni modello
+
+	window *window
+	totals Totals
 }
 
 var _ stream.Executor = (*Dispatcher)(nil)
@@ -91,7 +105,12 @@ func New(backend Backend, cfg Config) *Dispatcher {
 		now:     time.Now,
 		running: map[*entry]struct{}{},
 		service: map[key]time.Duration{},
-		window:  newWindow(cfg.Window),
+
+		segments: map[segKey]time.Duration{},
+		overhead: map[string]time.Duration{},
+		last:     map[string]int{},
+
+		window: newWindow(cfg.Window),
 	}
 }
 
@@ -108,7 +127,7 @@ func (d *Dispatcher) Execute(ctx context.Context, job stream.Job) (stream.Outcom
 	}
 
 	out, err := d.backend.Execute(ctx, job)
-	d.finish(e, err)
+	d.finish(e, out.LayerMS, err)
 	if err != nil {
 		return stream.Outcome{}, err
 	}
@@ -198,8 +217,9 @@ func (d *Dispatcher) wait(ctx context.Context, e *entry) error {
 	return err
 }
 
-// finish libera lo slot di e, aggiorna S e le metriche.
-func (d *Dispatcher) finish(e *entry, execErr error) {
+// finish libera lo slot di e, aggiorna S (del key e dei segmenti) e le
+// metriche. layerMS è il tempo di ogni segmento eseguito dal worker.
+func (d *Dispatcher) finish(e *entry, layerMS []float64, execErr error) {
 	now := d.now()
 	elapsed := now.Sub(e.started)
 
@@ -214,6 +234,7 @@ func (d *Dispatcher) finish(e *entry, execErr error) {
 	} else {
 		d.totals.Completed++
 		d.observeLocked(key{e.job.ModelKey, e.job.SplitPoint}, elapsed)
+		d.observeSegmentsLocked(e.job.ModelKey, e.job.SplitPoint, layerMS, elapsed)
 	}
 	d.dispatchLocked(now)
 }
@@ -232,13 +253,20 @@ func (d *Dispatcher) dispatchLocked(now time.Time) {
 	}
 }
 
-// estimate restituisce S per k e se viene da misure di k.
+// estimate restituisce S per k e se viene da misure. In ordine:
 //
-// Senza misure per k si usa la S più lunga tra quelle note (stima
-// prudente: un job sconosciuto in coda non deve far sembrare la coda più
-// corta di quanto è); senza nessuna misura, 0.
+//  1. la media misurata per k: la stima migliore, perché include l'overhead
+//     esatto per la dimensione del tensore di quello split point;
+//  2. la somma dei segmenti da eseguire più l'overhead del modello, se tutti
+//     quei segmenti sono già stati misurati (anche per altri split point);
+//  3. la S più lunga tra quelle note (stima prudente: un job sconosciuto in
+//     coda non deve far sembrare la coda più corta di quanto è); senza
+//     nessuna misura, 0. Solo in questo caso known è false.
 func (d *Dispatcher) estimate(k key) (time.Duration, bool) {
 	if s, ok := d.service[k]; ok {
+		return s, true
+	}
+	if s, ok := d.fromSegments(k); ok {
 		return s, true
 	}
 	var longest time.Duration
@@ -250,15 +278,79 @@ func (d *Dispatcher) estimate(k key) (time.Duration, bool) {
 
 // observeLocked aggiorna la media di S per k con un nuovo campione.
 func (d *Dispatcher) observeLocked(k key, sample time.Duration) {
-	prev, ok := d.service[k]
+	updateEWMA(d.service, k, sample, d.cfg.ServiceEWMAAlpha)
+}
+
+// updateEWMA aggiorna la media mobile m[k] con un nuovo campione. È generica
+// ([K comparable]): la stessa funzione serve per le mappe con chiave key,
+// segKey e string. comparable = tipi utilizzabili come chiave di una mappa.
+func updateEWMA[K comparable](m map[K]time.Duration, k K, sample time.Duration, alpha float64) {
+	prev, ok := m[k]
 	if !ok {
 		// Primo campione: partire da 0 sottostimerebbe S per molti campioni e
 		// farebbe ammettere troppo.
-		d.service[k] = sample
+		m[k] = sample
 		return
 	}
+	m[k] = time.Duration(alpha*float64(sample) + (1-alpha)*float64(prev))
+}
+
+// observeSegmentsLocked aggiorna i tempi dei segmenti eseguiti e l'overhead
+// del modello.
+//
+// layerMS[j] è il segmento split+1+j (il worker esegue split+1 .. last, in
+// ordine). L'overhead è ciò che S misura oltre ai segmenti: gRPC, copia del
+// tensore, attesa nel worker.
+func (d *Dispatcher) observeSegmentsLocked(model string, split int, layerMS []float64, elapsed time.Duration) {
+	if len(layerMS) == 0 {
+		return // backend che non misura i segmenti: niente da imparare
+	}
 	alpha := d.cfg.ServiceEWMAAlpha
-	d.service[k] = time.Duration(alpha*float64(sample) + (1-alpha)*float64(prev))
+	var sum time.Duration
+	for j, v := range layerMS {
+		// time.Duration(v) * time.Millisecond troncherebbe v a intero prima di
+		// moltiplicare: si converte dopo.
+		dur := time.Duration(v * float64(time.Millisecond))
+		updateEWMA(d.segments, segKey{model, split + 1 + j}, dur, alpha)
+		sum += dur
+	}
+	// Il worker esegue split+1 .. last: l'ultimo segmento eseguito è l'ultimo
+	// del modello.
+	d.last[model] = split + len(layerMS)
+	// Mai sotto zero: le due misure vengono da orologi diversi (Go e Python).
+	updateEWMA(d.overhead, model, max(0, elapsed-sum), alpha)
+}
+
+// fromSegments stima S per k come somma dei segmenti split+1 .. last più
+// l'overhead del modello. ok = false se manca anche una sola misura.
+//
+// L'overhead del modello è una media su tutti gli split point, ma in parte
+// dipende dalla dimensione del tensore (~1 ms/MB sul gRPC): per questo una
+// misura diretta di k, quando c'è, ha la precedenza (vedi estimate).
+func (d *Dispatcher) fromSegments(k key) (time.Duration, bool) {
+	// Senza last il modello non è mai stato eseguito e non si sa quanti segmenti ha.
+	last, ok := d.last[k.model]
+	if !ok {
+		return 0, false
+	}
+	// Con split >= last non c'è nessun segmento da eseguire sul server: non è
+	// un job valido.
+	if k.split >= last {
+		return 0, false
+	}
+	var total time.Duration
+	for i := k.split + 1; i <= last; i++ {
+		s, ok := d.segments[segKey{k.model, i}]
+		if !ok {
+			return 0, false
+		}
+		total += s
+	}
+	overhead, ok := d.overhead[k.model]
+	if !ok {
+		return 0, false
+	}
+	return total + overhead, true
 }
 
 // remainingLocked restituisce il tempo di servizio residuo previsto di ogni
