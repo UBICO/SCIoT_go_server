@@ -2,14 +2,10 @@ package server
 
 import (
 	"bytes"
-	"crypto/md5"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,26 +14,26 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
+	"github.com/UBICO/SCIoT_go_server/internal/registry/registrytest"
 )
 
-// testServer crea un Server con un solo modello ("fomo_96x96") e restituisce
-// anche l'hash del modello e lo Store, per le verifiche.
+// testServer crea un Server con un solo modello ("fomo_96x96", 59 segmenti)
+// e restituisce anche l'hash del modello e lo Store, per le verifiche.
 func testServer(t *testing.T) (*Server, string, *device.Store) {
 	t.Helper()
 
 	dir := t.TempDir()
-	content := []byte("segmento finto")
-	if err := os.WriteFile(filepath.Join(dir, "submodel_0.tflite"), content, 0o644); err != nil {
-		t.Fatal(err)
+	model := registrytest.Default()
+	model.Segments = make([]string, 59)
+	for i := range model.Segments {
+		model.Segments[i] = fmt.Sprintf("segmento finto %d", i)
 	}
-	sum := md5.Sum(content)
-	modelHash := hex.EncodeToString(sum[:])
+	model.Input = []int{1, 96, 96, 3}
+	modelHash := registrytest.Write(t, dir, model)
 
 	reg, err := registry.New(registry.Config{Models: []registry.ModelConfig{{
-		ModelKey:            "fomo_96x96",
-		TFLiteDir:           dir,
-		LastOffloadingLayer: 58,
-		InputSizeBytes:      18432,
+		ModelKey:  "fomo_96x96",
+		TFLiteDir: dir,
 	}}})
 	if err != nil {
 		t.Fatal(err)

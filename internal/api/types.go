@@ -54,15 +54,39 @@ type RegisterRequest struct {
 // Registrazione: risposta (server → client)
 // ---------------------------------------------------------------------------
 
-// ModelInfo descrive il modello che il server ha associato al device.
+// ModelInfo descrive il modello che il server ha associato al device. Viene
+// dal manifest.json della cartella del modello (docs/MODELS.md).
 //
-//	{"model_key": "fomo_96x96", "num_layers": 59,
-//	 "last_offloading_layer": 58, "input_size_bytes": 18432}
+//	{"model_key": "yolo_small_320", "num_layers": 8, "last_offloading_layer": 7,
+//	 "input": {"shape": [1, 320, 320, 3], "dtype": "float32"},
+//	 "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
+//	                 "score_threshold": 0.5, "iou_threshold": 0.2, "max_detections": 10}}
 type ModelInfo struct {
 	ModelKey            string `json:"model_key"`
 	NumLayers           int    `json:"num_layers"`
 	LastOffloadingLayer int    `json:"last_offloading_layer"`
-	InputSizeBytes      int    `json:"input_size_bytes"`
+	// Input è il tensore di input del modello: con forma e tipo il device
+	// prepara il frame (e ne conosce i byte).
+	Input TensorSpec `json:"input"`
+	// Postprocess dice al device come interpretare l'output in LOCAL: deve
+	// essere lo stesso del server in SPLIT, per questo arriva da qui.
+	Postprocess Postprocess `json:"postprocess"`
+}
+
+// TensorSpec è la forma e il tipo di un tensore, batch compreso (sempre 1).
+type TensorSpec struct {
+	Shape []int  `json:"shape"`
+	DType string `json:"dtype"` // "float32", ...
+}
+
+// Postprocess sono i parametri della decodifica dell'output in detection.
+type Postprocess struct {
+	Decoder        string   `json:"decoder"` // "yolo_pro", "fomo"
+	Labels         []string `json:"labels"`
+	ScoreThreshold float64  `json:"score_threshold"`
+	// IoUThreshold è la soglia della NMS; nil per i decoder senza NMS (FOMO).
+	IoUThreshold  *float64 `json:"iou_threshold,omitempty"`
+	MaxDetections int      `json:"max_detections"`
 }
 
 // Policy è la configurazione di esecuzione che il client deve applicare.

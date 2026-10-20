@@ -11,9 +11,7 @@ import (
 
 const modelsJSON = `"models": [{
 	"model_key": "fomo_96x96",
-	"tflite_dir": "/models/fomo_96x96",
-	"last_offloading_layer": 58,
-	"input_size_bytes": 18432
+	"tflite_dir": "/models/fomo_96x96"
 }]`
 
 var known = []api.ModelEntry{{ModelHash: "h", ModelInfo: api.ModelInfo{ModelKey: "fomo_96x96", NumLayers: 59}}}

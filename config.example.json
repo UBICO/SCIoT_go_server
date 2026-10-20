@@ -26,10 +26,8 @@
   },
   "models": [
     {
-      "model_key": "fomo_96x96",
-      "tflite_dir": "/path/to/models/fomo_96x96/layers/tflite",
-      "last_offloading_layer": 58,
-      "input_size_bytes": 18432
+      "model_key": "yolo_small_320",
+      "tflite_dir": "/path/to/sciot-models/yolo_small_320"
     }
   ]
 }

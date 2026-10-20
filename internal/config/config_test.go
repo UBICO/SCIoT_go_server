@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,9 +24,7 @@ func TestLoad(t *testing.T) {
 		"server": {"heartbeat_interval_ms": 500},
 		"models": [{
 			"model_key": "fomo_96x96",
-			"tflite_dir": "/models/fomo_96x96",
-			"last_offloading_layer": 58,
-			"input_size_bytes": 18432
+			"tflite_dir": "/models/fomo_96x96"
 		}]
 	}`)
 
@@ -184,5 +183,19 @@ func TestLoadAcceptsLoadKeys(t *testing.T) {
 	}
 	if *f.Server.LoadSampleIntervalMS != 500 || *f.Server.LoadCPUEWMAAlpha != 0.5 {
 		t.Errorf("server = %+v", f.Server)
+	}
+}
+
+func TestLoadRemovedModelKeysExplainWhy(t *testing.T) {
+	// Un config.json di prima del manifest: l'errore spiega dove sono finiti i valori.
+	for key, want := range map[string]string{
+		"last_offloading_layer": "number of segments",
+		"input_size_bytes":      "manifest.json",
+	} {
+		path := writeConfig(t, `{"models": [{"model_key": "m", "tflite_dir": "/d", "`+key+`": 1}]}`)
+		_, err := Load(path)
+		if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "MODELS.md") {
+			t.Errorf("%s: err = %v", key, err)
+		}
 	}
 }
