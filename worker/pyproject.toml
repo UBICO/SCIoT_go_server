@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 sciot-worker = "sciot_worker.__main__:main"
+sciot-model = "sciot_worker.build.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "grpcio-tools>=1.84"]
