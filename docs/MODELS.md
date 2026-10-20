@@ -245,6 +245,8 @@ the areas and the intersection by the same factor.
 
 `testdata/decoders/<decoder>/`, documented in its `README.md`. Synthetic files
 are hand-written, one rule each (the `"rule"` key), with values exact in
-binary so that float32 and float64 agree. A conforming decoder passes all of
-them: same length and order, same labels, scores within 1e-6, box values
-within 1e-5.
+binary so that float32 and float64 agree. Real files (`real_*.json` and a
+`.bin` with the raw output tensor) hold yolo-small's output on an image,
+written by `worker/scripts/make_decoder_golden.py`, with the worker's
+decoder as the reference. A conforming decoder passes all of them: same
+length and order, same labels, scores within 1e-6, box values within 1e-5.

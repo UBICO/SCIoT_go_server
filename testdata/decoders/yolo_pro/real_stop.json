@@ -1,0 +1,49 @@
+{
+  "rule": "Real yolo-small output: one stop sign, many overlapping candidates reduced by NMS to one",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "max_detections": 10,
+    "iou_threshold": 0.2
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "output": {
+    "file": "real_stop.bin",
+    "shape": [
+      1,
+      2100,
+      6
+    ],
+    "dtype": "float32",
+    "byteorder": "little",
+    "sha256": "cec4015ddc0b6bfee9c77d586c47f01d170cca3a61c60d1497dc7ba77a30b20c"
+  },
+  "source": {
+    "image": "stop.png",
+    "model_hash": "b1823f4505d912e7b390f450f39832f8",
+    "preprocessing": "RGB, bilinear resize without crop, /255"
+  },
+  "detections": [
+    {
+      "label": "stop sign",
+      "score": 0.9514416456222534,
+      "box": {
+        "x": 0.0,
+        "y": 0.11882100254297256,
+        "w": 0.9533593058586121,
+        "h": 0.712303601205349
+      }
+    }
+  ]
+}

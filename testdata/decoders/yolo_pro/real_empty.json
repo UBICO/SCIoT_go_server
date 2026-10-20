@@ -1,0 +1,38 @@
+{
+  "rule": "Real yolo-small output (COCO 000000000531): no object above the threshold",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "max_detections": 10,
+    "iou_threshold": 0.2
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "output": {
+    "file": "real_empty.bin",
+    "shape": [
+      1,
+      2100,
+      6
+    ],
+    "dtype": "float32",
+    "byteorder": "little",
+    "sha256": "0b421491eea0d47193ce3dfbc51434d8699850a7d6bdd35b268286ac907e0a44"
+  },
+  "source": {
+    "image": "000000000531.jpg.6ph2qvim.ingestion-f98f6c7d9-dk8xs.jpg",
+    "model_hash": "b1823f4505d912e7b390f450f39832f8",
+    "preprocessing": "RGB, bilinear resize without crop, /255"
+  },
+  "detections": []
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from sciot_worker.decoders import yolo_pro
 
 GOLDEN = Path(__file__).resolve().parents[2] / "testdata" / "decoders" / "yolo_pro"
 SYNTHETIC = sorted(p for p in GOLDEN.glob("*.json") if not p.with_suffix(".bin").exists())
+REAL = sorted(p for p in GOLDEN.glob("*.json") if p.with_suffix(".bin").exists())
 
 
 def params(pp: dict) -> decoders.Params:
@@ -48,6 +50,21 @@ def test_synthetic_golden(path):
     got = decoders.decode(params(case["postprocess"]), output)
     assert_detections(got, case["detections"])
     assert all(isinstance(d.score, float) and isinstance(d.x, float) for d in got)
+
+
+def test_there_are_real_golden_files():
+    assert len(REAL) >= 3, f"real golden files not found in {GOLDEN}"
+
+
+@pytest.mark.parametrize("path", REAL, ids=lambda p: p.stem)
+def test_real_golden(path):
+    case = json.loads(path.read_text())
+    meta = case["output"]
+    data = path.with_suffix(".bin").read_bytes()
+    assert hashlib.sha256(data).hexdigest() == meta["sha256"], "the .bin does not match its .json"
+    output = np.frombuffer(data, dtype="<f4").reshape(meta["shape"])
+    got = decoders.decode(params(case["postprocess"]), output)
+    assert_detections(got, case["detections"])
 
 
 def test_prepare_does_not_change_the_input():
