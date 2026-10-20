@@ -133,13 +133,13 @@ def test_queue_wait_is_measured(make_worker):
 
 
 def yolo_postprocess(**kw) -> worker_pb2.Postprocess:
-    fields = dict(
-        decoder="yolo_pro",
-        labels=["bicycle", "stop sign"],
-        score_threshold=0.5,
-        iou_threshold=0.5,
-        max_detections=200,
-    )
+    fields = {
+        "decoder": "yolo_pro",
+        "labels": ["bicycle", "stop sign"],
+        "score_threshold": 0.5,
+        "iou_threshold": 0.5,
+        "max_detections": 200,
+    }
     fields.update(kw)
     return worker_pb2.Postprocess(**fields)
 
