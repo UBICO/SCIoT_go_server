@@ -25,7 +25,7 @@ From the C++ export only three files are read:
 
 | File | What |
 |---|---|
-| `model-parameters/model_metadata.h` | `EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER` (architecture → decoder), input width/height, `..._OBJECT_DETECTION_THRESHOLD`, `..._OBJECT_DETECTION_COUNT`, `..._QUANTIZATION_ENABLED`, `..._TFLITE_INPUT_DATATYPE` / `..._OUTPUT_DATATYPE`, project id, deploy version, Studio version |
+| `model-parameters/model_metadata.h` | `EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER` (architecture → decoder), input width/height, `..._OBJECT_DETECTION_THRESHOLD`, `..._QUANTIZATION_ENABLED`, `..._TFLITE_INPUT_DATATYPE` / `..._OUTPUT_DATATYPE`, project id, deploy version, Studio version |
 | `model-parameters/model_variables.h` | labels in order (`ei_classifier_inferencing_categories_*`), NMS IoU (`ei_object_detection_nms_*`) |
 | `tflite-model/*.tflite` | the whole model as Edge Impulse runs it |
 
@@ -87,7 +87,7 @@ numbers as the source model (differences ~1e-5).
                    "savedmodel": {"max_abs_error": 3.5e-05, "max_rel_error": 1e-05},
                    "edge_impulse": {"max_abs_error": 3.6e-05, "max_rel_error": 1e-05}},
   "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
-                  "score_threshold": 0.5, "max_detections": 10, "iou_threshold": 0.2},
+                  "score_threshold": 0.5, "max_detections": 200, "iou_threshold": 0.2},
   "model_hash": "…"
 }
 ```
@@ -100,7 +100,11 @@ numbers as the source model (differences ~1e-5).
 - `cuts` keeps the tensor names: a future quantized build reuses them, so that
   the split points are the same in every precision (see [Quantization](#quantization)).
 - `postprocess` is what devices receive at registration; labels keep Edge
-  Impulse's names exactly (`"stop sign"`, with the space).
+  Impulse's names exactly (`"stop sign"`, with the space). `max_detections`
+  is 200, Edge Impulse's own limit (`EI_CLASSIFIER_OBJECT_DETECTION_KEEP_TOPK`
+  in the SDK). `EI_CLASSIFIER_OBJECT_DETECTION_COUNT` in `model_metadata.h`
+  is **not** a maximum: it is the minimum number of results the SDK returns,
+  padding with zero-score entries, and it is not used.
 - Error `max_rel_error` only counts values with `|expected| ≥ 1e-3`.
 
 ## 4. config.json
@@ -193,5 +197,54 @@ supported family needs no code; a new family needs:
 3. golden files: a real output tensor and the expected detections, decoded
    identically by all three.
 
-The decoder specifications and the golden file format are added with the
-decoders (phase 2.4e).
+## Decoders
+
+A decoder turns the model output into detections: `label`, `score` and a box
+normalized to `[0, 1]` (`x`, `y` = top-left corner, `w`, `h`). The worker
+decodes `SPLIT` frames, the devices decode `LOCAL` frames, with the
+`postprocess` parameters the server sends to both. The implementations
+(worker in Python, Python client, ESP32 in C) are kept identical by the
+golden files in `testdata/decoders/`, not by shared code.
+
+### `yolo_pro`
+
+Edge Impulse YOLO-Pro. The output has one row per candidate box:
+`xmin, ymin, xmax, ymax` normalized, then one score per label, already a
+probability (yolo-small: 2100 rows × 6 columns).
+
+1. **Prepare.** A row with a non-finite value (NaN, ±infinity) is never a
+   candidate (it keeps its index). Clip the four coordinates to `[0, 1]`. Then
+   `xmax = max(xmax, xmin)`, `ymax = max(ymax, ymin)`: a box with swapped
+   corners becomes a zero-area box.
+2. **Per label**, independently:
+   1. candidates: rows with `score_threshold ≤ score ≤ 1` (both inclusive;
+      scores above 1 are discarded);
+   2. order: score descending, ties by row index ascending;
+   3. greedy NMS: keep a candidate unless its IoU with an **already kept**
+      box of the same label is `≥ iou_threshold`. Without `iou_threshold`,
+      keep every candidate.
+3. **Merge** the kept boxes of all labels, sort by score descending, then row
+   index, then label index; keep the first `max_detections`.
+
+IoU of two boxes: `intersection / (area_a + area_b − intersection)`, and 0
+when either area is 0 (a zero-area box never suppresses and is never
+suppressed). Edge Impulse computes it in pixels; normalized coordinates give
+the same value, since scaling x by the width and y by the height multiplies
+the areas and the intersection by the same factor.
+
+**Differences from the Edge Impulse SDK**, all deliberate:
+
+| SDK | SCIoT | Why |
+|---|---|---|
+| boxes in integer pixels, truncated (`x = int(xmin)`) | normalized floats | the protocol format; truncation moves a box by up to 1 px |
+| ties in an undefined order (`std::priority_queue`, `std::sort`) | row index, then label index | Python, Go and C must give the same list |
+| pads with zero-score entries up to `EI_CLASSIFIER_OBJECT_DETECTION_COUNT` | no padding | they are not detections |
+| NaN in a box reaches the result (undefined integer conversion) | rows with non-finite values are ignored | a NaN cannot be encoded in the JSON result |
+
+### Golden files
+
+`testdata/decoders/<decoder>/`, documented in its `README.md`. Synthetic files
+are hand-written, one rule each (the `"rule"` key), with values exact in
+binary so that float32 and float64 agree. A conforming decoder passes all of
+them: same length and order, same labels, scores within 1e-6, box values
+within 1e-5.

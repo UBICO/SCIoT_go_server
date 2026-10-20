@@ -1,0 +1,53 @@
+{
+  "rule": "Same score and same row in two classes: ordered by class index (labels order)",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "iou_threshold": 0.5,
+    "max_detections": 200
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "rows": [
+    [
+      0,
+      0,
+      1,
+      1,
+      0.75,
+      0.75
+    ]
+  ],
+  "detections": [
+    {
+      "label": "bicycle",
+      "score": 0.75,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1
+      }
+    },
+    {
+      "label": "stop sign",
+      "score": 0.75,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1
+      }
+    }
+  ]
+}

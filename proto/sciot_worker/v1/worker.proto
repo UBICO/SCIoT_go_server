@@ -49,11 +49,37 @@ message RunRequest {
   string model_key = 1;
   int32 split_point = 2;  // ultimo segmento eseguito dal device (-1 = input del modello)
   bytes tensor = 3;       // activation grezza; shape e dtype da Describe
+  // Come decodificare l'output in detection. Arriva a ogni richiesta, dal
+  // server: sono i parametri del manifest con l'override di config.json, gli
+  // stessi inviati ai device. Assente = nessuna decodifica.
+  Postprocess postprocess = 4;
+  bool want_raw = 5;  // false = output vuoto nella risposta (solo detection)
+}
+
+// Parametri di decodifica (docs/MODELS.md, "Decoders").
+message Postprocess {
+  string decoder = 1;  // "yolo_pro"
+  repeated string labels = 2;
+  double score_threshold = 3;
+  optional double iou_threshold = 4;  // assente per i decoder senza NMS
+  int32 max_detections = 5;
 }
 
 message RunResponse {
-  bytes output = 1;             // output del modello, grezzo
+  bytes output = 1;             // output del modello, grezzo; vuoto se !want_raw
   repeated double layer_ms = 2; // tempo di invoke() di ogni segmento eseguito
   double queue_wait_ms = 3;     // attesa di uno slot libero dentro il worker
   int32 slot = 4;
+  repeated Detection detections = 5;  // per score decrescente
+  double decode_ms = 6;               // tempo della decodifica
+}
+
+// Un oggetto trovato. Box normalizzato in [0, 1], x e y = angolo in alto a sinistra.
+message Detection {
+  string label = 1;
+  double score = 2;
+  double x = 3;
+  double y = 4;
+  double w = 5;
+  double h = 6;
 }

@@ -28,6 +28,7 @@ type fakeWorker struct {
 
 	mu          sync.Mutex
 	runErr      error
+	detections  []*workerpb.Detection // restituite quando la richiesta ha postprocess
 	sawDeadline bool
 	lastRequest *workerpb.RunRequest
 }
@@ -61,7 +62,16 @@ func (f *fakeWorker) RunFrom(ctx context.Context, req *workerpb.RunRequest) (*wo
 	if f.runErr != nil {
 		return nil, f.runErr
 	}
-	return &workerpb.RunResponse{Output: []byte("OUTPUT"), LayerMs: []float64{1, 2}, QueueWaitMs: 0.5}, nil
+	// Come il worker vero: l'output solo con want_raw, le detection solo con
+	// postprocess.
+	resp := &workerpb.RunResponse{LayerMs: []float64{1, 2}, QueueWaitMs: 0.5}
+	if req.GetWantRaw() {
+		resp.Output = []byte("OUTPUT")
+	}
+	if req.GetPostprocess() != nil {
+		resp.Detections = f.detections
+	}
+	return resp, nil
 }
 
 // serveFake avvia un fakeWorker su addr ("127.0.0.1:0" = porta libera).

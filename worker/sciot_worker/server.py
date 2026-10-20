@@ -8,7 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import grpc
+import numpy as np
 
+from sciot_worker import decoders
 from sciot_worker.models import LoadedModel, model_hash
 from sciot_worker.v1 import worker_pb2, worker_pb2_grpc
 
@@ -109,9 +111,44 @@ class PartitionWorker(worker_pb2_grpc.PartitionWorkerServicer):
             # Always give the slot back, or the pool shrinks for ever.
             self.free.put(slot)
 
+        # Decoded after giving the slot back: the decoder is plain numpy and
+        # must not keep an interpreter busy.
+        detections, decode_ms = [], 0.0
+        if request.HasField("postprocess"):
+            t0 = time.perf_counter()
+            try:
+                # float32: the only output type of a model built by sciot-model
+                # (quantized models are refused for now).
+                found = decoders.decode(
+                    params_from_proto(request.postprocess), np.frombuffer(output, dtype=np.float32)
+                )
+            except ValueError as e:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"decode: {e}")
+            decode_ms = (time.perf_counter() - t0) * 1000
+            detections = [
+                worker_pb2.Detection(label=d.label, score=d.score, x=d.x, y=d.y, w=d.w, h=d.h)
+                for d in found
+            ]
+
         return worker_pb2.RunResponse(
-            output=output, layer_ms=layer_ms, queue_wait_ms=queue_wait_ms, slot=slot.index
+            output=output if request.want_raw else b"",
+            layer_ms=layer_ms,
+            queue_wait_ms=queue_wait_ms,
+            slot=slot.index,
+            detections=detections,
+            decode_ms=decode_ms,
         )
+
+
+def params_from_proto(p: worker_pb2.Postprocess) -> decoders.Params:
+    return decoders.Params(
+        decoder=p.decoder,
+        labels=tuple(p.labels),
+        score_threshold=p.score_threshold,
+        max_detections=p.max_detections,
+        # proto3 "optional": HasField tells an absent value from 0.0.
+        iou_threshold=p.iou_threshold if p.HasField("iou_threshold") else None,
+    )
 
 
 def build_server(worker: PartitionWorker, listen: str) -> tuple[grpc.Server, int]:

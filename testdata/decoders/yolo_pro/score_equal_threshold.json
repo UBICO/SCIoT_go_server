@@ -1,0 +1,51 @@
+{
+  "rule": "A score EQUAL to score_threshold is a candidate (>=); just below it is not",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "iou_threshold": 0.5,
+    "max_detections": 200
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "rows": [
+    [
+      0,
+      0,
+      0.5,
+      0.5,
+      0.5,
+      0
+    ],
+    [
+      0.5,
+      0.5,
+      1,
+      1,
+      0.4921875,
+      0
+    ]
+  ],
+  "detections": [
+    {
+      "label": "bicycle",
+      "score": 0.5,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 0.5,
+        "h": 0.5
+      }
+    }
+  ]
+}

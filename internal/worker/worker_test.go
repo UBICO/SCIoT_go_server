@@ -2,9 +2,11 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
+	"github.com/UBICO/SCIoT_go_server/internal/workerpb"
 )
 
 // --- Client ---------------------------------------------------------------------
@@ -43,6 +46,73 @@ func TestClientExecute(t *testing.T) {
 	job.WantRaw = false
 	if out, _ := c.Execute(context.Background(), job); out.Output != nil {
 		t.Error("senza WantRaw l'output non va restituito")
+	}
+}
+
+func f64(v float64) *float64 { return &v }
+
+var yoloPostprocess = api.Postprocess{Decoder: "yolo_pro", Labels: []string{"bicycle", "stop sign"},
+	ScoreThreshold: 0.5, IoUThreshold: f64(0.2), MaxDetections: 200}
+
+func TestClientSendsPostprocessAndReturnsDetections(t *testing.T) {
+	fake, addr, stop := serveFake(t, "127.0.0.1:0")
+	defer stop()
+	fake.detections = []*workerpb.Detection{
+		{Label: "stop sign", Score: 0.9, X: 0.1, Y: 0.2, W: 0.3, H: 0.4},
+		{Label: "bicycle", Score: 0.6, X: 0.5, Y: 0.5, W: 0.25, H: 0.25},
+	}
+	c, _ := Dial(addr)
+	defer c.Close()
+
+	out, err := c.Execute(context.Background(), stream.Job{ModelKey: "tiny", Postprocess: yoloPostprocess,
+		Deadline: time.Now().Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []api.Detection{
+		{Label: "stop sign", Score: 0.9, Box: api.Box{X: 0.1, Y: 0.2, W: 0.3, H: 0.4}},
+		{Label: "bicycle", Score: 0.6, Box: api.Box{X: 0.5, Y: 0.5, W: 0.25, H: 0.25}},
+	}
+	if !reflect.DeepEqual(out.Detections, want) {
+		t.Errorf("Detections = %+v", out.Detections)
+	}
+	if out.Output != nil {
+		t.Error("senza WantRaw l'output non va chiesto né restituito")
+	}
+
+	pp := fake.lastRequest.GetPostprocess()
+	if pp.GetDecoder() != "yolo_pro" || len(pp.GetLabels()) != 2 || pp.GetScoreThreshold() != 0.5 ||
+		pp.GetMaxDetections() != 200 || pp.IouThreshold == nil || *pp.IouThreshold != 0.2 {
+		t.Errorf("postprocess inviato = %+v", pp)
+	}
+	if fake.lastRequest.GetWantRaw() {
+		t.Error("want_raw deve essere false")
+	}
+}
+
+func TestPostprocessToProto(t *testing.T) {
+	if postprocessToProto(api.Postprocess{}) != nil {
+		t.Error("senza decoder il campo va lasciato assente (nil)")
+	}
+	noNMS := api.Postprocess{Decoder: "fomo", Labels: []string{"a"}, ScoreThreshold: 0.8, MaxDetections: 10}
+	if got := postprocessToProto(noNMS); got == nil || got.IouThreshold != nil {
+		t.Errorf("senza NMS iou_threshold deve restare assente: %+v", got)
+	}
+	got := postprocessToProto(yoloPostprocess)
+	if got.IouThreshold == yoloPostprocess.IoUThreshold {
+		t.Error("IouThreshold deve essere una copia, non lo stesso puntatore")
+	}
+}
+
+func TestDetectionsFromProtoIsNeverNil(t *testing.T) {
+	// Un modello decodificato senza oggetti: "detections": [], non null.
+	got := detectionsFromProto(nil)
+	if got == nil || len(got) != 0 {
+		t.Fatalf("detectionsFromProto(nil) = %#v", got)
+	}
+	data, _ := json.Marshal(api.InferenceResult{Detections: got})
+	if !strings.Contains(string(data), `"detections":[]`) {
+		t.Errorf("JSON = %s", data)
 	}
 }
 

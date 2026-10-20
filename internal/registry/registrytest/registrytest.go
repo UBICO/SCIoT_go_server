@@ -65,7 +65,7 @@ func Write(t testing.TB, dir string, m Model) string {
 		"segments":       segments,
 		"postprocess": map[string]any{
 			"decoder": "yolo_pro", "labels": m.Labels,
-			"score_threshold": 0.5, "iou_threshold": 0.2, "max_detections": 10,
+			"score_threshold": 0.5, "iou_threshold": 0.2, "max_detections": 200,
 		},
 		"model_hash": hash,
 	}

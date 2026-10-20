@@ -102,7 +102,7 @@ Request:
             "input": {"shape": [1, 320, 320, 3], "dtype": "float32"},
             "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
                             "score_threshold": 0.5, "iou_threshold": 0.2,
-                            "max_detections": 10}},
+                            "max_detections": 200}},
   "policy": {"mode": "LOCAL", "split_point": null, "policy_version": 1},
   "heartbeat_interval_ms": 1000
 }
@@ -181,7 +181,7 @@ Models served by this server, sorted by `model_key`:
              "input": {"shape": [1, 320, 320, 3], "dtype": "float32"},
              "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
                              "score_threshold": 0.5, "iou_threshold": 0.2,
-                             "max_detections": 10}}]}
+                             "max_detections": 200}}]}
 ```
 
 The single-model form returns one entry, or `404 model_not_found`.

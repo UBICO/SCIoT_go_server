@@ -1,0 +1,43 @@
+{
+  "rule": "Coordinates are clipped to [0, 1] before anything else (real outputs range from about -1 to 2.3)",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "iou_threshold": 0.5,
+    "max_detections": 200
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "rows": [
+    [
+      -0.25,
+      -0.5,
+      1.5,
+      0.75,
+      0.75,
+      0
+    ]
+  ],
+  "detections": [
+    {
+      "label": "bicycle",
+      "score": 0.75,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 0.75
+      }
+    }
+  ]
+}

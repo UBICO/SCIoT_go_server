@@ -31,6 +31,9 @@ import (
 type Session struct {
 	ModelKey string
 	Policy   api.Policy
+	// Postprocess è come decodificare l'output: gli stessi parametri che il
+	// device ha ricevuto alla registrazione.
+	Postprocess api.Postprocess
 }
 
 // Sessions verifica una sessione e ne restituisce lo stato attuale.
@@ -52,6 +55,8 @@ type Job struct {
 	Tensor     []byte
 	Deadline   time.Time // oltre questo istante il risultato non serve più
 	WantRaw    bool
+	// Postprocess decodifica l'output in detection; Decoder vuoto = nessuna.
+	Postprocess api.Postprocess
 }
 
 // Outcome è il risultato dell'esecuzione di un Job.
@@ -130,7 +135,10 @@ type conn struct {
 	deviceID  string
 	sessionID string
 	modelKey  string
-	sizes     map[int]int // split point → byte attesi
+	// postprocess è fissato all'apertura dello stream: dipende dal modello
+	// della sessione, che non cambia finché la sessione vive.
+	postprocess api.Postprocess
+	sizes       map[int]int // split point → byte attesi
 
 	mu       sync.Mutex
 	inflight map[uint64]bool // sequence_id dei frame in esecuzione
@@ -176,7 +184,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	c := &conn{
 		ws: ws, deviceID: deviceID, sessionID: sessionID, modelKey: sess.ModelKey,
-		sizes: make(map[int]int, len(segments)), inflight: make(map[uint64]bool),
+		postprocess: sess.Postprocess,
+		sizes:       make(map[int]int, len(segments)), inflight: make(map[uint64]bool),
 		ready: make(chan struct{}),
 	}
 	for _, s := range segments {
@@ -288,12 +297,13 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 	}
 
 	out, err := h.exec.Execute(ctx, Job{
-		DeviceID:   c.deviceID,
-		ModelKey:   c.modelKey,
-		SplitPoint: hdr.SplitPoint,
-		Tensor:     payload,
-		Deadline:   deadline,
-		WantRaw:    hdr.WantRaw,
+		DeviceID:    c.deviceID,
+		ModelKey:    c.modelKey,
+		Postprocess: c.postprocess,
+		SplitPoint:  hdr.SplitPoint,
+		Tensor:      payload,
+		Deadline:    deadline,
+		WantRaw:     hdr.WantRaw,
 	})
 	// Il frame esce dalla finestra PRIMA che il device riceva l'esito: un
 	// device che, appena ricevuto il risultato, invia il frame successivo

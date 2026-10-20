@@ -233,7 +233,7 @@ def test_read_cpp_export(tiny, tmp_path, as_zip):
         "decoder": "yolo_pro",
         "labels": ["bicycle", "stop sign"],
         "score_threshold": 0.5,
-        "max_detections": 10,
+        "max_detections": 200,  # Edge Impulse's top-K, not OBJECT_DETECTION_COUNT (10)
         "iou_threshold": pytest.approx(0.2),
     }
     assert export.full_model[4:8] == b"TFL3"  # a TFLite flatbuffer

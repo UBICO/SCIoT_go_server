@@ -269,10 +269,15 @@ func (x *Segment) GetOutputBytes() int64 {
 }
 
 type RunRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ModelKey      string                 `protobuf:"bytes,1,opt,name=model_key,json=modelKey,proto3" json:"model_key,omitempty"`
-	SplitPoint    int32                  `protobuf:"varint,2,opt,name=split_point,json=splitPoint,proto3" json:"split_point,omitempty"` // ultimo segmento eseguito dal device (-1 = input del modello)
-	Tensor        []byte                 `protobuf:"bytes,3,opt,name=tensor,proto3" json:"tensor,omitempty"`                            // activation grezza; shape e dtype da Describe
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ModelKey   string                 `protobuf:"bytes,1,opt,name=model_key,json=modelKey,proto3" json:"model_key,omitempty"`
+	SplitPoint int32                  `protobuf:"varint,2,opt,name=split_point,json=splitPoint,proto3" json:"split_point,omitempty"` // ultimo segmento eseguito dal device (-1 = input del modello)
+	Tensor     []byte                 `protobuf:"bytes,3,opt,name=tensor,proto3" json:"tensor,omitempty"`                            // activation grezza; shape e dtype da Describe
+	// Come decodificare l'output in detection. Arriva a ogni richiesta, dal
+	// server: sono i parametri del manifest con l'override di config.json, gli
+	// stessi inviati ai device. Assente = nessuna decodifica.
+	Postprocess   *Postprocess `protobuf:"bytes,4,opt,name=postprocess,proto3" json:"postprocess,omitempty"`
+	WantRaw       bool         `protobuf:"varint,5,opt,name=want_raw,json=wantRaw,proto3" json:"want_raw,omitempty"` // false = output vuoto nella risposta (solo detection)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -328,19 +333,112 @@ func (x *RunRequest) GetTensor() []byte {
 	return nil
 }
 
+func (x *RunRequest) GetPostprocess() *Postprocess {
+	if x != nil {
+		return x.Postprocess
+	}
+	return nil
+}
+
+func (x *RunRequest) GetWantRaw() bool {
+	if x != nil {
+		return x.WantRaw
+	}
+	return false
+}
+
+// Parametri di decodifica (docs/MODELS.md, "Decoders").
+type Postprocess struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Decoder        string                 `protobuf:"bytes,1,opt,name=decoder,proto3" json:"decoder,omitempty"` // "yolo_pro"
+	Labels         []string               `protobuf:"bytes,2,rep,name=labels,proto3" json:"labels,omitempty"`
+	ScoreThreshold float64                `protobuf:"fixed64,3,opt,name=score_threshold,json=scoreThreshold,proto3" json:"score_threshold,omitempty"`
+	IouThreshold   *float64               `protobuf:"fixed64,4,opt,name=iou_threshold,json=iouThreshold,proto3,oneof" json:"iou_threshold,omitempty"` // assente per i decoder senza NMS
+	MaxDetections  int32                  `protobuf:"varint,5,opt,name=max_detections,json=maxDetections,proto3" json:"max_detections,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *Postprocess) Reset() {
+	*x = Postprocess{}
+	mi := &file_sciot_worker_v1_worker_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Postprocess) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Postprocess) ProtoMessage() {}
+
+func (x *Postprocess) ProtoReflect() protoreflect.Message {
+	mi := &file_sciot_worker_v1_worker_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Postprocess.ProtoReflect.Descriptor instead.
+func (*Postprocess) Descriptor() ([]byte, []int) {
+	return file_sciot_worker_v1_worker_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *Postprocess) GetDecoder() string {
+	if x != nil {
+		return x.Decoder
+	}
+	return ""
+}
+
+func (x *Postprocess) GetLabels() []string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *Postprocess) GetScoreThreshold() float64 {
+	if x != nil {
+		return x.ScoreThreshold
+	}
+	return 0
+}
+
+func (x *Postprocess) GetIouThreshold() float64 {
+	if x != nil && x.IouThreshold != nil {
+		return *x.IouThreshold
+	}
+	return 0
+}
+
+func (x *Postprocess) GetMaxDetections() int32 {
+	if x != nil {
+		return x.MaxDetections
+	}
+	return 0
+}
+
 type RunResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Output        []byte                 `protobuf:"bytes,1,opt,name=output,proto3" json:"output,omitempty"`                                  // output del modello, grezzo
+	Output        []byte                 `protobuf:"bytes,1,opt,name=output,proto3" json:"output,omitempty"`                                  // output del modello, grezzo; vuoto se !want_raw
 	LayerMs       []float64              `protobuf:"fixed64,2,rep,packed,name=layer_ms,json=layerMs,proto3" json:"layer_ms,omitempty"`        // tempo di invoke() di ogni segmento eseguito
 	QueueWaitMs   float64                `protobuf:"fixed64,3,opt,name=queue_wait_ms,json=queueWaitMs,proto3" json:"queue_wait_ms,omitempty"` // attesa di uno slot libero dentro il worker
 	Slot          int32                  `protobuf:"varint,4,opt,name=slot,proto3" json:"slot,omitempty"`
+	Detections    []*Detection           `protobuf:"bytes,5,rep,name=detections,proto3" json:"detections,omitempty"`               // per score decrescente
+	DecodeMs      float64                `protobuf:"fixed64,6,opt,name=decode_ms,json=decodeMs,proto3" json:"decode_ms,omitempty"` // tempo della decodifica
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunResponse) Reset() {
 	*x = RunResponse{}
-	mi := &file_sciot_worker_v1_worker_proto_msgTypes[5]
+	mi := &file_sciot_worker_v1_worker_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -352,7 +450,7 @@ func (x *RunResponse) String() string {
 func (*RunResponse) ProtoMessage() {}
 
 func (x *RunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sciot_worker_v1_worker_proto_msgTypes[5]
+	mi := &file_sciot_worker_v1_worker_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -365,7 +463,7 @@ func (x *RunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResponse.ProtoReflect.Descriptor instead.
 func (*RunResponse) Descriptor() ([]byte, []int) {
-	return file_sciot_worker_v1_worker_proto_rawDescGZIP(), []int{5}
+	return file_sciot_worker_v1_worker_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RunResponse) GetOutput() []byte {
@@ -396,6 +494,105 @@ func (x *RunResponse) GetSlot() int32 {
 	return 0
 }
 
+func (x *RunResponse) GetDetections() []*Detection {
+	if x != nil {
+		return x.Detections
+	}
+	return nil
+}
+
+func (x *RunResponse) GetDecodeMs() float64 {
+	if x != nil {
+		return x.DecodeMs
+	}
+	return 0
+}
+
+// Un oggetto trovato. Box normalizzato in [0, 1], x e y = angolo in alto a sinistra.
+type Detection struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Label         string                 `protobuf:"bytes,1,opt,name=label,proto3" json:"label,omitempty"`
+	Score         float64                `protobuf:"fixed64,2,opt,name=score,proto3" json:"score,omitempty"`
+	X             float64                `protobuf:"fixed64,3,opt,name=x,proto3" json:"x,omitempty"`
+	Y             float64                `protobuf:"fixed64,4,opt,name=y,proto3" json:"y,omitempty"`
+	W             float64                `protobuf:"fixed64,5,opt,name=w,proto3" json:"w,omitempty"`
+	H             float64                `protobuf:"fixed64,6,opt,name=h,proto3" json:"h,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Detection) Reset() {
+	*x = Detection{}
+	mi := &file_sciot_worker_v1_worker_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Detection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Detection) ProtoMessage() {}
+
+func (x *Detection) ProtoReflect() protoreflect.Message {
+	mi := &file_sciot_worker_v1_worker_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Detection.ProtoReflect.Descriptor instead.
+func (*Detection) Descriptor() ([]byte, []int) {
+	return file_sciot_worker_v1_worker_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Detection) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *Detection) GetScore() float64 {
+	if x != nil {
+		return x.Score
+	}
+	return 0
+}
+
+func (x *Detection) GetX() float64 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *Detection) GetY() float64 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *Detection) GetW() float64 {
+	if x != nil {
+		return x.W
+	}
+	return 0
+}
+
+func (x *Detection) GetH() float64 {
+	if x != nil {
+		return x.H
+	}
+	return 0
+}
+
 var File_sciot_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_sciot_worker_v1_worker_proto_rawDesc = "" +
@@ -420,18 +617,38 @@ const file_sciot_worker_v1_worker_proto_rawDesc = "" +
 	"\vinput_bytes\x18\x04 \x01(\x03R\n" +
 	"inputBytes\x12!\n" +
 	"\foutput_shape\x18\x05 \x03(\x05R\voutputShape\x12!\n" +
-	"\foutput_bytes\x18\x06 \x01(\x03R\voutputBytes\"b\n" +
+	"\foutput_bytes\x18\x06 \x01(\x03R\voutputBytes\"\xbd\x01\n" +
 	"\n" +
 	"RunRequest\x12\x1b\n" +
 	"\tmodel_key\x18\x01 \x01(\tR\bmodelKey\x12\x1f\n" +
 	"\vsplit_point\x18\x02 \x01(\x05R\n" +
 	"splitPoint\x12\x16\n" +
-	"\x06tensor\x18\x03 \x01(\fR\x06tensor\"x\n" +
+	"\x06tensor\x18\x03 \x01(\fR\x06tensor\x12>\n" +
+	"\vpostprocess\x18\x04 \x01(\v2\x1c.sciot.worker.v1.PostprocessR\vpostprocess\x12\x19\n" +
+	"\bwant_raw\x18\x05 \x01(\bR\awantRaw\"\xcb\x01\n" +
+	"\vPostprocess\x12\x18\n" +
+	"\adecoder\x18\x01 \x01(\tR\adecoder\x12\x16\n" +
+	"\x06labels\x18\x02 \x03(\tR\x06labels\x12'\n" +
+	"\x0fscore_threshold\x18\x03 \x01(\x01R\x0escoreThreshold\x12(\n" +
+	"\riou_threshold\x18\x04 \x01(\x01H\x00R\fiouThreshold\x88\x01\x01\x12%\n" +
+	"\x0emax_detections\x18\x05 \x01(\x05R\rmaxDetectionsB\x10\n" +
+	"\x0e_iou_threshold\"\xd1\x01\n" +
 	"\vRunResponse\x12\x16\n" +
 	"\x06output\x18\x01 \x01(\fR\x06output\x12\x19\n" +
 	"\blayer_ms\x18\x02 \x03(\x01R\alayerMs\x12\"\n" +
 	"\rqueue_wait_ms\x18\x03 \x01(\x01R\vqueueWaitMs\x12\x12\n" +
-	"\x04slot\x18\x04 \x01(\x05R\x04slot2\xa8\x01\n" +
+	"\x04slot\x18\x04 \x01(\x05R\x04slot\x12:\n" +
+	"\n" +
+	"detections\x18\x05 \x03(\v2\x1a.sciot.worker.v1.DetectionR\n" +
+	"detections\x12\x1b\n" +
+	"\tdecode_ms\x18\x06 \x01(\x01R\bdecodeMs\"o\n" +
+	"\tDetection\x12\x14\n" +
+	"\x05label\x18\x01 \x01(\tR\x05label\x12\x14\n" +
+	"\x05score\x18\x02 \x01(\x01R\x05score\x12\f\n" +
+	"\x01x\x18\x03 \x01(\x01R\x01x\x12\f\n" +
+	"\x01y\x18\x04 \x01(\x01R\x01y\x12\f\n" +
+	"\x01w\x18\x05 \x01(\x01R\x01w\x12\f\n" +
+	"\x01h\x18\x06 \x01(\x01R\x01h2\xa8\x01\n" +
 	"\x0fPartitionWorker\x12O\n" +
 	"\bDescribe\x12 .sciot.worker.v1.DescribeRequest\x1a!.sciot.worker.v1.DescribeResponse\x12D\n" +
 	"\aRunFrom\x12\x1b.sciot.worker.v1.RunRequest\x1a\x1c.sciot.worker.v1.RunResponseB4Z2github.com/UBICO/SCIoT_go_server/internal/workerpbb\x06proto3"
@@ -448,27 +665,31 @@ func file_sciot_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_sciot_worker_v1_worker_proto_rawDescData
 }
 
-var file_sciot_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_sciot_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_sciot_worker_v1_worker_proto_goTypes = []any{
 	(*DescribeRequest)(nil),  // 0: sciot.worker.v1.DescribeRequest
 	(*DescribeResponse)(nil), // 1: sciot.worker.v1.DescribeResponse
 	(*ModelDescription)(nil), // 2: sciot.worker.v1.ModelDescription
 	(*Segment)(nil),          // 3: sciot.worker.v1.Segment
 	(*RunRequest)(nil),       // 4: sciot.worker.v1.RunRequest
-	(*RunResponse)(nil),      // 5: sciot.worker.v1.RunResponse
+	(*Postprocess)(nil),      // 5: sciot.worker.v1.Postprocess
+	(*RunResponse)(nil),      // 6: sciot.worker.v1.RunResponse
+	(*Detection)(nil),        // 7: sciot.worker.v1.Detection
 }
 var file_sciot_worker_v1_worker_proto_depIdxs = []int32{
 	2, // 0: sciot.worker.v1.DescribeResponse.models:type_name -> sciot.worker.v1.ModelDescription
 	3, // 1: sciot.worker.v1.ModelDescription.segments:type_name -> sciot.worker.v1.Segment
-	0, // 2: sciot.worker.v1.PartitionWorker.Describe:input_type -> sciot.worker.v1.DescribeRequest
-	4, // 3: sciot.worker.v1.PartitionWorker.RunFrom:input_type -> sciot.worker.v1.RunRequest
-	1, // 4: sciot.worker.v1.PartitionWorker.Describe:output_type -> sciot.worker.v1.DescribeResponse
-	5, // 5: sciot.worker.v1.PartitionWorker.RunFrom:output_type -> sciot.worker.v1.RunResponse
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	5, // 2: sciot.worker.v1.RunRequest.postprocess:type_name -> sciot.worker.v1.Postprocess
+	7, // 3: sciot.worker.v1.RunResponse.detections:type_name -> sciot.worker.v1.Detection
+	0, // 4: sciot.worker.v1.PartitionWorker.Describe:input_type -> sciot.worker.v1.DescribeRequest
+	4, // 5: sciot.worker.v1.PartitionWorker.RunFrom:input_type -> sciot.worker.v1.RunRequest
+	1, // 6: sciot.worker.v1.PartitionWorker.Describe:output_type -> sciot.worker.v1.DescribeResponse
+	6, // 7: sciot.worker.v1.PartitionWorker.RunFrom:output_type -> sciot.worker.v1.RunResponse
+	6, // [6:8] is the sub-list for method output_type
+	4, // [4:6] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_sciot_worker_v1_worker_proto_init() }
@@ -476,13 +697,14 @@ func file_sciot_worker_v1_worker_proto_init() {
 	if File_sciot_worker_v1_worker_proto != nil {
 		return
 	}
+	file_sciot_worker_v1_worker_proto_msgTypes[5].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sciot_worker_v1_worker_proto_rawDesc), len(file_sciot_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

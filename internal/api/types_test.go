@@ -84,7 +84,7 @@ func TestRegisterResponseJSON(t *testing.T) {
 			LastOffloadingLayer: 7,
 			Input:               TensorSpec{Shape: []int{1, 320, 320, 3}, DType: "float32"},
 			Postprocess: Postprocess{Decoder: "yolo_pro", Labels: []string{"bicycle", "stop sign"},
-				ScoreThreshold: 0.5, IoUThreshold: &iou, MaxDetections: 10},
+				ScoreThreshold: 0.5, IoUThreshold: &iou, MaxDetections: 200},
 		},
 		Policy:              Policy{Mode: ModeLocal, PolicyVersion: 1},
 		HeartbeatIntervalMS: 1000,
@@ -92,7 +92,7 @@ func TestRegisterResponseJSON(t *testing.T) {
 	want := `{"session_id":"s1",` +
 		`"model":{"model_key":"yolo_small_320","num_layers":8,"last_offloading_layer":7,` +
 		`"input":{"shape":[1,320,320,3],"dtype":"float32"},` +
-		`"postprocess":{"decoder":"yolo_pro","labels":["bicycle","stop sign"],"score_threshold":0.5,"iou_threshold":0.2,"max_detections":10}},` +
+		`"postprocess":{"decoder":"yolo_pro","labels":["bicycle","stop sign"],"score_threshold":0.5,"iou_threshold":0.2,"max_detections":200}},` +
 		`"policy":{"mode":"LOCAL","split_point":null,"policy_version":1},` +
 		`"heartbeat_interval_ms":1000}`
 
@@ -190,7 +190,7 @@ func TestModelEntryJSONIsFlat(t *testing.T) {
 			LastOffloadingLayer: 7,
 			Input:               TensorSpec{Shape: []int{1, 320, 320, 3}, DType: "float32"},
 			Postprocess: Postprocess{Decoder: "yolo_pro", Labels: []string{"bicycle", "stop sign"},
-				ScoreThreshold: 0.5, IoUThreshold: &iou, MaxDetections: 10},
+				ScoreThreshold: 0.5, IoUThreshold: &iou, MaxDetections: 200},
 		},
 	}
 	got, err := json.Marshal(e)
@@ -199,7 +199,7 @@ func TestModelEntryJSONIsFlat(t *testing.T) {
 	}
 	want := `{"model_hash":"h1","model_key":"yolo_small_320","num_layers":8,"last_offloading_layer":7,` +
 		`"input":{"shape":[1,320,320,3],"dtype":"float32"},` +
-		`"postprocess":{"decoder":"yolo_pro","labels":["bicycle","stop sign"],"score_threshold":0.5,"iou_threshold":0.2,"max_detections":10}}`
+		`"postprocess":{"decoder":"yolo_pro","labels":["bicycle","stop sign"],"score_threshold":0.5,"iou_threshold":0.2,"max_detections":200}}`
 	if string(got) != want {
 		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
 	}
