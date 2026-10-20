@@ -105,13 +105,32 @@ numbers as the source model (differences ~1e-5).
 
 ## 4. config.json
 
-*(The server reads the manifest from the next step on.)* A model needs only
-its key and directory; `postprocess` in `config.json` overrides single values
-of the manifest, for an experiment:
+A model needs only its key and directory: the server reads the segment
+count, the input and the post-processing from `manifest.json`, and sends
+them to devices at registration (`num_layers`, `last_offloading_layer`,
+`input`, `postprocess`).
 
 ```json
-{"model_key": "yolo_small_320", "tflite_dir": "/home/lab/sciot-models/yolo_small_320"}
+{"model_key": "yolo_small_320", "tflite_dir": "/home/lab/sciot-models/yolo_small_320",
+ "postprocess": {"score_threshold": 0.6}}
 ```
+
+`postprocess` is optional and overrides only the thresholds:
+`score_threshold` and `iou_threshold` in (0, 1], `max_detections` ≥ 1.
+`decoder` and `labels` describe the model and cannot be overridden.
+
+At startup the server refuses a model directory when:
+
+- `manifest.json` is missing or has another `format_version`;
+- the model is quantized (not supported yet);
+- the `*.tflite` files are not exactly the manifest's segments (a leftover
+  segment of an older build, a missing one);
+- the recomputed `model_hash` differs from the manifest's (files from
+  different builds).
+
+`last_offloading_layer` and `input_size_bytes` are no longer accepted in
+`config.json`: the first is the number of segments minus one, the second is
+replaced by `input`.
 
 Post-processing parameters are read at startup only: to change a threshold,
 change it and restart the server; devices register again and receive it.

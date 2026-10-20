@@ -75,19 +75,24 @@ func TestRegisterRequestDecode(t *testing.T) {
 }
 
 func TestRegisterResponseJSON(t *testing.T) {
+	iou := 0.2
 	resp := RegisterResponse{
 		SessionID: "s1",
 		Model: ModelInfo{
-			ModelKey:            "fomo_96x96",
-			NumLayers:           59,
-			LastOffloadingLayer: 58,
-			InputSizeBytes:      18432,
+			ModelKey:            "yolo_small_320",
+			NumLayers:           8,
+			LastOffloadingLayer: 7,
+			Input:               TensorSpec{Shape: []int{1, 320, 320, 3}, DType: "float32"},
+			Postprocess: Postprocess{Decoder: "yolo_pro", Labels: []string{"bicycle", "stop sign"},
+				ScoreThreshold: 0.5, IoUThreshold: &iou, MaxDetections: 10},
 		},
 		Policy:              Policy{Mode: ModeLocal, PolicyVersion: 1},
 		HeartbeatIntervalMS: 1000,
 	}
 	want := `{"session_id":"s1",` +
-		`"model":{"model_key":"fomo_96x96","num_layers":59,"last_offloading_layer":58,"input_size_bytes":18432},` +
+		`"model":{"model_key":"yolo_small_320","num_layers":8,"last_offloading_layer":7,` +
+		`"input":{"shape":[1,320,320,3],"dtype":"float32"},` +
+		`"postprocess":{"decoder":"yolo_pro","labels":["bicycle","stop sign"],"score_threshold":0.5,"iou_threshold":0.2,"max_detections":10}},` +
 		`"policy":{"mode":"LOCAL","split_point":null,"policy_version":1},` +
 		`"heartbeat_interval_ms":1000}`
 
@@ -176,16 +181,36 @@ func TestHeartbeatResponseJSON(t *testing.T) {
 
 func TestModelEntryJSONIsFlat(t *testing.T) {
 	// L'embedding promuove i campi di ModelInfo allo stesso livello di model_hash.
+	iou := 0.2
 	e := ModelEntry{
 		ModelHash: "h1",
-		ModelInfo: ModelInfo{ModelKey: "fomo_96x96", NumLayers: 59, LastOffloadingLayer: 58, InputSizeBytes: 18432},
+		ModelInfo: ModelInfo{
+			ModelKey:            "yolo_small_320",
+			NumLayers:           8,
+			LastOffloadingLayer: 7,
+			Input:               TensorSpec{Shape: []int{1, 320, 320, 3}, DType: "float32"},
+			Postprocess: Postprocess{Decoder: "yolo_pro", Labels: []string{"bicycle", "stop sign"},
+				ScoreThreshold: 0.5, IoUThreshold: &iou, MaxDetections: 10},
+		},
 	}
 	got, err := json.Marshal(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"model_hash":"h1","model_key":"fomo_96x96","num_layers":59,"last_offloading_layer":58,"input_size_bytes":18432}`
+	want := `{"model_hash":"h1","model_key":"yolo_small_320","num_layers":8,"last_offloading_layer":7,` +
+		`"input":{"shape":[1,320,320,3],"dtype":"float32"},` +
+		`"postprocess":{"decoder":"yolo_pro","labels":["bicycle","stop sign"],"score_threshold":0.5,"iou_threshold":0.2,"max_detections":10}}`
 	if string(got) != want {
+		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestPostprocessWithoutNMSOmitsIoU(t *testing.T) {
+	got, err := json.Marshal(Postprocess{Decoder: "fomo", Labels: []string{"a"}, ScoreThreshold: 0.8, MaxDetections: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"decoder":"fomo","labels":["a"],"score_threshold":0.8,"max_detections":10}`; string(got) != want {
 		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
 	}
 }

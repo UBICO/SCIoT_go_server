@@ -3,6 +3,7 @@ package device
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +15,6 @@ var fomo = api.ModelInfo{
 	ModelKey:            "fomo_96x96",
 	NumLayers:           59,
 	LastOffloadingLayer: 58,
-	InputSizeBytes:      18432,
 }
 
 // newTestStore crea uno Store con un orologio finto fermo su t0.
@@ -30,7 +30,7 @@ func TestRegisterNewDevice(t *testing.T) {
 
 	d := s.Register("web_192", "python", fomo, api.Capabilities{RawInputSplit: true})
 
-	if d.ID != "web_192" || d.Type != "python" || d.Model != fomo || !d.Capabilities.RawInputSplit {
+	if d.ID != "web_192" || d.Type != "python" || !reflect.DeepEqual(d.Model, fomo) || !d.Capabilities.RawInputSplit {
 		t.Errorf("campi errati: %+v", d)
 	}
 	if d.SessionID == "" {

@@ -97,12 +97,23 @@ Request:
 ```json
 {
   "session_id": "YVOFM5HEJSRDMW2JBQU4ADGDD6",
-  "model": {"model_key": "fomo_96x96", "num_layers": 59,
-            "last_offloading_layer": 58, "input_size_bytes": 18432},
+  "model": {"model_key": "yolo_small_320", "num_layers": 8,
+            "last_offloading_layer": 7,
+            "input": {"shape": [1, 320, 320, 3], "dtype": "float32"},
+            "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
+                            "score_threshold": 0.5, "iou_threshold": 0.2,
+                            "max_detections": 10}},
   "policy": {"mode": "LOCAL", "split_point": null, "policy_version": 1},
   "heartbeat_interval_ms": 1000
 }
 ```
+
+`model` comes from the model's `manifest.json` ([MODELS.md](MODELS.md)):
+`input` is the tensor the device prepares (shape with batch 1, data type);
+`postprocess` is how the device decodes the output into detections in
+`LOCAL`. The server decodes `SPLIT` results with the same parameters, so a
+result reads the same whoever computed it. `iou_threshold` is absent for
+decoders without NMS.
 
 Errors: `400 invalid_request`, `400 unsupported_protocol`, `404 model_not_found`.
 On `model_not_found` the client should run LOCAL-only and not retry.
@@ -165,9 +176,12 @@ falls back to `LOCAL` and registers again.
 Models served by this server, sorted by `model_key`:
 
 ```json
-{"models": [{"model_hash": "2b31...", "model_key": "fomo_96x96",
-             "num_layers": 59, "last_offloading_layer": 58,
-             "input_size_bytes": 18432}]}
+{"models": [{"model_hash": "b182...", "model_key": "yolo_small_320", "num_layers": 8,
+             "last_offloading_layer": 7,
+             "input": {"shape": [1, 320, 320, 3], "dtype": "float32"},
+             "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
+                             "score_threshold": 0.5, "iou_threshold": 0.2,
+                             "max_detections": 10}}]}
 ```
 
 The single-model form returns one entry, or `404 model_not_found`.

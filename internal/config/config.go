@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
@@ -101,7 +102,7 @@ func Load(path string) (File, error) {
 
 	var f File
 	if err := dec.Decode(&f); err != nil {
-		return File{}, fmt.Errorf("decode config: %w", err)
+		return File{}, fmt.Errorf("decode config: %w%s", err, removedKeyHint(err))
 	}
 	return f, nil
 }
@@ -247,4 +248,21 @@ func (f File) StreamConfig() (stream.Config, error) {
 		cfg.MaxMessageBytes = *s.MaxMessageBytes
 	}
 	return cfg, nil
+}
+
+// removedKeys sono chiavi di models[] tolte quando il server ha cominciato a
+// leggere il manifest.json del modello: un config.json vecchio fallisce con
+// "unknown field", e il suggerimento spiega perché.
+var removedKeys = map[string]string{
+	"last_offloading_layer": "it is now the number of segments in manifest.json",
+	"input_size_bytes":      "the model input now comes from manifest.json",
+}
+
+func removedKeyHint(err error) string {
+	for key, why := range removedKeys {
+		if strings.Contains(err.Error(), fmt.Sprintf("unknown field %q", key)) {
+			return fmt.Sprintf(" (%s was removed: %s; see docs/MODELS.md)", key, why)
+		}
+	}
+	return ""
 }

@@ -25,12 +25,13 @@ import (
 // Configurazione (file JSON)
 // ---------------------------------------------------------------------------
 
-// ModelConfig è la voce di un modello nel file di configurazione.
+// ModelConfig è la voce di un modello nel file di configurazione. Il resto
+// (segmenti, input, post-processing) viene dal manifest.json della cartella.
 type ModelConfig struct {
-	ModelKey            string `json:"model_key"`
-	TFLiteDir           string `json:"tflite_dir"` // cartella con i segmenti *.tflite
-	LastOffloadingLayer int    `json:"last_offloading_layer"`
-	InputSizeBytes      int    `json:"input_size_bytes"`
+	ModelKey  string `json:"model_key"`
+	TFLiteDir string `json:"tflite_dir"` // cartella prodotta da sciot-model build
+	// Postprocess cambia le soglie del manifest; nil = quelle del manifest.
+	Postprocess *PostprocessOverride `json:"postprocess,omitempty"`
 }
 
 // Config è il contenuto dell'intero file:
@@ -101,12 +102,13 @@ type Registry struct {
 	byHash map[string]api.ModelInfo // minuscolo: non accessibile da fuori
 }
 
-// New calcola l'hash di ogni modello in cfg e costruisce il Registry.
-// Restituisce un puntatore (*Registry): il valore viene condiviso, non copiato.
+// New legge il manifest di ogni modello in cfg, lo verifica contro i file e
+// costruisce il Registry. Restituisce un puntatore (*Registry): il valore
+// viene condiviso, non copiato.
 func New(cfg Config) (*Registry, error) {
 	byHash := make(map[string]api.ModelInfo)
 	for _, m := range cfg.Models {
-		h, err := hashTFLiteDir(m.TFLiteDir)
+		info, h, err := loadModel(m)
 		if err != nil {
 			return nil, fmt.Errorf("model %q: %w", m.ModelKey, err)
 		}
@@ -115,14 +117,37 @@ func New(cfg Config) (*Registry, error) {
 			return nil, fmt.Errorf("models %q and %q have the same segments",
 				existing.ModelKey, m.ModelKey)
 		}
-		byHash[h] = api.ModelInfo{
-			ModelKey:            m.ModelKey,
-			NumLayers:           m.LastOffloadingLayer + 1, // stessa regola del server Python
-			LastOffloadingLayer: m.LastOffloadingLayer,
-			InputSizeBytes:      m.InputSizeBytes,
-		}
+		byHash[h] = info
 	}
 	return &Registry{byHash: byHash}, nil
+}
+
+// loadModel legge e verifica la cartella di un modello e restituisce le sue
+// informazioni e il suo hash.
+func loadModel(m ModelConfig) (api.ModelInfo, string, error) {
+	h, err := hashTFLiteDir(m.TFLiteDir)
+	if err != nil {
+		return api.ModelInfo{}, "", err
+	}
+	manifest, err := readManifest(m.TFLiteDir)
+	if err != nil {
+		return api.ModelInfo{}, "", err
+	}
+	if err := validateManifest(manifest, m.TFLiteDir, h); err != nil {
+		return api.ModelInfo{}, "", fmt.Errorf("%s: %w", filepath.Join(m.TFLiteDir, ManifestFile), err)
+	}
+	pp, err := m.Postprocess.apply(manifest.Postprocess)
+	if err != nil {
+		return api.ModelInfo{}, "", err
+	}
+	n := len(manifest.Segments)
+	return api.ModelInfo{
+		ModelKey:            m.ModelKey,
+		NumLayers:           n,
+		LastOffloadingLayer: n - 1, // indice dell'ultimo segmento
+		Input:               manifest.Input,
+		Postprocess:         pp,
+	}, h, nil
 }
 
 // Lookup restituisce il modello associato a hash e true, oppure il valore

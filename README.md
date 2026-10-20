@@ -60,10 +60,8 @@ paths):
   },
   "models": [
     {
-      "model_key": "fomo_96x96",
-      "tflite_dir": "/path/to/models/fomo_96x96/layers/tflite",
-      "last_offloading_layer": 58,
-      "input_size_bytes": 18432
+      "model_key": "yolo_small_320",
+      "tflite_dir": "/path/to/sciot-models/yolo_small_320"
     }
   ]
 }
@@ -84,12 +82,13 @@ paths):
 | `stream.max_inflight` | 3 | frames per device in flight at the same time |
 | `stream.default_deadline_ms` | 1000 | frame deadline when the client sends none |
 | `stream.max_message_bytes` | 8388608 | largest WebSocket message, 1024–67108864 |
-| `models[].tflite_dir` | — | directory with the `*.tflite` segments; their MD5 is the model hash |
-| `models[].last_offloading_layer` | — | index of the last segment |
-| `models[].input_size_bytes` | — | size of the raw RGB565 input |
+| `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
+| `models[].postprocess` | — | optional override of `score_threshold`, `iou_threshold`, `max_detections` |
 
-Unknown keys are rejected, and the server refuses to start if a model
-directory has no segments or two models have the same segments.
+Unknown keys are rejected. Segment count, input and post-processing come
+from the model's `manifest.json`; the server refuses to start if a manifest
+is missing or does not match the files in its directory, or if two models
+have the same segments.
 
 ## Running
 
