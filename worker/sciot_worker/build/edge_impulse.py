@@ -69,7 +69,9 @@ class CppExport:
             return DECODERS[self.last_layer]
         except KeyError:
             supported = ", ".join(sorted(DECODERS))
-            raise ExportError(f"unsupported last layer {self.last_layer}; supported: {supported}") from None
+            raise ExportError(
+                f"unsupported last layer {self.last_layer}; supported: {supported}"
+            ) from None
 
     def postprocess(self) -> dict:
         """The manifest's "postprocess" section."""
@@ -105,14 +107,18 @@ def define(header: str, name: str) -> str:
     # EI_CLASSIFIER_INFERENCING_ENGINE): without evaluating the #if we cannot
     # know which value applies, so a macro with different values is refused.
     if len(set(values)) > 1:
-        raise ExportError(f"{name} is defined {len(values)} times with different values "
-                          f"({', '.join(values)}): cannot tell which one applies")
+        raise ExportError(
+            f"{name} is defined {len(values)} times with different values "
+            f"({', '.join(values)}): cannot tell which one applies"
+        )
     return values[0]
 
 
 def labels(variables: str) -> list[str]:
     """The labels from ei_classifier_inferencing_categories_<id>[] = { "a", "b" };"""
-    array = re.search(r"ei_classifier_inferencing_categories_\w*\[\]\s*=\s*\{(.*?)\};", variables, re.DOTALL)
+    array = re.search(
+        r"ei_classifier_inferencing_categories_\w*\[\]\s*=\s*\{(.*?)\};", variables, re.DOTALL
+    )
     if array is None:
         raise ExportError("model_variables.h has no ei_classifier_inferencing_categories array")
     found = re.findall(r'"([^"]*)"', array.group(1))
@@ -145,8 +151,10 @@ def _read_files(path: Path) -> tuple[str, str, bytes]:
         files = {METADATA: path / METADATA, VARIABLES: path / VARIABLES}
         missing = [name for name, p in files.items() if not p.is_file()]
         if missing or len(tflites) != 1:
-            raise ExportError(f"{path}: not an Edge Impulse C++ export "
-                              f"(missing {missing or ['one tflite-model/*.tflite']})")
+            raise ExportError(
+                f"{path}: not an Edge Impulse C++ export "
+                f"(missing {missing or ['one tflite-model/*.tflite']})"
+            )
         return (files[METADATA].read_text(), files[VARIABLES].read_text(), tflites[0].read_bytes())
 
     if path.suffix.lower() != ".zip" or not path.is_file():
@@ -163,8 +171,14 @@ def _read_files(path: Path) -> tuple[str, str, bytes]:
 
         tflite = [n for n in names if "tflite-model/" in n and n.endswith(".tflite")]
         if len(tflite) != 1:
-            raise ExportError(f"{path.name}: expected one tflite-model/*.tflite, found {len(tflite)}")
-        return (zf.read(one(METADATA)).decode(), zf.read(one(VARIABLES)).decode(), zf.read(tflite[0]))
+            raise ExportError(
+                f"{path.name}: expected one tflite-model/*.tflite, found {len(tflite)}"
+            )
+        return (
+            zf.read(one(METADATA)).decode(),
+            zf.read(one(VARIABLES)).decode(),
+            zf.read(tflite[0]),
+        )
 
 
 def read_cpp_export(path: Path) -> CppExport:
@@ -180,10 +194,14 @@ def read_cpp_export(path: Path) -> CppExport:
     def datatype(name: str) -> str:
         value = define(metadata, name)
         if value not in DATATYPES:
-            raise ExportError(f"{name} is {value}: unknown data type (known: {', '.join(DATATYPES)})")
+            raise ExportError(
+                f"{name} is {value}: unknown data type (known: {', '.join(DATATYPES)})"
+            )
         return DATATYPES[value]
 
-    studio = ".".join(define(metadata, f"EI_STUDIO_VERSION_{part}") for part in ("MAJOR", "MINOR", "PATCH"))
+    studio = ".".join(
+        define(metadata, f"EI_STUDIO_VERSION_{part}") for part in ("MAJOR", "MINOR", "PATCH")
+    )
     export = CppExport(
         project_id=int(number("EI_CLASSIFIER_PROJECT_ID")),
         deploy_version=int(number("EI_CLASSIFIER_PROJECT_DEPLOY_VERSION")),
@@ -201,7 +219,9 @@ def read_cpp_export(path: Path) -> CppExport:
         full_model=full_model,
     )
     if int(number("EI_CLASSIFIER_LABEL_COUNT")) != len(export.labels):
-        raise ExportError(f"EI_CLASSIFIER_LABEL_COUNT is {int(number('EI_CLASSIFIER_LABEL_COUNT'))} "
-                          f"but {len(export.labels)} labels were found")
-    export.decoder  # an unsupported family fails here, before the long split
+        raise ExportError(
+            f"EI_CLASSIFIER_LABEL_COUNT is {int(number('EI_CLASSIFIER_LABEL_COUNT'))} "
+            f"but {len(export.labels)} labels were found"
+        )
+    _ = export.decoder  # an unsupported family fails here, before the long split
     return export

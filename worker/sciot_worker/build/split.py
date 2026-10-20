@@ -16,6 +16,7 @@ output, which is the hand-off supported by the clients.
 
 from __future__ import annotations
 
+import itertools
 import math
 import tempfile
 import zipfile
@@ -35,12 +36,28 @@ DEFAULT_SIGNATURE = "serving_default"
 # Cuts right after an activation are preferred: the tensor is the output of
 # a "layer" in the usual sense.
 PREFERRED_BOUNDARY_OPS = {
-    "AvgPool", "Elu", "Gelu", "LeakyRelu", "MaxPool", "Relu", "Relu6",
-    "Selu", "Sigmoid", "Softmax", "Tanh",
+    "AvgPool",
+    "Elu",
+    "Gelu",
+    "LeakyRelu",
+    "MaxPool",
+    "Relu",
+    "Relu6",
+    "Selu",
+    "Sigmoid",
+    "Softmax",
+    "Tanh",
 }
 FALLBACK_BOUNDARY_OPS = {
-    "Add", "AddV2", "AvgPool", "BiasAdd", "ConcatV2", "Conv2D",
-    "DepthwiseConv2dNative", "MatMul", "MaxPool",
+    "Add",
+    "AddV2",
+    "AvgPool",
+    "BiasAdd",
+    "ConcatV2",
+    "Conv2D",
+    "DepthwiseConv2dNative",
+    "MatMul",
+    "MaxPool",
 }
 BOUNDARY_NAME_HINTS = ("activation", "gelu", "pool", "relu", "silu", "softmax", "swish")
 
@@ -127,7 +144,9 @@ def _locate_saved_model(directory: Path) -> Path:
         return directory
     matches = list(directory.rglob("saved_model.pb"))
     if not matches:
-        raise SplitError(f"no saved_model.pb under {directory}: a TensorFlow SavedModel is required")
+        raise SplitError(
+            f"no saved_model.pb under {directory}: a TensorFlow SavedModel is required"
+        )
     if len(matches) > 1:
         raise SplitError(f"more than one SavedModel under {directory}: {matches}")
     return matches[0].parent
@@ -164,11 +183,15 @@ def load_frozen_model(model_dir: Path, signature: str = DEFAULT_SIGNATURE) -> Fr
     fn = loaded.signatures[signature]
     positional, keyword = fn.structured_input_signature
     if positional or len(keyword) != 1:
-        raise SplitError(f"exactly one named model input is required, {signature!r} has "
-                         f"{len(positional) + len(keyword)}")
+        raise SplitError(
+            f"exactly one named model input is required, {signature!r} has "
+            f"{len(positional) + len(keyword)}"
+        )
     if not isinstance(fn.structured_outputs, dict) or len(fn.structured_outputs) != 1:
-        raise SplitError(f"exactly one model output is required, {signature!r} has "
-                         f"{len(tf.nest.flatten(fn.structured_outputs))}")
+        raise SplitError(
+            f"exactly one model output is required, {signature!r} has "
+            f"{len(tf.nest.flatten(fn.structured_outputs))}"
+        )
 
     frozen = convert_variables_to_constants_v2(fn)
     if len(frozen.inputs) != 1 or len(frozen.outputs) != 1:
@@ -287,13 +310,14 @@ def _limit(boundaries: Sequence[Boundary], max_segments: int) -> list[Boundary]:
         return [boundaries[len(boundaries) // 2]]
     indices: list[int] = []
     for p in np.linspace(0, len(boundaries) - 1, num=wanted):
-        if (i := int(round(float(p)))) not in indices:
+        if (i := round(float(p))) not in indices:
             indices.append(i)
     return [boundaries[i] for i in indices]
 
 
-def choose_boundaries(model: FrozenModel, requested: Sequence[str] = (),
-                      max_segments: int = 0) -> list[Boundary]:
+def choose_boundaries(
+    model: FrozenModel, requested: Sequence[str] = (), max_segments: int = 0
+) -> list[Boundary]:
     """The cuts to use: the requested tensors, or the automatic ones.
 
     requested is how a later quantized build reuses the cuts of the float32 one
@@ -304,7 +328,9 @@ def choose_boundaries(model: FrozenModel, requested: Sequence[str] = (),
     preferred, valid = find_safe_boundaries(model)
     valid = _dedup(valid)
     if requested:
-        by_name = {b.tensor_name: b for b in valid} | {b.tensor_name.removesuffix(":0"): b for b in valid}
+        by_name = {b.tensor_name: b for b in valid} | {
+            b.tensor_name.removesuffix(":0"): b for b in valid
+        }
         missing = [n for n in requested if n not in by_name]
         if missing:
             raise SplitError("not safe single-tensor cuts: " + ", ".join(missing))
@@ -353,7 +379,9 @@ def _io(content: bytes) -> tuple[dict, dict]:
     interpreter.allocate_tensors()
     inputs, outputs = interpreter.get_input_details(), interpreter.get_output_details()
     if len(inputs) != 1 or len(outputs) != 1:
-        raise SplitError(f"segment is not single-input/single-output: {len(inputs)}, {len(outputs)}")
+        raise SplitError(
+            f"segment is not single-input/single-output: {len(inputs)}, {len(outputs)}"
+        )
     return inputs[0], outputs[0]
 
 
@@ -362,16 +390,25 @@ def _shape(detail: dict) -> list[int | None]:
 
 
 def convert_segments(model: FrozenModel, boundaries: Sequence[Boundary]) -> list[Segment]:
-    endpoints = [model.input_tensor.name, *(b.tensor_name for b in boundaries), model.output_tensor.name]
+    endpoints = [
+        model.input_tensor.name,
+        *(b.tensor_name for b in boundaries),
+        model.output_tensor.name,
+    ]
     segments = []
-    for i, (start, end) in enumerate(zip(endpoints, endpoints[1:])):
+    for i, (start, end) in enumerate(itertools.pairwise(endpoints)):
         content = _convert(_segment_function(model.graph_def, start, end))
         inp, out = _io(content)
-        segments.append(Segment(
-            index=i, content=content,
-            input_shape=_shape(inp), input_dtype=np.dtype(inp["dtype"]).name,
-            output_shape=_shape(out), output_dtype=np.dtype(out["dtype"]).name,
-        ))
+        segments.append(
+            Segment(
+                index=i,
+                content=content,
+                input_shape=_shape(inp),
+                input_dtype=np.dtype(inp["dtype"]).name,
+                output_shape=_shape(out),
+                output_dtype=np.dtype(out["dtype"]).name,
+            )
+        )
     return segments
 
 
@@ -409,27 +446,41 @@ def compare(expected: np.ndarray, actual: np.ndarray, atol: float, rtol: float) 
 
     diff = np.abs(expected - actual)
     significant = np.abs(expected) >= SIGNIFICANT
-    max_rel = float((diff[significant] / np.abs(expected[significant])).max()) if significant.any() else 0.0
+    max_rel = (
+        float((diff[significant] / np.abs(expected[significant])).max())
+        if significant.any()
+        else 0.0
+    )
     # Per element, not from the two maxima: they can come from different elements.
     equivalent = bool(np.allclose(actual, expected, atol=atol, rtol=rtol))
     return Errors(float(diff.max()), max_rel, equivalent)
 
 
-def verify(segments: Sequence[Segment], reference: Callable[[np.ndarray], np.ndarray],
-           samples: Sequence[np.ndarray], atol: float, rtol: float) -> Errors:
+def verify(
+    segments: Sequence[Segment],
+    reference: Callable[[np.ndarray], np.ndarray],
+    samples: Sequence[np.ndarray],
+    atol: float,
+    rtol: float,
+) -> Errors:
     """Worst errors of the chain against reference over all samples."""
     worst = Errors(0.0, 0.0, True)
     for sample in samples:
         e = compare(reference(sample), run_chain(segments, sample), atol, rtol)
-        worst = Errors(max(worst.max_abs, e.max_abs), max(worst.max_rel, e.max_rel),
-                       worst.equivalent and e.equivalent)
+        worst = Errors(
+            max(worst.max_abs, e.max_abs),
+            max(worst.max_rel, e.max_rel),
+            worst.equivalent and e.equivalent,
+        )
     return worst
 
 
 def frozen_reference(model: FrozenModel) -> Callable[[np.ndarray], np.ndarray]:
     """The source model as a reference function."""
+
     def run(x: np.ndarray) -> np.ndarray:
         return np.asarray(tf.nest.flatten(model.function(tf.convert_to_tensor(x)))[0])
+
     return run
 
 

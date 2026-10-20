@@ -35,7 +35,9 @@ class TinyDetector(tf.Module):
 
 def save(path: Path, scale: float = 2.0) -> Path:
     model = TinyDetector(scale)
-    tf.saved_model.save(model, str(path), signatures={"serving_default": model.serve.get_concrete_function()})
+    tf.saved_model.save(
+        model, str(path), signatures={"serving_default": model.serve.get_concrete_function()}
+    )
     return path
 
 
@@ -67,11 +69,19 @@ const ei_object_detection_nms_config_t ei_object_detection_nms_1011188_41 = {
 """
 
 
-def fake_export(path: Path, saved_model: Path, *, last_layer="EI_CLASSIFIER_LAST_LAYER_YOLO_PRO",
-                quantized=0, dtype="EI_CLASSIFIER_DATATYPE_FLOAT32") -> Path:
+def fake_export(
+    path: Path,
+    saved_model: Path,
+    *,
+    last_layer="EI_CLASSIFIER_LAST_LAYER_YOLO_PRO",
+    quantized=0,
+    dtype="EI_CLASSIFIER_DATATYPE_FLOAT32",
+) -> Path:
     (path / "model-parameters").mkdir(parents=True)
     (path / "tflite-model").mkdir()
-    (path / edge_impulse.METADATA).write_text(METADATA.format(last_layer=last_layer, quantized=quantized, dtype=dtype))
+    (path / edge_impulse.METADATA).write_text(
+        METADATA.format(last_layer=last_layer, quantized=quantized, dtype=dtype)
+    )
     (path / edge_impulse.VARIABLES).write_text(VARIABLES)
     full = tf.lite.TFLiteConverter.from_saved_model(str(saved_model)).convert()
     (path / "tflite-model" / "tflite_learn_1011188_41.tflite").write_bytes(full)
@@ -100,7 +110,15 @@ def tiny(tmp_path_factory):
 
 
 def build_args(tiny, out: Path, *extra: str) -> list[str]:
-    return ["build", str(tiny["saved"]), "--ei-cpp-export", str(tiny["export"]), "--output", str(out), *extra]
+    return [
+        "build",
+        str(tiny["saved"]),
+        "--ei-cpp-export",
+        str(tiny["export"]),
+        "--output",
+        str(out),
+        *extra,
+    ]
 
 
 # --- split ------------------------------------------------------------------------------
@@ -147,7 +165,11 @@ def test_chain_matches_the_model(tiny):
     model = split.load_frozen_model(tiny["saved"])
     boundaries = split.choose_boundaries(model)
     # One cut after each ReLU: the last one too, the reshape comes after it.
-    assert [b.op_name.rsplit("/", 1)[-1] for b in boundaries] == ["stem_relu", "mid_relu", "last_relu"]
+    assert [b.op_name.rsplit("/", 1)[-1] for b in boundaries] == [
+        "stem_relu",
+        "mid_relu",
+        "last_relu",
+    ]
     segments = split.convert_segments(model, boundaries)
     assert len(segments) == 4
     assert segments[0].input_shape[1:] == [8, 8, 3] and segments[-1].output_shape[1:] == [32, 6]
@@ -200,12 +222,20 @@ def test_labels_and_nms():
 def test_read_cpp_export(tiny, tmp_path, as_zip):
     path = zip_dir(tiny["export"], tmp_path / "cpp.zip") if as_zip else tiny["export"]
     export = edge_impulse.read_cpp_export(path)
-    assert (export.project_id, export.deploy_version, export.studio_version) == (1011188, 8, "1.94.5")
+    assert (export.project_id, export.deploy_version, export.studio_version) == (
+        1011188,
+        8,
+        "1.94.5",
+    )
     assert export.decoder == "yolo_pro" and not export.quantized
     assert (export.input_dtype, export.output_dtype) == ("float32", "float32")
-    assert export.postprocess() == {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
-                                    "score_threshold": 0.5, "max_detections": 10,
-                                    "iou_threshold": pytest.approx(0.2)}
+    assert export.postprocess() == {
+        "decoder": "yolo_pro",
+        "labels": ["bicycle", "stop sign"],
+        "score_threshold": 0.5,
+        "max_detections": 10,
+        "iou_threshold": pytest.approx(0.2),
+    }
     assert export.full_model[4:8] == b"TFL3"  # a TFLite flatbuffer
 
 
@@ -229,19 +259,30 @@ def _manifest_parts(tiny):
     boundaries = split.choose_boundaries(model)
     segments = split.convert_segments(model, boundaries)
     errors = split.Errors(1e-6, 2e-6, True)
-    return dict(
-        segments=segments, boundaries=boundaries,
-        postprocess={"decoder": "yolo_pro", "labels": ["a", "b"]},
-        source=manifest.Source("model.zip", "ab" * 32, 1011188, 8, "1.94.5"),
-        verification=manifest.Verification(2, 1e-4, 1e-4, errors, errors),
-    )
+    return {
+        "segments": segments,
+        "boundaries": boundaries,
+        "postprocess": {"decoder": "yolo_pro", "labels": ["a", "b"]},
+        "source": manifest.Source("model.zip", "ab" * 32, 1011188, 8, "1.94.5"),
+        "verification": manifest.Verification(2, 1e-4, 1e-4, errors, errors),
+    }
 
 
 def test_build_manifest(tiny):
     parts = _manifest_parts(tiny)
     m = manifest.build_manifest(**parts)
-    assert list(m) == ["format_version", "quantization", "tool", "source", "input", "output",
-                       "cuts", "segments", "verification", "postprocess"]
+    assert list(m) == [
+        "format_version",
+        "quantization",
+        "tool",
+        "source",
+        "input",
+        "output",
+        "cuts",
+        "segments",
+        "verification",
+        "postprocess",
+    ]
     assert m["format_version"] == 2 and m["quantization"] is None
     assert m["tool"] == {"name": "sciot-model", "tensorflow": tf.__version__}
     assert m["source"]["savedmodel"] == {"file": "model.zip", "sha256": "ab" * 32}
@@ -259,15 +300,21 @@ def test_write_model_dir(tiny, tmp_path):
     written = manifest.write_model_dir(out, parts["segments"], manifest.build_manifest(**parts))
     assert written["model_hash"] == model_hash(out)  # the same rule as the Go registry
     assert json.loads((out / "manifest.json").read_text()) == written
-    assert sorted(p.name for p in tmp_path.joinpath("models").iterdir()) == ["tiny"]  # no staging left
+    assert sorted(p.name for p in tmp_path.joinpath("models").iterdir()) == [
+        "tiny"
+    ]  # no staging left
 
     with pytest.raises(FileExistsError, match="--overwrite"):
         manifest.write_model_dir(out, parts["segments"], manifest.build_manifest(**parts))
-    manifest.write_model_dir(out, parts["segments"], manifest.build_manifest(**parts), overwrite=True)
+    manifest.write_model_dir(
+        out, parts["segments"], manifest.build_manifest(**parts), overwrite=True
+    )
 
     (out / "notes.txt").write_text("not a model file")
     with pytest.raises(FileExistsError, match="not part of a model"):
-        manifest.write_model_dir(out, parts["segments"], manifest.build_manifest(**parts), overwrite=True)
+        manifest.write_model_dir(
+            out, parts["segments"], manifest.build_manifest(**parts), overwrite=True
+        )
     assert (out / "notes.txt").exists()
 
 
@@ -292,7 +339,14 @@ def test_build_end_to_end(tiny, tmp_path, capsys):
 def test_build_rejects_quantized_export(tiny, tmp_path, capsys, dtype):
     # Any quantized precision, not only int8.
     export = fake_export(tmp_path / "cpp", tiny["saved"], quantized=1, dtype=dtype)
-    args = ["build", str(tiny["saved"]), "--ei-cpp-export", str(export), "--output", str(tmp_path / "o")]
+    args = [
+        "build",
+        str(tiny["saved"]),
+        "--ei-cpp-export",
+        str(export),
+        "--output",
+        str(tmp_path / "o"),
+    ]
     assert cli.main(args) == 2
     err = capsys.readouterr().err
     assert "float32 only" in err and dtype.rsplit("_", 1)[-1].lower() in err
@@ -303,7 +357,14 @@ def test_build_rejects_exports_of_different_models(tiny, tmp_path, capsys):
     # Impulse's .tflite can tell.
     other = save(tmp_path / "other", scale=3.0)
     export = fake_export(tmp_path / "cpp", other)
-    args = ["build", str(tiny["saved"]), "--ei-cpp-export", str(export), "--output", str(tmp_path / "o")]
+    args = [
+        "build",
+        str(tiny["saved"]),
+        "--ei-cpp-export",
+        str(export),
+        "--output",
+        str(tmp_path / "o"),
+    ]
     assert cli.main(args) == 2
     assert "same model version" in capsys.readouterr().err
     assert not (tmp_path / "o").exists()

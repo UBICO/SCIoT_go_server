@@ -76,12 +76,22 @@ def _is_model_file(path: Path) -> bool:
 
 def _tensor(shape: Sequence[int | None], dtype: str) -> dict:
     """Shapes are written with batch 1: the data plane always sends one sample."""
-    return {"shape": [1 if i == 0 and d is None else d for i, d in enumerate(shape)], "dtype": dtype}
+    return {
+        "shape": [1 if i == 0 and d is None else d for i, d in enumerate(shape)],
+        "dtype": dtype,
+    }
 
 
-def build_manifest(*, segments: Sequence[Segment], boundaries: Sequence[Boundary],
-                   postprocess: dict, source: Source, verification: Verification) -> dict:
+def build_manifest(
+    *,
+    segments: Sequence[Segment],
+    boundaries: Sequence[Boundary],
+    postprocess: dict,
+    source: Source,
+    verification: Verification,
+) -> dict:
     """The manifest, without model_hash (added once the files are written)."""
+
     # Key order is the order in the file (json keeps insertion order).
     # "quantization" is None for float32; a quantized build will describe it
     # there and add scale/zero_point to each quantized tensor of "segments".
@@ -106,16 +116,21 @@ def build_manifest(*, segments: Sequence[Segment], boundaries: Sequence[Boundary
         },
         "input": _tensor(first.input_shape, first.input_dtype),
         "output": _tensor(last.output_shape, last.output_dtype),
-        "cuts": [{"tensor": b.tensor_name, "operation": b.op_name, "operation_type": b.op_type}
-                 for b in boundaries],
-        "segments": [{
-            "index": s.index,
-            "file": segment_file(s.index),
-            "size_bytes": len(s.content),
-            "sha256": hashlib.sha256(s.content).hexdigest(),
-            "input": _tensor(s.input_shape, s.input_dtype),
-            "output": _tensor(s.output_shape, s.output_dtype),
-        } for s in segments],
+        "cuts": [
+            {"tensor": b.tensor_name, "operation": b.op_name, "operation_type": b.op_type}
+            for b in boundaries
+        ],
+        "segments": [
+            {
+                "index": s.index,
+                "file": segment_file(s.index),
+                "size_bytes": len(s.content),
+                "sha256": hashlib.sha256(s.content).hexdigest(),
+                "input": _tensor(s.input_shape, s.input_dtype),
+                "output": _tensor(s.output_shape, s.output_dtype),
+            }
+            for s in segments
+        ],
         "verification": {
             "samples": verification.samples,
             "atol": verification.atol,
@@ -127,8 +142,9 @@ def build_manifest(*, segments: Sequence[Segment], boundaries: Sequence[Boundary
     }
 
 
-def write_model_dir(output: Path, segments: Sequence[Segment], manifest: dict,
-                    overwrite: bool = False) -> dict:
+def write_model_dir(
+    output: Path, segments: Sequence[Segment], manifest: dict, overwrite: bool = False
+) -> dict:
     """Write the segments and the manifest (with model_hash) to output.
 
     Files are first written to a staging directory next to output, then moved
@@ -139,13 +155,17 @@ def write_model_dir(output: Path, segments: Sequence[Segment], manifest: dict,
     if output.exists():
         existing = [p for p in output.iterdir()]
         if existing and not overwrite:
-            raise FileExistsError(f"{output} is not empty ({len(existing)} files); pass --overwrite")
+            raise FileExistsError(
+                f"{output} is not empty ({len(existing)} files); pass --overwrite"
+            )
         # --overwrite replaces a model directory, nothing else: a wrong
         # --output must not delete unrelated files.
         foreign = [p.name for p in existing if not _is_model_file(p)]
         if foreign:
-            raise FileExistsError(f"{output} contains files that are not part of a model "
-                                  f"({', '.join(sorted(foreign)[:5])}): refusing to overwrite it")
+            raise FileExistsError(
+                f"{output} contains files that are not part of a model "
+                f"({', '.join(sorted(foreign)[:5])}): refusing to overwrite it"
+            )
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as tmp:

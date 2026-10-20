@@ -37,14 +37,18 @@ def check_consistency(export: CppExport, model: split.FrozenModel) -> None:
     # Without this the device would run a float model while Edge Impulse's
     # thresholds were tuned on the quantized one.
     if export.quantized or export.input_dtype != "float32" or export.output_dtype != "float32":
-        raise BuildError(f"the C++ export is quantized (input {export.input_dtype}, output "
-                         f"{export.output_dtype}); sciot-model builds float32 only for now "
-                         "(docs/MODELS.md, Quantization)")
+        raise BuildError(
+            f"the C++ export is quantized (input {export.input_dtype}, output "
+            f"{export.output_dtype}); sciot-model builds float32 only for now "
+            "(docs/MODELS.md, Quantization)"
+        )
 
     expected_input = (export.input_height, export.input_width)
     if len(input_shape) != 4 or input_shape[3] != 3 or tuple(input_shape[1:3]) != expected_input:
-        raise BuildError(f"the SavedModel input is {list(input_shape)}, but the C++ export expects "
-                         f"[batch, {export.input_height}, {export.input_width}, 3]")
+        raise BuildError(
+            f"the SavedModel input is {list(input_shape)}, but the C++ export expects "
+            f"[batch, {export.input_height}, {export.input_width}, 3]"
+        )
 
     columns = {
         "yolo_pro": len(export.labels) + 4,  # xmin, ymin, xmax, ymax, one score per label
@@ -52,8 +56,10 @@ def check_consistency(export: CppExport, model: split.FrozenModel) -> None:
     }[export.decoder]
     if not output_shape or output_shape[-1] != columns:
         found = output_shape[-1] if output_shape else None
-        raise BuildError(f"the SavedModel output has {found} columns (shape {list(output_shape)}), but "
-                         f"decoder {export.decoder} with {len(export.labels)} labels needs {columns}")
+        raise BuildError(
+            f"the SavedModel output has {found} columns (shape {list(output_shape)}), but "
+            f"decoder {export.decoder} with {len(export.labels)} labels needs {columns}"
+        )
     # The comparison of the outputs (same model, same weights) is not here:
     # it is the verification against export.full_model, after the split.
 
@@ -66,8 +72,10 @@ def tflite_reference(content: bytes):
 def build(args: argparse.Namespace) -> dict:
     print(f"Reading the C++ export: {args.ei_cpp_export}")
     export = read_cpp_export(args.ei_cpp_export)
-    print(f"  project {export.project_id} deploy v{export.deploy_version}, "
-          f"decoder {export.decoder}, labels {export.labels}")
+    print(
+        f"  project {export.project_id} deploy v{export.deploy_version}, "
+        f"decoder {export.decoder}, labels {export.labels}"
+    )
 
     with split.resolve_saved_model(args.savedmodel) as model_dir:
         print(f"Loading the SavedModel: {args.savedmodel}")
@@ -84,23 +92,34 @@ def build(args: argparse.Namespace) -> dict:
         samples = [split.random_sample((1, height, width, 3))]
         samples += [split.image_sample(p, height, width) for p in args.sample]
         if not args.sample:
-            print("WARNING: no --sample images: verification uses random noise only, "
-                  "which barely exercises a detection model's scores")
+            print(
+                "WARNING: no --sample images: verification uses random noise only, "
+                "which barely exercises a detection model's scores"
+            )
 
-        print(f"Verifying {len(samples)} sample(s) against the SavedModel and Edge Impulse's .tflite")
+        print(
+            f"Verifying {len(samples)} sample(s) against the SavedModel and Edge Impulse's .tflite"
+        )
         errors = {
-            "SavedModel": split.verify(segments, split.frozen_reference(model), samples,
-                                       args.atol, args.rtol),
-            "Edge Impulse .tflite": split.verify(segments, tflite_reference(export.full_model),
-                                                 samples, args.atol, args.rtol),
+            "SavedModel": split.verify(
+                segments, split.frozen_reference(model), samples, args.atol, args.rtol
+            ),
+            "Edge Impulse .tflite": split.verify(
+                segments, tflite_reference(export.full_model), samples, args.atol, args.rtol
+            ),
         }
         for name, e in errors.items():
             print(f"  {name}: max_abs={e.max_abs:.3g} max_rel={e.max_rel:.3g}")
             if not e.equivalent:
-                hint = (" (are the two exports from the same model version?)"
-                        if name.startswith("Edge") else "")
-                raise BuildError(f"segments differ from the {name} beyond atol={args.atol}, "
-                                 f"rtol={args.rtol}{hint}")
+                hint = (
+                    " (are the two exports from the same model version?)"
+                    if name.startswith("Edge")
+                    else ""
+                )
+                raise BuildError(
+                    f"segments differ from the {name} beyond atol={args.atol}, "
+                    f"rtol={args.rtol}{hint}"
+                )
 
     manifest = build_manifest(
         segments=segments,
@@ -108,13 +127,17 @@ def build(args: argparse.Namespace) -> dict:
         postprocess=export.postprocess(),
         source=Source(
             savedmodel_file=Path(args.savedmodel).name,
-            savedmodel_sha256=sha256_file(Path(args.savedmodel)) if Path(args.savedmodel).is_file() else "",
+            savedmodel_sha256=sha256_file(Path(args.savedmodel))
+            if Path(args.savedmodel).is_file()
+            else "",
             ei_project_id=export.project_id,
             ei_deploy_version=export.deploy_version,
             ei_studio_version=export.studio_version,
         ),
         verification=Verification(
-            samples=len(args.sample), atol=args.atol, rtol=args.rtol,
+            samples=len(args.sample),
+            atol=args.atol,
+            rtol=args.rtol,
             against_savedmodel=errors["SavedModel"],
             against_edge_impulse=errors["Edge Impulse .tflite"],
         ),
@@ -122,8 +145,10 @@ def build(args: argparse.Namespace) -> dict:
     written = write_model_dir(args.output, segments, manifest, overwrite=args.overwrite)
     print(f"Wrote {len(segments)} segments to {args.output}")
     print(f"model_hash {written['model_hash']}")
-    print("NOTE: devices must use the files of THIS build: a rebuild (e.g. with another "
-          "TensorFlow version) produces a different model_hash")
+    print(
+        "NOTE: devices must use the files of THIS build: a rebuild (e.g. with another "
+        "TensorFlow version) produces a different model_hash"
+    )
     return written
 
 
@@ -132,15 +157,33 @@ def parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     b = sub.add_parser("build", help="build a model directory from Edge Impulse exports")
-    b.add_argument("savedmodel", type=Path,
-                   help='"TensorFlow SavedModel" export: ZIP, directory or saved_model.pb')
-    b.add_argument("--ei-cpp-export", type=Path, required=True,
-                   help='"C++ library" export: ZIP or extracted directory')
+    b.add_argument(
+        "savedmodel",
+        type=Path,
+        help='"TensorFlow SavedModel" export: ZIP, directory or saved_model.pb',
+    )
+    b.add_argument(
+        "--ei-cpp-export",
+        type=Path,
+        required=True,
+        help='"C++ library" export: ZIP or extracted directory',
+    )
     b.add_argument("--output", type=Path, required=True, help="model directory to create")
-    b.add_argument("--sample", type=Path, action="append", default=[], metavar="IMAGE",
-                   help="real image for the verification (repeatable; strongly recommended)")
-    b.add_argument("--cut", action="append", default=[], metavar="TENSOR",
-                   help="use this tensor as a cut (repeatable); automatic cuts when omitted")
+    b.add_argument(
+        "--sample",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="IMAGE",
+        help="real image for the verification (repeatable; strongly recommended)",
+    )
+    b.add_argument(
+        "--cut",
+        action="append",
+        default=[],
+        metavar="TENSOR",
+        help="use this tensor as a cut (repeatable); automatic cuts when omitted",
+    )
     b.add_argument("--max-segments", type=int, default=0, help="0 = all automatic cuts")
     b.add_argument("--signature", default=split.DEFAULT_SIGNATURE)
     b.add_argument("--atol", type=float, default=1e-4)
