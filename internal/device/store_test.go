@@ -253,7 +253,7 @@ func TestSetPolicyErrors(t *testing.T) {
 	if _, err := s.SetPolicy("mai-visto", api.SetPolicyRequest{Mode: api.ModeLocal}); !errors.Is(err, ErrDeviceNotFound) {
 		t.Errorf("err = %v, want ErrDeviceNotFound", err)
 	}
-	tooFar := 59 // fomo ha last_offloading_layer 58
+	tooFar := 58 // fomo ha last_offloading_layer 58: al server non resterebbe nulla
 	_, err := s.SetPolicy("web_96", api.SetPolicyRequest{Mode: api.ModeSplit, SplitPoint: &tooFar})
 	if !errors.Is(err, ErrInvalidPolicy) {
 		t.Errorf("err = %v, want ErrInvalidPolicy", err)
