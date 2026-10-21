@@ -135,7 +135,10 @@ func (d *Dispatcher) Execute(ctx context.Context, job stream.Job) (stream.Outcom
 	out, err := d.backend.Execute(ctx, job)
 	d.finish(e, out.LayerMS, err)
 	if err != nil {
-		return stream.Outcome{}, err
+		// Anche un errore durante l'esecuzione porta la previsione: un frame
+		// ammesso che scade nel worker (gRPC DeadlineExceeded) è una previsione
+		// sbagliata, come uno che scade in coda.
+		return stream.Outcome{}, &stream.JobError{Admission: *e.admission(), Err: err}
 	}
 	// L'attesa in coda qui si somma a quella (di solito nulla) nel worker.
 	out.QueueWaitMS += ms(e.started.Sub(arrived))

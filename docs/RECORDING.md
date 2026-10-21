@@ -78,7 +78,7 @@ will add the algorithm's reasons).
 | Key | Meaning |
 |---|---|
 | `outcome` | `result`, `server_busy` (not admitted), `deadline_exceeded` (expired in the queue), `worker_unavailable` |
-| `admission` | the dispatcher's prediction: queue wait and service time `S` it used, and whether `S` came from measures. Present for `result`, `server_busy` and `deadline_exceeded`: comparing it with `timing` shows how wrong the prediction was, and a `deadline_exceeded` is by definition a wrong one |
+| `admission` | the dispatcher's prediction: queue wait and service time `S` it used, and whether `S` came from measures. Present whenever the dispatcher saw the frame: `result`, `server_busy`, `deadline_exceeded` (expired in the queue or while running in the worker), and a `worker_unavailable` that happened during execution. Absent only when no worker was ready at arrival. Comparing it with `timing` shows how wrong the prediction was; a `deadline_exceeded` is by definition a wrong one |
 | `timing` | measured times, as in the result sent to the device; `result` only |
 | `detections` | how many objects were found; `result` only. Boxes are not recorded |
 | `deadline_ms` | the frame's deadline from when the server read it |

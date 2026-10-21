@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -576,4 +577,24 @@ func TestExpiryCarriesTheAdmission(t *testing.T) {
 	}
 	b.hold <- struct{}{}
 	<-first
+}
+
+func TestExecutionErrorCarriesTheAdmission(t *testing.T) {
+	// Il frame è stato ammesso, poi la scadenza è passata nel worker.
+	b := newBackend(1, false)
+	b.err = fmt.Errorf("%w: rpc deadline", stream.ErrDeadlineExceeded)
+	d := New(b, DefaultConfig())
+	seed(d, 8*time.Millisecond)
+
+	_, err := d.Execute(context.Background(), job(1, time.Second))
+	var je *stream.JobError
+	if !errors.As(err, &je) || !errors.Is(err, stream.ErrDeadlineExceeded) {
+		t.Fatalf("err = %v: atteso un *stream.JobError che resta un ErrDeadlineExceeded", err)
+	}
+	if je.Admission.Service != 8*time.Millisecond || !je.Admission.Known {
+		t.Errorf("Admission = %+v", je.Admission)
+	}
+	if !strings.Contains(err.Error(), "rpc deadline") {
+		t.Errorf("il messaggio originale va conservato: %q", err)
+	}
 }
