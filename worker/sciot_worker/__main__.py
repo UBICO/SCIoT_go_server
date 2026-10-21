@@ -5,6 +5,10 @@
 
 The Go server starts the worker with these arguments, built from its own
 config.json: the worker has no configuration file of its own.
+
+    sciot-worker tune --model yolo_small_320=/path/to/yolo-small
+
+measures slots × threads on this machine (sciot_worker/tune.py).
 """
 
 from __future__ import annotations
@@ -27,6 +31,14 @@ def parse_model(value: str) -> ModelConfig:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    # A subcommand only for tune: the Go server starts the worker with plain
+    # options (--listen ...), and that must keep working unchanged.
+    if argv[:1] == ["tune"]:
+        from sciot_worker import tune
+
+        return tune.main(argv[1:])
+
     parser = argparse.ArgumentParser(prog="sciot-worker", description=__doc__.split("\n")[0])
     parser.add_argument("--listen", required=True, help="host:port, e.g. 127.0.0.1:50051")
     parser.add_argument("--slots", type=int, default=1)
