@@ -82,6 +82,7 @@ paths):
 | `stream.max_inflight` | 3 | frames per device in flight at the same time |
 | `stream.default_deadline_ms` | 1000 | frame deadline when the client sends none |
 | `stream.max_message_bytes` | 8388608 | largest WebSocket message, 1024–67108864 |
+| `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)) |
 | `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
 | `models[].postprocess` | — | optional override of `score_threshold`, `iou_threshold`, `max_detections` |
 
@@ -123,6 +124,8 @@ internal/device/     in-memory device state (sessions, policy, telemetry)
 internal/load/       server host load, sampled in its own goroutine (gopsutil)
 internal/server/     HTTP handlers, verbose heartbeat table
 internal/stream/     data plane WebSocket (/api/v1/stream)
+internal/dispatch/   admission by deadline, FIFO queue, load metrics
+internal/record/     JSON Lines recording of events (docs/RECORDING.md)
 internal/worker/     gRPC client, catalog and supervisor of the Python worker
 worker/              Python worker (TFLite segments over gRPC)
 ```

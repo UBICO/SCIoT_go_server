@@ -505,3 +505,75 @@ func TestSegmentsLearnedFromExecute(t *testing.T) {
 		t.Error("split 6 deve essere stimabile dai segmenti")
 	}
 }
+
+// --- previsione per la registrazione --------------------------------------------
+
+func TestOutcomeCarriesTheAdmission(t *testing.T) {
+	d := New(newBackend(1, false), DefaultConfig())
+	seed(d, 8*time.Millisecond)
+	out, err := d.Execute(context.Background(), job(1, time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := out.Admission
+	if a == nil || a.PredictedWait != 0 || a.Service != 8*time.Millisecond || !a.Known {
+		t.Errorf("Admission = %+v", a)
+	}
+}
+
+func TestRejectionCarriesTheAdmission(t *testing.T) {
+	b := newBackend(1, true)
+	d := New(b, DefaultConfig())
+	seed(d, 100*time.Millisecond)
+	first := submit(d, job(1, 10*time.Second))
+	eventually(t, "primo in esecuzione", func() bool { return running(d) == 1 })
+
+	_, err := d.Execute(context.Background(), job(2, 50*time.Millisecond))
+	var je *stream.JobError
+	if !errors.As(err, &je) || !errors.Is(err, stream.ErrBusy) {
+		t.Fatalf("err = %v: atteso un *stream.JobError che resta un ErrBusy", err)
+	}
+	if je.Admission.Service != 100*time.Millisecond || je.Admission.PredictedWait <= 0 || !je.Admission.Known {
+		t.Errorf("Admission = %+v", je.Admission)
+	}
+	if !strings.Contains(err.Error(), "predicted wait") {
+		t.Errorf("il messaggio per il device non deve cambiare: %q", err)
+	}
+	b.hold <- struct{}{}
+	<-first
+}
+
+func TestUnknownServiceRejectionCarriesTheAdmission(t *testing.T) {
+	b := newBackend(1, true)
+	d := New(b, DefaultConfig())
+	first := submit(d, job(1, 10*time.Second))
+	eventually(t, "primo in esecuzione", func() bool { return running(d) == 1 })
+
+	_, err := d.Execute(context.Background(), job(2, 10*time.Second))
+	var je *stream.JobError
+	if !errors.As(err, &je) || je.Admission.Known {
+		t.Errorf("err = %v, admission %+v: senza misure Known è false", err, je)
+	}
+	b.hold <- struct{}{}
+	<-first
+}
+
+func TestExpiryCarriesTheAdmission(t *testing.T) {
+	b := newBackend(1, true)
+	d := New(b, DefaultConfig())
+	seed(d, time.Millisecond) // sottostima: il frame scadrà in coda
+	first := submit(d, job(1, 10*time.Second))
+	eventually(t, "primo in esecuzione", func() bool { return running(d) == 1 })
+
+	_, err := d.Execute(context.Background(), job(2, 50*time.Millisecond))
+	var je *stream.JobError
+	if !errors.As(err, &je) || !errors.Is(err, stream.ErrDeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+	// La previsione era 1 ms di attesa: l'attesa vera ha superato i 50 ms.
+	if je.Admission.Service != time.Millisecond || je.Admission.PredictedWait > 10*time.Millisecond {
+		t.Errorf("Admission = %+v", je.Admission)
+	}
+	b.hold <- struct{}{}
+	<-first
+}

@@ -14,8 +14,10 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,6 +50,15 @@ type File struct {
 	// gira solo con il control plane (nessun data plane, tutti LOCAL).
 	Worker *Worker `json:"worker,omitempty"`
 	Stream Stream  `json:"stream"`
+
+	// Record è opzionale: senza la sezione il server non registra nulla.
+	Record *Record `json:"record,omitempty"`
+}
+
+// Record è la sezione "record": dove scrivere la registrazione degli eventi
+// (internal/record, docs/RECORDING.md). Un file per ogni avvio del server.
+type Record struct {
+	Dir string `json:"dir"`
 }
 
 // Worker è la sezione "worker": il processo che esegue i segmenti TFLite.
@@ -265,4 +276,24 @@ func removedKeyHint(err error) string {
 		}
 	}
 	return ""
+}
+
+// RecordDir restituisce la cartella della registrazione e true, oppure false
+// se la sezione "record" manca. "~/" all'inizio indica la home dell'utente.
+func (f File) RecordDir() (string, bool, error) {
+	if f.Record == nil {
+		return "", false, nil
+	}
+	dir := f.Record.Dir
+	if dir == "" {
+		return "", false, errors.New("record.dir is required")
+	}
+	if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", false, fmt.Errorf("record.dir: %w", err)
+		}
+		dir = filepath.Join(home, rest)
+	}
+	return dir, true, nil
 }

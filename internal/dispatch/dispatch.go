@@ -66,10 +66,16 @@ type entry struct {
 	job     stream.Job
 	arrived time.Time
 	service time.Duration // S previsto all'ammissione
+	wait    time.Duration // attesa in coda prevista all'ammissione
 	known   bool          // S viene da misure (di questo key o dei suoi segmenti)
 
 	granted chan struct{} // chiuso quando il job ottiene uno slot
 	started time.Time     // quando ha ottenuto lo slot; zero = in coda
+}
+
+// admission è la previsione fatta quando e è stato ammesso.
+func (e *entry) admission() *stream.Admission {
+	return &stream.Admission{PredictedWait: e.wait, Service: e.service, Known: e.known}
 }
 
 // Dispatcher implementa stream.Executor.
@@ -133,6 +139,8 @@ func (d *Dispatcher) Execute(ctx context.Context, job stream.Job) (stream.Outcom
 	}
 	// L'attesa in coda qui si somma a quella (di solito nulla) nel worker.
 	out.QueueWaitMS += ms(e.started.Sub(arrived))
+	// La registrazione mette la previsione accanto all'attesa misurata.
+	out.Admission = e.admission()
 	return out, nil
 }
 
@@ -154,22 +162,28 @@ func (d *Dispatcher) admit(job stream.Job, now time.Time) (*entry, error) {
 	wait := predictWait(slots, d.remainingLocked(now), d.queuedLocked())
 
 	// Il messaggio va al device così com'è: contiene i numeri della previsione.
+	// I rifiuti sono avvolti in un *stream.JobError, così la registrazione
+	// conosce la previsione anche dei frame rifiutati; messaggio e
+	// errors.Is(err, stream.ErrBusy) non cambiano.
+	prediction := stream.Admission{PredictedWait: wait, Service: service, Known: known}
 	if finish := now.Add(wait + service); finish.After(job.Deadline) {
 		d.totals.Rejected++
-		return nil, fmt.Errorf("%w: predicted wait %.1f ms + service %.1f ms > deadline %.1f ms",
-			stream.ErrBusy, ms(wait), ms(service), ms(job.Deadline.Sub(now)))
+		return nil, &stream.JobError{Admission: prediction, Err: fmt.Errorf(
+			"%w: predicted wait %.1f ms + service %.1f ms > deadline %.1f ms",
+			stream.ErrBusy, ms(wait), ms(service), ms(job.Deadline.Sub(now)))}
 	}
 	// Senza misure non si può promettere nulla se non c'è uno slot libero. Non
 	// basta wait > 0: senza misure anche i job in esecuzione hanno S = 0, e wait
 	// risulterebbe 0. La prima esecuzione produce la prima misura.
 	if !known && len(d.running)+len(d.queue) >= slots {
 		d.totals.Rejected++
-		return nil, fmt.Errorf("%w: no measured service time for model %q split %d and no free slot",
-			stream.ErrBusy, job.ModelKey, job.SplitPoint)
+		return nil, &stream.JobError{Admission: prediction, Err: fmt.Errorf(
+			"%w: no measured service time for model %q split %d and no free slot",
+			stream.ErrBusy, job.ModelKey, job.SplitPoint)}
 	}
 
 	d.window.add(now, bucket{admitted: 1})
-	e := &entry{job: job, arrived: now, service: service, known: known, granted: make(chan struct{})}
+	e := &entry{job: job, arrived: now, service: service, wait: wait, known: known, granted: make(chan struct{})}
 	d.queue = append(d.queue, e)
 	// Lo avvia subito se c'è uno slot libero.
 	d.dispatchLocked(now)
@@ -212,7 +226,10 @@ func (d *Dispatcher) wait(ctx context.Context, e *entry) error {
 		// Succede solo se la previsione era sbagliata (S cresciuta dopo
 		// l'ammissione): è un segnale utile, per questo ha un contatore.
 		d.totals.Expired++
-		return fmt.Errorf("%w: expired after %.1f ms in queue", stream.ErrDeadlineExceeded, ms(d.now().Sub(e.arrived)))
+		// Con la previsione di e: è il caso più utile per la Fase 3, la
+		// previsione era sbagliata e la registrazione deve dire di quanto.
+		return &stream.JobError{Admission: *e.admission(), Err: fmt.Errorf(
+			"%w: expired after %.1f ms in queue", stream.ErrDeadlineExceeded, ms(d.now().Sub(e.arrived)))}
 	}
 	return err
 }
