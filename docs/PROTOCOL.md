@@ -7,7 +7,6 @@ This document is the contract between the SCIoT Go server and its clients
   and the execution policy (`LOCAL` / `SPLIT`);
 - the **data plane** (WebSocket, see [Data plane](#data-plane)): activation
   tensors sent by devices in `SPLIT` and the results of the remote partition.
-  **Status: draft**, being implemented in phase 2.
 
 The source of truth for field names is `internal/api`; the tests in
 `internal/api/types_test.go` pin the exact JSON.
@@ -258,9 +257,6 @@ client                                   server
 
 ## Data plane
 
-> **Draft.** This section is the contract for phase 2; it becomes normative
-> when the implementation lands. Field names may still change until then.
-
 In `SPLIT` the device runs segments `0..k` and sends the activation (the output
 of segment `k`) to the server, which runs `k+1..last` and returns the output of
 the model. The data plane carries those tensors; everything else stays on the
@@ -358,7 +354,7 @@ binary layout to version.
 | `sequence_id` | uint64, starts at 1, strictly increasing within a session; unique among frames in flight |
 | `policy_version` | version of the policy the frame was computed with |
 | `split_point` | last segment executed by the device: `-1` (raw model input) .. `last_offloading_layer - 1` |
-| `encoding` | `float32` in v1; `rgb565` reserved for `split_point = -1` (6× smaller than `float32`); `float16`, `int8` reserved for later |
+| `encoding` | `float32` in v1; `rgb565` reserved for `split_point = -1` (6× smaller than `float32`); other data types (quantized tensors, any precision) reserved for later |
 | `captured_at` | wall-clock time (NTP-synchronized) at which the frame was acquired; copied into the result |
 | `deadline_ms` | optional: how long the result is still useful, from when the server reads the frame. The natural value is the time the device would need to finish the frame `LOCAL`: a later result is worse than running locally |
 | `want_raw` | optional, default `false`: also return the raw output tensor |
