@@ -82,7 +82,10 @@ def _read(path: Path) -> str | None:
 
 def _sysctl(name: str) -> int | None:
     try:
-        out = subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=2)
+        # check=False: a missing key is a normal answer (returncode != 0), read below.
+        out = subprocess.run(
+            ["sysctl", "-n", name], capture_output=True, text=True, timeout=2, check=False
+        )
         return int(out.stdout.strip()) if out.returncode == 0 else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -280,8 +283,13 @@ def free_port() -> int:
 def rss_bytes(pid: int) -> int | None:
     """Resident memory of a process (ps works on Linux and macOS)."""
     try:
+        # check=False: a process already gone gives empty output, handled below.
         out = subprocess.run(
-            ["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=2
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
         )
         return int(out.stdout.strip()) * 1024
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -418,8 +426,10 @@ def recommend(results: Sequence[ComboResult], tolerance: float = LATENCY_TOLERAN
 
 def format_table(results: Sequence[ComboResult]) -> str:
     lines = [
-        "| slots × threads | 1 request: p50 / p95 ms | slots requests: p50 / p95 ms "
-        "| throughput req/s | worker RSS MiB |",
+        (
+            "| slots × threads | 1 request: p50 / p95 ms | slots requests: p50 / p95 ms "
+            "| throughput req/s | worker RSS MiB |"
+        ),
         "|---|---|---|---|---|",
     ]
     for r in results:
