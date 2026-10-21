@@ -42,6 +42,13 @@ DATATYPES = {
 }
 
 
+# The most detections Edge Impulse returns: EI_CLASSIFIER_OBJECT_DETECTION_KEEP_TOPK
+# in the SDK (classifier/ei_nms.h), not a model parameter. Not to be confused
+# with EI_CLASSIFIER_OBJECT_DETECTION_COUNT in model_metadata.h, which is the
+# guaranteed MINIMUM number of results (the SDK pads with zero-score entries).
+MAX_DETECTIONS = 200
+
+
 class ExportError(RuntimeError):
     """The C++ export is missing something or uses an unsupported model."""
 
@@ -215,7 +222,7 @@ def read_cpp_export(path: Path) -> CppExport:
         labels=labels(variables),
         score_threshold=number("EI_CLASSIFIER_OBJECT_DETECTION_THRESHOLD"),
         iou_threshold=nms_iou(variables),
-        max_detections=int(number("EI_CLASSIFIER_OBJECT_DETECTION_COUNT")),
+        max_detections=MAX_DETECTIONS,
         full_model=full_model,
     )
     if int(number("EI_CLASSIFIER_LABEL_COUNT")) != len(export.labels):

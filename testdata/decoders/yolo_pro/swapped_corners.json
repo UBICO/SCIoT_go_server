@@ -1,0 +1,61 @@
+{
+  "rule": "xmax < xmin becomes xmax = xmin (same for y): a zero-area box. Its IoU is 0, so it never suppresses another box and is never suppressed, and it is still a detection",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "iou_threshold": 0.5,
+    "max_detections": 200
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "rows": [
+    [
+      0.75,
+      0,
+      0.25,
+      1,
+      0.75,
+      0
+    ],
+    [
+      0,
+      0,
+      1,
+      1,
+      0.5,
+      0
+    ]
+  ],
+  "detections": [
+    {
+      "label": "bicycle",
+      "score": 0.75,
+      "box": {
+        "x": 0.75,
+        "y": 0,
+        "w": 0.0,
+        "h": 1
+      }
+    },
+    {
+      "label": "bicycle",
+      "score": 0.5,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1
+      }
+    }
+  ]
+}

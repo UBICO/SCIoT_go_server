@@ -1,0 +1,71 @@
+{
+  "rule": "NMS runs per class: the same box can be a bicycle and a stop sign. Results of all classes are merged by score; ties by row index (row 0 bicycle before row 1 stop sign)",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "iou_threshold": 0.5,
+    "max_detections": 200
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "rows": [
+    [
+      0,
+      0,
+      1,
+      1,
+      0.875,
+      0.75
+    ],
+    [
+      0,
+      0,
+      0.5,
+      0.5,
+      0,
+      0.875
+    ]
+  ],
+  "detections": [
+    {
+      "label": "bicycle",
+      "score": 0.875,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1
+      }
+    },
+    {
+      "label": "stop sign",
+      "score": 0.875,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 0.5,
+        "h": 0.5
+      }
+    },
+    {
+      "label": "stop sign",
+      "score": 0.75,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1
+      }
+    }
+  ]
+}

@@ -87,7 +87,7 @@ func TestNewAndLookup(t *testing.T) {
 	}
 	pp := info.Postprocess
 	if pp.Decoder != "yolo_pro" || !slices.Equal(pp.Labels, []string{"bicycle", "stop sign"}) ||
-		pp.ScoreThreshold != 0.5 || pp.IoUThreshold == nil || *pp.IoUThreshold != 0.2 || pp.MaxDetections != 10 {
+		pp.ScoreThreshold != 0.5 || pp.IoUThreshold == nil || *pp.IoUThreshold != 0.2 || pp.MaxDetections != 200 {
 		t.Errorf("Postprocess = %+v", pp)
 	}
 

@@ -1,0 +1,61 @@
+{
+  "rule": "A box whose IoU with every kept box is below iou_threshold is kept. IoU = 0.375 / (0.75 + 0.625 - 0.375) = 0.375",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "iou_threshold": 0.5,
+    "max_detections": 200
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "rows": [
+    [
+      0,
+      0,
+      0.75,
+      1,
+      0.875,
+      0
+    ],
+    [
+      0.375,
+      0,
+      1,
+      1,
+      0.75,
+      0
+    ]
+  ],
+  "detections": [
+    {
+      "label": "bicycle",
+      "score": 0.875,
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 0.75,
+        "h": 1
+      }
+    },
+    {
+      "label": "bicycle",
+      "score": 0.75,
+      "box": {
+        "x": 0.375,
+        "y": 0,
+        "w": 0.625,
+        "h": 1
+      }
+    }
+  ]
+}

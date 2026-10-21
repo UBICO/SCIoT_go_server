@@ -60,7 +60,7 @@ type RegisterRequest struct {
 //	{"model_key": "yolo_small_320", "num_layers": 8, "last_offloading_layer": 7,
 //	 "input": {"shape": [1, 320, 320, 3], "dtype": "float32"},
 //	 "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"],
-//	                 "score_threshold": 0.5, "iou_threshold": 0.2, "max_detections": 10}}
+//	                 "score_threshold": 0.5, "iou_threshold": 0.2, "max_detections": 200}}
 type ModelInfo struct {
 	ModelKey            string `json:"model_key"`
 	NumLayers           int    `json:"num_layers"`

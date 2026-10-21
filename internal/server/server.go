@@ -499,7 +499,7 @@ func (s storeSessions) Lookup(deviceID, sessionID string) (stream.Session, bool)
 	if !ok || d.SessionID != sessionID {
 		return stream.Session{}, false
 	}
-	return stream.Session{ModelKey: d.Model.ModelKey, Policy: d.Policy}, true
+	return stream.Session{ModelKey: d.Model.ModelKey, Policy: d.Policy, Postprocess: d.Model.Postprocess}, true
 }
 
 // QueueSource fornisce lo stato della coda del data plane.

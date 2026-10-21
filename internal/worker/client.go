@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
 	"github.com/UBICO/SCIoT_go_server/internal/workerpb"
 )
@@ -87,18 +88,56 @@ func (c *Client) Execute(ctx context.Context, job stream.Job) (stream.Outcome, e
 		defer cancel()
 	}
 	resp, err := c.rpc.RunFrom(ctx, &workerpb.RunRequest{
-		ModelKey:   job.ModelKey,
-		SplitPoint: int32(job.SplitPoint),
-		Tensor:     job.Tensor,
+		ModelKey:    job.ModelKey,
+		SplitPoint:  int32(job.SplitPoint),
+		Tensor:      job.Tensor,
+		Postprocess: postprocessToProto(job.Postprocess),
+		// Senza want_raw il worker non manda l'output (50 KB per yolo-small)
+		// che il device non ha chiesto.
+		WantRaw: job.WantRaw,
 	})
 	if err != nil {
 		return stream.Outcome{}, statusToError(err)
 	}
-	out := stream.Outcome{LayerMS: resp.GetLayerMs(), QueueWaitMS: resp.GetQueueWaitMs()}
-	if job.WantRaw {
-		out.Output = resp.GetOutput()
+	return stream.Outcome{
+		Output:      resp.GetOutput(), // vuoto se !WantRaw
+		Detections:  detectionsFromProto(resp.GetDetections()),
+		LayerMS:     resp.GetLayerMs(),
+		QueueWaitMS: resp.GetQueueWaitMs(),
+	}, nil
+}
+
+// postprocessToProto converte i parametri di decodifica per il worker; nil
+// (nessuna decodifica) se p.Decoder è vuoto.
+func postprocessToProto(p api.Postprocess) *workerpb.Postprocess {
+	if p.Decoder == "" {
+		return nil
 	}
-	return out, nil
+	out := &workerpb.Postprocess{
+		Decoder:        p.Decoder,
+		Labels:         p.Labels,
+		ScoreThreshold: p.ScoreThreshold,
+		MaxDetections:  int32(p.MaxDetections),
+	}
+	if p.IoUThreshold != nil {
+		v := *p.IoUThreshold // copia: il messaggio non condivide memoria con il registry
+		out.IouThreshold = &v
+	}
+	return out
+}
+
+// detectionsFromProto converte le detection del worker nel tipo del protocollo.
+// La slice non è mai nil: "nessun oggetto" è "detections": [], non null.
+func detectionsFromProto(ds []*workerpb.Detection) []api.Detection {
+	out := make([]api.Detection, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, api.Detection{
+			Label: d.GetLabel(),
+			Score: d.GetScore(),
+			Box:   api.Box{X: d.GetX(), Y: d.GetY(), W: d.GetW(), H: d.GetH()},
+		})
+	}
+	return out
 }
 
 // Il controllo a tempo di compilazione: *Client soddisfa stream.Executor.

@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1csciot_worker/v1/worker.proto\x12\x0fsciot.worker.v1\"\x11\n\x0f\x44\x65scribeRequest\"e\n\x10\x44\x65scribeResponse\x12\x31\n\x06models\x18\x01 \x03(\x0b\x32!.sciot.worker.v1.ModelDescription\x12\r\n\x05slots\x18\x02 \x01(\x05\x12\x0f\n\x07threads\x18\x03 \x01(\x05\"e\n\x10ModelDescription\x12\x11\n\tmodel_key\x18\x01 \x01(\t\x12\x12\n\nmodel_hash\x18\x02 \x01(\t\x12*\n\x08segments\x18\x03 \x03(\x0b\x32\x18.sciot.worker.v1.Segment\"\x83\x01\n\x07Segment\x12\r\n\x05index\x18\x01 \x01(\x05\x12\x13\n\x0binput_shape\x18\x02 \x03(\x05\x12\x13\n\x0binput_dtype\x18\x03 \x01(\t\x12\x13\n\x0binput_bytes\x18\x04 \x01(\x03\x12\x14\n\x0coutput_shape\x18\x05 \x03(\x05\x12\x14\n\x0coutput_bytes\x18\x06 \x01(\x03\"D\n\nRunRequest\x12\x11\n\tmodel_key\x18\x01 \x01(\t\x12\x13\n\x0bsplit_point\x18\x02 \x01(\x05\x12\x0e\n\x06tensor\x18\x03 \x01(\x0c\"T\n\x0bRunResponse\x12\x0e\n\x06output\x18\x01 \x01(\x0c\x12\x10\n\x08layer_ms\x18\x02 \x03(\x01\x12\x15\n\rqueue_wait_ms\x18\x03 \x01(\x01\x12\x0c\n\x04slot\x18\x04 \x01(\x05\x32\xa8\x01\n\x0fPartitionWorker\x12O\n\x08\x44\x65scribe\x12 .sciot.worker.v1.DescribeRequest\x1a!.sciot.worker.v1.DescribeResponse\x12\x44\n\x07RunFrom\x12\x1b.sciot.worker.v1.RunRequest\x1a\x1c.sciot.worker.v1.RunResponseB4Z2github.com/UBICO/SCIoT_go_server/internal/workerpbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1csciot_worker/v1/worker.proto\x12\x0fsciot.worker.v1\"\x11\n\x0f\x44\x65scribeRequest\"e\n\x10\x44\x65scribeResponse\x12\x31\n\x06models\x18\x01 \x03(\x0b\x32!.sciot.worker.v1.ModelDescription\x12\r\n\x05slots\x18\x02 \x01(\x05\x12\x0f\n\x07threads\x18\x03 \x01(\x05\"e\n\x10ModelDescription\x12\x11\n\tmodel_key\x18\x01 \x01(\t\x12\x12\n\nmodel_hash\x18\x02 \x01(\t\x12*\n\x08segments\x18\x03 \x03(\x0b\x32\x18.sciot.worker.v1.Segment\"\x83\x01\n\x07Segment\x12\r\n\x05index\x18\x01 \x01(\x05\x12\x13\n\x0binput_shape\x18\x02 \x03(\x05\x12\x13\n\x0binput_dtype\x18\x03 \x01(\t\x12\x13\n\x0binput_bytes\x18\x04 \x01(\x03\x12\x14\n\x0coutput_shape\x18\x05 \x03(\x05\x12\x14\n\x0coutput_bytes\x18\x06 \x01(\x03\"\x89\x01\n\nRunRequest\x12\x11\n\tmodel_key\x18\x01 \x01(\t\x12\x13\n\x0bsplit_point\x18\x02 \x01(\x05\x12\x0e\n\x06tensor\x18\x03 \x01(\x0c\x12\x31\n\x0bpostprocess\x18\x04 \x01(\x0b\x32\x1c.sciot.worker.v1.Postprocess\x12\x10\n\x08want_raw\x18\x05 \x01(\x08\"\x8d\x01\n\x0bPostprocess\x12\x0f\n\x07\x64\x65\x63oder\x18\x01 \x01(\t\x12\x0e\n\x06labels\x18\x02 \x03(\t\x12\x17\n\x0fscore_threshold\x18\x03 \x01(\x01\x12\x1a\n\riou_threshold\x18\x04 \x01(\x01H\x00\x88\x01\x01\x12\x16\n\x0emax_detections\x18\x05 \x01(\x05\x42\x10\n\x0e_iou_threshold\"\x97\x01\n\x0bRunResponse\x12\x0e\n\x06output\x18\x01 \x01(\x0c\x12\x10\n\x08layer_ms\x18\x02 \x03(\x01\x12\x15\n\rqueue_wait_ms\x18\x03 \x01(\x01\x12\x0c\n\x04slot\x18\x04 \x01(\x05\x12.\n\ndetections\x18\x05 \x03(\x0b\x32\x1a.sciot.worker.v1.Detection\x12\x11\n\tdecode_ms\x18\x06 \x01(\x01\"U\n\tDetection\x12\r\n\x05label\x18\x01 \x01(\t\x12\r\n\x05score\x18\x02 \x01(\x01\x12\t\n\x01x\x18\x03 \x01(\x01\x12\t\n\x01y\x18\x04 \x01(\x01\x12\t\n\x01w\x18\x05 \x01(\x01\x12\t\n\x01h\x18\x06 \x01(\x01\x32\xa8\x01\n\x0fPartitionWorker\x12O\n\x08\x44\x65scribe\x12 .sciot.worker.v1.DescribeRequest\x1a!.sciot.worker.v1.DescribeResponse\x12\x44\n\x07RunFrom\x12\x1b.sciot.worker.v1.RunRequest\x1a\x1c.sciot.worker.v1.RunResponseB4Z2github.com/UBICO/SCIoT_go_server/internal/workerpbb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -40,10 +40,14 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_MODELDESCRIPTION']._serialized_end=272
   _globals['_SEGMENT']._serialized_start=275
   _globals['_SEGMENT']._serialized_end=406
-  _globals['_RUNREQUEST']._serialized_start=408
-  _globals['_RUNREQUEST']._serialized_end=476
-  _globals['_RUNRESPONSE']._serialized_start=478
-  _globals['_RUNRESPONSE']._serialized_end=562
-  _globals['_PARTITIONWORKER']._serialized_start=565
-  _globals['_PARTITIONWORKER']._serialized_end=733
+  _globals['_RUNREQUEST']._serialized_start=409
+  _globals['_RUNREQUEST']._serialized_end=546
+  _globals['_POSTPROCESS']._serialized_start=549
+  _globals['_POSTPROCESS']._serialized_end=690
+  _globals['_RUNRESPONSE']._serialized_start=693
+  _globals['_RUNRESPONSE']._serialized_end=844
+  _globals['_DETECTION']._serialized_start=846
+  _globals['_DETECTION']._serialized_end=931
+  _globals['_PARTITIONWORKER']._serialized_start=934
+  _globals['_PARTITIONWORKER']._serialized_end=1102
 # @@protoc_insertion_point(module_scope)

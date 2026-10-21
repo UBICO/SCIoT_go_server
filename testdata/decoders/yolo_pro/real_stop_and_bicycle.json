@@ -1,0 +1,59 @@
+{
+  "rule": "Real yolo-small output (COCO 000000004355): a stop sign and a bicycle, two classes in one image",
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "max_detections": 10,
+    "iou_threshold": 0.2
+  },
+  "columns": [
+    "xmin",
+    "ymin",
+    "xmax",
+    "ymax",
+    "score:bicycle",
+    "score:stop sign"
+  ],
+  "output": {
+    "file": "real_stop_and_bicycle.bin",
+    "shape": [
+      1,
+      2100,
+      6
+    ],
+    "dtype": "float32",
+    "byteorder": "little",
+    "sha256": "7849a196c8e30b00f4371ce97ac3dd8503e41339ddc38f3bfa447f8971448d7d"
+  },
+  "source": {
+    "image": "000000004355.jpg.6ph2rn90.ingestion-f98f6c7d9-vc8wb.jpg",
+    "model_hash": "b1823f4505d912e7b390f450f39832f8",
+    "preprocessing": "RGB, bilinear resize without crop, /255"
+  },
+  "detections": [
+    {
+      "label": "stop sign",
+      "score": 0.849723219871521,
+      "box": {
+        "x": 0.11125991493463516,
+        "y": 0.0,
+        "w": 0.13741076737642288,
+        "h": 0.18750229477882385
+      }
+    },
+    {
+      "label": "bicycle",
+      "score": 0.6413695812225342,
+      "box": {
+        "x": 1.1026859283447266e-05,
+        "y": 0.40287598967552185,
+        "w": 0.30859583616256714,
+        "h": 0.46718332171440125
+      }
+    }
+  ]
+}
