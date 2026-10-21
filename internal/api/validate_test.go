@@ -60,11 +60,13 @@ func TestSetPolicyRequestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{"local", SetPolicyRequest{Mode: ModeLocal}, false},
+		{"split all'input: tutto sul server", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(-1)}, false},
 		{"split al primo layer", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(0)}, false},
-		{"split all'ultimo layer", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(58)}, false},
+		{"al server solo l'ultimo segmento", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(57)}, false},
+		{"split all'ultimo layer: niente per il server", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(58)}, true},
 		{"local con split_point", SetPolicyRequest{Mode: ModeLocal, SplitPoint: intp(3)}, true},
 		{"split senza split_point", SetPolicyRequest{Mode: ModeSplit}, true},
-		{"split negativo", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(-1)}, true},
+		{"split sotto -1", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(-2)}, true},
 		{"split oltre il modello", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(59)}, true},
 		{"mode sconosciuto", SetPolicyRequest{Mode: "REMOTE"}, true},
 	}

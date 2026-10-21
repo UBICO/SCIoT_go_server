@@ -56,7 +56,11 @@ hashes guarantee that both sides split the same network at the same layers.
 - `mode`: `LOCAL` (whole model on the device) or `SPLIT` (layers
   `0..split_point` on the device, the rest on the server).
 - `split_point`: always present; `null` in `LOCAL`, an integer in
-  `0..last_offloading_layer` in `SPLIT`.
+  `-1..last_offloading_layer - 1` in `SPLIT`: the last segment the device
+  runs, as in frames. `-1` means the device runs nothing and sends the model
+  input (everything on the server); `last_offloading_layer - 1` leaves only
+  the last segment to the server. `last_offloading_layer` is not a `SPLIT`
+  (nothing would be left to the server): that is `LOCAL`.
 - `policy_version`: increases every time the server changes the policy.
   It is **per session**: a new registration starts again from `LOCAL` v1.
 
@@ -198,7 +202,7 @@ using it.
 ```
 
 The server assigns the version (current + 1) and validates `split_point`
-against the device's model. `200`:
+against the device's model (`-1..last_offloading_layer - 1`). `200`:
 
 ```json
 {"device_id": "web_96", "session_id": "YVOF...",
