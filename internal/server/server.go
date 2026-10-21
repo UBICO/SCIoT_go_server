@@ -17,6 +17,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/record"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
 )
@@ -84,6 +85,8 @@ type Server struct {
 	stream   http.Handler
 	notifier StreamNotifier
 	queue    QueueSource // nil senza data plane
+
+	rec *record.Recorder // nil = registrazione spenta
 
 	table *heartbeatTable  // usata solo se cfg.Verbose
 	now   func() time.Time // orario delle righe; sostituibile nei test
@@ -270,6 +273,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("registered device=%s type=%s model=%s session=%s",
 		req.DeviceID, d.Type, d.Model.ModelKey, d.SessionID)
+	s.rec.Record(&record.Session{DeviceID: d.ID, SessionID: d.SessionID, DeviceType: d.Type,
+		ModelKey: d.Model.ModelKey, Capabilities: d.Capabilities})
 	writeJSON(w, http.StatusOK, api.RegisterResponse{
 		SessionID: d.SessionID,
 		Model:     d.Model,
@@ -344,6 +349,18 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serverLoad := s.load.Snapshot()
+	s.rec.Record(&record.Heartbeat{
+		DeviceID:        req.DeviceID,
+		SessionID:       req.SessionID,
+		Applied:         record.Applied{Mode: req.Mode, PolicyVersion: req.PolicyVersion},
+		ServerPolicy:    res.Policy,
+		Telemetry:       req.Telemetry,
+		SinceLastSeenMS: float64(res.SinceLastSeen.Microseconds()) / 1000,
+		ServerLoad:      serverLoad,
+		Queue:           s.queueState(),
+	})
+
 	if s.cfg.Verbose {
 		s.table.print(heartbeatRow{
 			at:             s.now(),
@@ -354,7 +371,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			telemetry:      req.Telemetry,
 			sinceLastSeen:  res.SinceLastSeen,
 			requestBytes:   body.n,
-			serverLoad:     s.load.Snapshot(),
+			serverLoad:     serverLoad,
 		})
 	}
 
@@ -423,6 +440,7 @@ func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.notifier != nil {
 		s.notifier.NotifyPolicy(id, d.Policy)
 	}
+	s.rec.Record(&record.Policy{DeviceID: id, SessionID: d.SessionID, Policy: d.Policy, Reason: "admin"})
 	writeJSON(w, http.StatusOK, api.SetPolicyResponse{
 		DeviceID:  id,
 		SessionID: d.SessionID,
@@ -445,6 +463,8 @@ type statusResponse struct {
 	UptimeSeconds float64       `json:"uptime_seconds"`
 	// Dispatch è lo stato della coda del data plane; assente se è disabilitato.
 	Dispatch *dispatch.Snapshot `json:"dispatch,omitempty"`
+	// Record sono i contatori della registrazione; assente se è spenta.
+	Record *record.Stats `json:"record,omitempty"`
 }
 
 // handleServerStatus restituisce l'ultimo campione di carico e i contatori.
@@ -465,6 +485,10 @@ func (s *Server) handleServerStatus(w http.ResponseWriter, _ *http.Request) {
 	if s.queue != nil {
 		snap := s.queue.Snapshot()
 		resp.Dispatch = &snap
+	}
+	if s.rec != nil {
+		stats := s.rec.Stats()
+		resp.Record = &stats
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -510,3 +534,20 @@ type QueueSource interface {
 
 // SetQueue aggiunge lo stato della coda a GET /api/v1/server/status.
 func (s *Server) SetQueue(q QueueSource) { s.queue = q }
+
+// SetRecorder attiva la registrazione di sessioni, heartbeat e cambi di
+// policy (internal/record).
+func (s *Server) SetRecorder(r *record.Recorder) { s.rec = r }
+
+// queueState è lo stato della coda per la registrazione; nil senza data plane.
+func (s *Server) queueState() *record.Queue {
+	if s.queue == nil || s.rec == nil {
+		return nil
+	}
+	q := s.queue.Snapshot()
+	return &record.Queue{
+		Slots: q.Slots, Running: q.Running, Queued: q.Queued,
+		OfferedPerSec: q.OfferedPerSec, AdmittedPerSec: q.AdmittedPerSec,
+		Utilization: q.Utilization, PredictedWaitMS: q.PredictedWaitMS,
+	}
+}

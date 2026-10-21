@@ -17,6 +17,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/record"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
@@ -99,6 +100,7 @@ func main() {
 	// workerDone viene chiuso quando sup.Run è terminato, cioè quando il
 	// processo del worker è uscito. nil senza data plane: il main non aspetta.
 	var workerDone chan struct{}
+	dispatchCfg := dispatch.DefaultConfig()
 
 	workerOpts, dataPlane, err := f.WorkerOptions(reg.Models())
 	if err != nil {
@@ -124,7 +126,7 @@ func main() {
 
 		// Il dispatcher sta davanti al Supervisor: ammissione per scadenza,
 		// coda FIFO, mai più job in volo degli slot del worker.
-		dispatcher := dispatch.New(sup, dispatch.DefaultConfig())
+		dispatcher := dispatch.New(sup, dispatchCfg)
 		srv.SetQueue(dispatcher)
 		streamHandler = stream.NewHandler(server.Sessions(devices), catalog, dispatcher, streamCfg)
 		// Prima di srv.Routes(), che legge la rotta una volta sola.
@@ -137,6 +139,35 @@ func main() {
 		log.Printf("data plane enabled: worker %s (%s)", workerOpts.Address, mode)
 	} else {
 		log.Printf("data plane disabled: no \"worker\" section in config")
+	}
+
+	// --- 3c. Registrazione (solo se config.json ha la sezione "record") ------
+
+	recordDir, recording, err := f.RecordDir()
+	if err != nil {
+		log.Fatalf("record config: %v", err)
+	}
+	var rec *record.Recorder // nil = spenta: chi registra non controlla
+	if recording {
+		start := record.Start{
+			HeartbeatIntervalMS: int(srvCfg.HeartbeatInterval.Milliseconds()),
+			Models:              reg.Models(),
+		}
+		if dataPlane {
+			start.Dispatch = &record.DispatchConfig{
+				ServiceEWMAAlpha: dispatchCfg.ServiceEWMAAlpha,
+				WindowS:          dispatchCfg.Window.Seconds(),
+			}
+		}
+		rec, err = record.Open(recordDir, start, record.DefaultOptions())
+		if err != nil {
+			log.Fatalf("record: %v", err)
+		}
+		srv.SetRecorder(rec)
+		if streamHandler != nil {
+			streamHandler.SetRecorder(rec)
+		}
+		log.Printf("recording to %s", rec.Stats().File)
 	}
 
 	// --- 4. Server HTTP con timeout ------------------------------------------
@@ -200,5 +231,14 @@ func main() {
 	}()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+	// Dopo Shutdown: nessuna richiesta registra più nulla. Close scrive gli
+	// eventi in attesa e la riga "end".
+	if rec != nil {
+		if err := rec.Close(); err != nil {
+			log.Printf("record: %v", err)
+		}
+		stats := rec.Stats() // dopo Close: conta anche gli eventi che erano in coda
+		log.Printf("recorded %d lines to %s (%d events dropped)", stats.Written, stats.File, stats.Dropped)
 	}
 }

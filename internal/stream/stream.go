@@ -21,6 +21,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/record"
 )
 
 // ---------------------------------------------------------------------------
@@ -65,7 +66,29 @@ type Outcome struct {
 	Detections  []api.Detection
 	LayerMS     []float64
 	QueueWaitMS float64
+	// Admission è la previsione con cui il job è stato ammesso; nil se
+	// l'Executor non ne fa (FakeExecutor, Client senza dispatcher).
+	Admission *Admission
 }
+
+// Admission è ciò che il dispatcher ha previsto per un job: serve a valutare
+// offline quanto sbaglia la previsione (la registrazione, internal/record).
+type Admission struct {
+	PredictedWait time.Duration // attesa in coda prevista
+	Service       time.Duration // S usata nella previsione
+	Known         bool          // S da misure; false = stima prudente
+}
+
+// JobError accompagna un errore dell'Executor con la previsione del
+// dispatcher: per un frame rifiutato (ErrBusy) o scaduto in coda
+// (ErrDeadlineExceeded). Il messaggio e errors.Is restano quelli di Err.
+type JobError struct {
+	Admission Admission
+	Err       error
+}
+
+func (e *JobError) Error() string { return e.Err.Error() }
+func (e *JobError) Unwrap() error { return e.Err }
 
 // Errori che un Executor può restituire; il Handler li traduce nei codici
 // del protocollo (vedi errorCode).
@@ -114,6 +137,9 @@ type Handler struct {
 	// un errore. Solo per i test: simula una goroutine lenta.
 	afterSend func()
 
+	// rec registra un evento per ogni frame; nil = registrazione spenta.
+	rec *record.Recorder
+
 	// mu protegge conns: lo stream aperto di ogni device (al massimo uno).
 	// Lo scrivono ServeHTTP (apertura e chiusura), lo leggono NotifyPolicy ed
 	// EndSession, chiamati dagli handler del control plane.
@@ -128,6 +154,10 @@ func NewHandler(sessions Sessions, catalog Catalog, exec Executor, cfg Config) *
 		conns: map[string]*conn{},
 	}
 }
+
+// SetRecorder attiva la registrazione degli esiti dei frame (internal/record).
+// Va chiamata prima di servire richieste.
+func (h *Handler) SetRecorder(r *record.Recorder) { h.rec = r }
 
 // conn è lo stato di uno stream aperto.
 type conn struct {
@@ -325,6 +355,7 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 			log.Printf("stream: device=%s seq=%d: execute: %v", c.deviceID, hdr.SequenceID, err)
 			message = "worker unavailable"
 		}
+		h.rec.Record(frameEvent(c, hdr, len(payload), deadline.Sub(received), code, nil, nil, err))
 		h.sendError(ctx, c, hdr.SequenceID, code, message)
 		return
 	}
@@ -359,6 +390,9 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 		Detections: out.Detections,
 	}
 
+	h.rec.Record(frameEvent(c, hdr, len(payload), deadline.Sub(received), record.OutcomeResult,
+		&out, &result.Timing, nil))
+
 	var raw []byte
 	if hdr.WantRaw {
 		raw = out.Output
@@ -366,6 +400,54 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 	if err := h.writeBinary(ctx, c, result, raw); err != nil {
 		log.Printf("stream: device=%s seq=%d: write result: %v", c.deviceID, hdr.SequenceID, err)
 	}
+}
+
+// frameEvent costruisce l'evento di registrazione di un frame.
+//
+//   - outcome: record.OutcomeResult o il codice d'errore del protocollo;
+//   - out e timing: solo per un risultato (nil per un errore);
+//   - err: solo per un errore (nil per un risultato).
+func frameEvent(c *conn, hdr api.FrameHeader, requestBytes int, deadline time.Duration,
+	outcome string, out *Outcome, timing *api.Timing, err error) *record.Frame {
+	toMS := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+
+	f := &record.Frame{
+		DeviceID:      c.deviceID,
+		SessionID:     c.sessionID,
+		SequenceID:    hdr.SequenceID,
+		PolicyVersion: hdr.PolicyVersion,
+		SplitPoint:    hdr.SplitPoint,
+		RequestBytes:  requestBytes,
+		DeadlineMS:    toMS(deadline),
+		Outcome:       outcome,
+	}
+
+	// La previsione viene dall'esito se il job è stato eseguito, altrimenti
+	// dall'errore (rifiutato o scaduto in coda). errors.As trova un *JobError
+	// anche dentro altri errori che lo avvolgono. Senza nessuna delle due (per
+	// esempio worker non disponibile) resta nil.
+	var adm *Admission
+	var je *JobError
+	switch {
+	case out != nil && out.Admission != nil:
+		adm = out.Admission
+	case errors.As(err, &je):
+		adm = &je.Admission
+	}
+	if adm != nil {
+		f.Admission = &record.Admission{
+			PredictedWaitMS: toMS(adm.PredictedWait),
+			ServiceMS:       toMS(adm.Service),
+			Known:           adm.Known,
+		}
+	}
+
+	if out != nil {
+		f.Timing = timing
+		n := len(out.Detections)
+		f.Detections = &n
+	}
+	return f
 }
 
 // errorCode traduce un errore dell'Executor nel codice del protocollo.

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -125,5 +127,22 @@ func TestExampleConfigLoads(t *testing.T) {
 	}
 	if _, enabled, err := f.WorkerOptions(nil); err != nil || !enabled {
 		t.Errorf("worker: enabled %v, err %v", enabled, err)
+	}
+}
+
+func TestRecordDir(t *testing.T) {
+	if _, enabled, err := loadSections(t, "").RecordDir(); enabled || err != nil {
+		t.Errorf("senza sezione: enabled %v, err %v", enabled, err)
+	}
+	dir, enabled, err := loadSections(t, `"record": {"dir": "/tmp/records"},`).RecordDir()
+	if !enabled || err != nil || dir != "/tmp/records" {
+		t.Errorf("dir %q, enabled %v, err %v", dir, enabled, err)
+	}
+	home, _ := os.UserHomeDir()
+	if dir, _, _ := loadSections(t, `"record": {"dir": "~/sciot-records"},`).RecordDir(); dir != filepath.Join(home, "sciot-records") {
+		t.Errorf("~ non espansa: %q", dir)
+	}
+	if _, _, err := loadSections(t, `"record": {},`).RecordDir(); err == nil || !strings.Contains(err.Error(), "record.dir") {
+		t.Errorf("dir mancante: err = %v", err)
 	}
 }

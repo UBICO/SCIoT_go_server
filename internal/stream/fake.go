@@ -21,6 +21,8 @@ type FakeExecutor struct {
 	Detections []api.Detection
 	// Block, se non nil, sospende Execute finché il canale non viene chiuso.
 	Block chan struct{}
+	// Admission, se non nil, è la previsione restituita con il risultato.
+	Admission *Admission
 
 	mu   sync.Mutex
 	jobs []Job
@@ -54,6 +56,7 @@ func (f *FakeExecutor) Execute(ctx context.Context, job Job) (Outcome, error) {
 		Detections:  f.Detections,
 		LayerMS:     []float64{1, 2},
 		QueueWaitMS: 0.5,
+		Admission:   f.Admission,
 	}, nil
 }
 
