@@ -1,30 +1,78 @@
 # SCIoT_go_server
 
-Go server for SCIoT distributed inference. It is the **control plane**: it
-pairs edge devices, knows the models they run, collects their telemetry and
-tells each device whether to run the model fully on the device (`LOCAL`) or
-split it with the server (`SPLIT`).
+Go server for SCIoT distributed inference. Edge devices run a TFLite model
+split into segments; for every device the server decides whether it runs the
+model fully on the device (`LOCAL`) or only its first segments, sending the
+activation to the server, which runs the rest (`SPLIT`).
 
-The inference loop on the device never waits for the server: it reads the
-current policy locally, and a background heartbeat (1 Hz by default) keeps
-policy and telemetry in sync. The protocol is described in
-[docs/PROTOCOL.md](docs/PROTOCOL.md).
+- **Control plane** (HTTP + JSON): pairing, model information, a heartbeat
+  with the device's telemetry (1 Hz by default) and the versioned execution
+  policy. The inference loop on the device never waits for it: it reads the
+  current policy locally.
+- **Data plane** (one WebSocket per device): the activations of `SPLIT`
+  frames and their results, already decoded into detections. Frames are
+  asynchronous; a frame the server cannot serve within its deadline is
+  refused and the device finishes it itself.
 
-Status (phase 1):
+The server is written in Go; the TFLite segments run in a Python worker
+(`worker/`) that the server starts and supervises, on the same machine, over
+gRPC (why: [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md)).
 
-- [x] registration, model information, heartbeat with windowed telemetry,
-  versioned `LOCAL`/`SPLIT` policy, session expiry
-- [x] opt-in admin endpoint to force a policy (experiments)
-- [ ] data plane (activation upload, remote partition execution); runtime
-  decided in [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md)
-- [ ] offloading algorithm (the policy is static until then)
+Status:
+
+- [x] phase 1, control plane: registration, model information, heartbeat with
+  windowed telemetry, versioned `LOCAL`/`SPLIT` policy, session expiry,
+  opt-in admin endpoint to force a policy
+- [x] phase 2, data plane: stream, admission by deadline with a FIFO queue,
+  worker supervisor, decoders, model build from Edge Impulse exports,
+  recording of events for offline evaluation
+- [ ] phase 3, offloading algorithm (until then the policy changes only
+  from the admin endpoint)
 
 The reference client is `client/python/http_go_client.py` in
-[SCIoT_python_client](https://github.com/UBICO/SCIoT_python_client).
+[SCIoT_python_client](https://github.com/UBICO/SCIoT_python_client); its
+documentation, with the SPLIT benchmark, is `docs/GO_CONTROL_PLANE.md` there.
+
+## Documentation
+
+| Document | What |
+|---|---|
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | the v1 protocol: control plane and data plane, the contract for every client |
+| [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
+| [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
+| [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
+| [worker/README.md](worker/README.md) | the Python worker and the model build tool |
 
 ## Requirements
 
-Go 1.27 or newer. One external dependency: gopsutil, for the server load metrics.
+- Go 1.27 or newer (one external dependency: gopsutil, for the load metrics);
+- [uv](https://docs.astral.sh/uv/) and Python 3.11–3.13 for the worker
+  (TensorFlow 2.20, installed by uv on first run).
+
+## Quick start
+
+1. **Build the model directory** from the two Edge Impulse exports
+   (details in [docs/MODELS.md](docs/MODELS.md)). The server and the devices
+   must use the same directory: a rebuild changes the model hash.
+
+   ```bash
+   uv run --project worker sciot-model build <savedmodel.zip> --ei-cpp-export <cpp.zip> --sample image.png --output ~/sciot-models/yolo_small_320
+   ```
+
+2. **Configure** `config.json` (next section) with the model directory and a
+   `worker` section, then **start the server**. It starts the worker and
+   enables the data plane when the log says `worker ready`.
+
+   ```bash
+   go run ./cmd/server -config config.json -addr 127.0.0.1:8080 -admin
+   ```
+
+3. **Start a device**: the Python client, from SCIoT_python_client, with the
+   same model directory.
+
+   ```bash
+   uv run python -m client.python.http_go_client --server http://127.0.0.1:8080 --model-dir ~/sciot-models/yolo_small_320
+   ```
 
 ## Configuration
 
@@ -101,17 +149,36 @@ Flags `-verbose` and `-admin` switch the corresponding options on (they
 cannot switch them off: use `config.json` for that). With `-admin`, bind to
 localhost: `-addr 127.0.0.1:8080`.
 
-Force a policy on a registered device (admin enabled):
+Force a policy on a registered device (admin enabled). In `SPLIT`,
+`split_point` is the last segment the device runs, from `-1` (everything on
+the server) to the second-to-last segment:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/admin/devices/web_96/policy -d '{"mode":"SPLIT","split_point":5}'
 ```
+
+State of the server (load, dispatcher queue: slots, λ, ρ, service time per
+split, recording counters):
+
+```bash
+curl -s http://127.0.0.1:8080/api/v1/server/status
+```
+
+On `SIGINT`/`SIGTERM` the server closes the streams (`1001`), stops the
+worker and closes the recording.
 
 ## Development
 
 ```bash
 gofmt -l . && go vet ./... && go test -race ./...
 ```
+
+```bash
+cd worker && uv run pytest
+```
+
+The worker tests build tiny TFLite models at run time and check the decoders
+against the golden files in `testdata/`: no model artifacts needed.
 
 Layout:
 
@@ -127,7 +194,21 @@ internal/stream/     data plane WebSocket (/api/v1/stream)
 internal/dispatch/   admission by deadline, FIFO queue, load metrics
 internal/record/     JSON Lines recording of events (docs/RECORDING.md)
 internal/worker/     gRPC client, catalog and supervisor of the Python worker
-worker/              Python worker (TFLite segments over gRPC)
+internal/workerpb/   generated gRPC code (from proto/)
+proto/               the server ↔ worker contract
+worker/              Python worker (TFLite segments over gRPC), sciot-model build, decoders
+testdata/decoders/   golden files: the executable specification of the decoders
 ```
 
-Dependencies point one way: `cmd/server → config → server → registry, device → api`.
+Dependencies point one way (`cmd/server` wires everything):
+
+```text
+config    → api, load, registry, server, stream, worker
+server    → api, device, dispatch, load, record, registry, stream
+worker    → api, stream, workerpb      (implements stream.Executor over gRPC)
+dispatch  → stream                     (an Executor in front of the worker)
+stream    → api, record                (sessions and executor are interfaces)
+record    → api, load
+registry, device → api
+api, load → nothing internal
+```
