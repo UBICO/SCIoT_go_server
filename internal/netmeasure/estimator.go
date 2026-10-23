@@ -9,11 +9,21 @@ import (
 const (
 	// BandwidthAlpha è il peso del campione nuovo nella media della banda.
 	BandwidthAlpha = 0.2
-	// PingWindow: la latenza è il MINIMO degli ultimi PingWindow ping, non una
-	// media. Il pong del device viaggia sulla stessa connessione dei frame e
-	// aspetta dietro un frame che sta inviando: quei ping misurano l'invio,
-	// non la latenza. Il minimo scarta i ping ritardati (come min_rtt in BBR).
-	PingWindow = 10
+	// LatencyWindow: la latenza è il MINIMO dei ping degli ultimi
+	// LatencyWindow, non una media. Il pong del device viaggia sullo stesso
+	// link dei frame: con il link saturo aspetta dietro i byte già nel buffer
+	// TCP di invio del device (bufferbloat: ~170 ms a 50 Mbit/s, misurato con
+	// scripts/bench_network.py del client) e misura la coda, non la latenza.
+	// La finestra è lunga perché la latenza di base cambia di rado: il valore
+	// misurato a link libero (LOCAL, avvio, pause) sopravvive a un periodo di
+	// saturazione. Oltre LatencyWindow di saturazione continua la latenza
+	// include la coda (come min_rtt in BBR, che però svuota il link per
+	// rimisurarla).
+	LatencyWindow = 60 * time.Second
+	// PingTimeout: quanto aspettare un pong. Più dell'intervallo tra i ping:
+	// con il link saturo un pong in ritardo è meglio di nessuna misura (a
+	// 10 Mbit/s la coda supera 1 s).
+	PingTimeout = 5 * time.Second
 	// Rete "non limitante": tra gli ultimi RecentWindow campioni, meno di
 	// NotLimitingShare sono validi. Il server legge più lentamente di quanto i
 	// byte arrivino: la rete non è il collo di bottiglia (localhost, LAN).
@@ -26,7 +36,8 @@ type State struct {
 	// BandwidthBps è la media mobile della banda dei campioni validi, in byte
 	// al secondo; nil se non c'è ancora un campione valido.
 	BandwidthBps *float64 `json:"bandwidth_bps,omitempty"`
-	// LatencyMS è metà del minimo RTT degli ultimi PingWindow ping; nil senza ping.
+	// LatencyMS è metà del minimo RTT dei ping degli ultimi LatencyWindow;
+	// nil senza ping.
 	LatencyMS *float64 `json:"latency_ms,omitempty"`
 	// NotLimiting: quasi tutti i campioni recenti sono stati scartati, la rete
 	// è più veloce di quanto il server legga. BandwidthBps non va presa come
@@ -57,10 +68,16 @@ func (s State) UploadMS(bytes int) (ms float64, ok bool) {
 type Estimator struct {
 	mu        sync.Mutex
 	bandwidth *float64
-	pings     []time.Duration // RTT degli ultimi ping, al massimo PingWindow
+	pings     []ping // dell'ultimo LatencyWindow, dal più vecchio
 	valid     uint64
 	discarded uint64
 	recent    []bool // validità degli ultimi campioni, al massimo RecentWindow
+}
+
+// ping è un ping riuscito: quando è tornato il pong e la durata.
+type ping struct {
+	at  time.Time
+	rtt time.Duration
 }
 
 // NewEstimator crea uno stato vuoto.
@@ -90,12 +107,17 @@ func (e *Estimator) Observe(s Sample) {
 	e.bandwidth = &v
 }
 
-// ObservePing aggiunge la durata di un ping (andata e ritorno).
-func (e *Estimator) ObservePing(rtt time.Duration) {
+// ObservePing aggiunge la durata di un ping (andata e ritorno) il cui pong è
+// tornato in at, e dimentica i ping più vecchi di LatencyWindow.
+//
+// Senza nuovi ping (stream chiuso) i vecchi restano: la latenza sopravvive
+// alle riconnessioni come la banda.
+func (e *Estimator) ObservePing(at time.Time, rtt time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.pings = append(e.pings, rtt)
-	if len(e.pings) > PingWindow {
+	e.pings = append(e.pings, ping{at: at, rtt: rtt})
+	cutoff := at.Add(-LatencyWindow)
+	for len(e.pings) > 1 && e.pings[0].at.Before(cutoff) {
 		e.pings = e.pings[1:]
 	}
 }
@@ -115,13 +137,13 @@ func (e *Estimator) Snapshot() State {
 
 // latencyMS è la latenza di sola andata: metà del minimo RTT, in ms. nil
 // senza ping.
-func latencyMS(pings []time.Duration) *float64 {
+func latencyMS(pings []ping) *float64 {
 	if len(pings) == 0 {
 		return nil
 	}
-	m := pings[0]
+	m := pings[0].rtt
 	for _, p := range pings[1:] {
-		m = min(m, p)
+		m = min(m, p.rtt)
 	}
 	v := float64(m) / float64(time.Millisecond) / 2
 	return &v

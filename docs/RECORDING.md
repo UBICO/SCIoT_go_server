@@ -112,10 +112,15 @@ the device and one clock per duration:
   `not_limiting` is true: the network is not the bottleneck (localhost, a
   fast LAN) and `bandwidth_bps` must not be read as a limit.
 - **Latency.** A WebSocket ping every `stream.ping_interval_ms` (default
-  1000): `latency_ms` is half the *minimum* RTT of the last 10 pings. Not an
-  average: the device's pong travels on the same connection as its frames
-  and waits behind one being sent, so those pings measure the upload, not
-  the latency.
+  1000), its pong awaited up to 5 s: `latency_ms` is half the *minimum* RTT
+  of the pings of the last 60 s. Not an average: the device's pong travels
+  on the same link as its frames, and with the link saturated it waits
+  behind the bytes already in the device's TCP send buffer (bufferbloat:
+  ~170 ms at 50 Mbit/s, measured with the client repo's
+  `scripts/bench_network.py`), so those pings measure the queue, not the
+  latency. The long window keeps a value measured while the link was free
+  (LOCAL, startup, pauses) through a period of saturation; after more than
+  60 s of continuous saturation the latency includes the queue.
 - WebSocket compression stays disabled: with it, the bytes on the network
   would not be the bytes of the message.
 

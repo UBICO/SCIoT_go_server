@@ -337,15 +337,15 @@ func (h *Handler) pingLoop(ctx context.Context, c *conn) {
 			return
 		case <-t.C:
 		}
-		// Un pong che non torna entro l'intervallo si abbandona: era dietro un
-		// frame lento e non misurava la latenza (vedi netmeasure.PingWindow).
-		pctx, cancel := context.WithTimeout(ctx, h.cfg.PingInterval)
+		// Il pong si aspetta anche oltre l'intervallo (netmeasure.PingTimeout):
+		// intanto i tick si saltano, un ping alla volta.
+		pctx, cancel := context.WithTimeout(ctx, max(netmeasure.PingTimeout, h.cfg.PingInterval))
 		start := h.now()
 		err := c.ws.Ping(pctx)
-		rtt := h.now().Sub(start)
+		end := h.now()
 		cancel()
 		if err == nil {
-			c.net.ObservePing(rtt)
+			c.net.ObservePing(end, end.Sub(start))
 		}
 	}
 }

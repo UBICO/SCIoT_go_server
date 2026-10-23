@@ -199,18 +199,35 @@ func TestEstimatorNotLimiting(t *testing.T) {
 
 func TestEstimatorLatencyIsWindowedMin(t *testing.T) {
 	e := NewEstimator()
-	e.ObservePing(10 * time.Millisecond)
-	e.ObservePing(4 * time.Millisecond)
-	e.ObservePing(50 * time.Millisecond) // pong dietro un frame
+	t0 := time.Unix(0, 0)
+	e.ObservePing(t0, 10*time.Millisecond)
+	e.ObservePing(t0.Add(time.Second), 4*time.Millisecond)
+	e.ObservePing(t0.Add(2*time.Second), 300*time.Millisecond) // pong dietro la coda
 	if got := *e.Snapshot().LatencyMS; got != 2 {
 		t.Errorf("latenza %v ms, attesa 2 (metà del minimo)", got)
 	}
-	// Dopo PingWindow ping il minimo vecchio esce dalla finestra.
-	for range PingWindow {
-		e.ObservePing(8 * time.Millisecond)
+	// Il minimo resta finché ha meno di LatencyWindow, anche con tanti ping in coda.
+	for i := range 50 {
+		e.ObservePing(t0.Add(time.Duration(3+i)*time.Second), 300*time.Millisecond)
 	}
+	if got := *e.Snapshot().LatencyMS; got != 2 {
+		t.Errorf("dopo 53 s latenza %v ms, attesa ancora 2", got)
+	}
+	// Oltre LatencyWindow il minimo vecchio esce dalla finestra.
+	e.ObservePing(t0.Add(time.Second+LatencyWindow+time.Millisecond), 8*time.Millisecond)
 	if got := *e.Snapshot().LatencyMS; got != 4 {
 		t.Errorf("latenza %v ms, attesa 4", got)
+	}
+}
+
+func TestEstimatorKeepsTheLastPing(t *testing.T) {
+	// Un ping arrivato dopo una lunga pausa non svuota la finestra.
+	e := NewEstimator()
+	t0 := time.Unix(0, 0)
+	e.ObservePing(t0, 2*time.Millisecond)
+	e.ObservePing(t0.Add(10*LatencyWindow), 6*time.Millisecond)
+	if got := *e.Snapshot().LatencyMS; got != 3 {
+		t.Errorf("latenza %v ms, attesa 3", got)
 	}
 }
 
