@@ -84,6 +84,9 @@ type Stream struct {
 	MaxInflight       *int `json:"max_inflight,omitempty"`
 	DefaultDeadlineMS *int `json:"default_deadline_ms,omitempty"`
 	MaxMessageBytes   *int `json:"max_message_bytes,omitempty"`
+	// PingIntervalMS: ogni quanto il server misura la latenza con un ping
+	// WebSocket; 0 = mai.
+	PingIntervalMS *int `json:"ping_interval_ms,omitempty"`
 }
 
 // Server è la sezione "server". Ogni campo è opzionale: se manca vale il
@@ -257,6 +260,12 @@ func (f File) StreamConfig() (stream.Config, error) {
 				worker.MaxMessageBytes, *s.MaxMessageBytes)
 		}
 		cfg.MaxMessageBytes = *s.MaxMessageBytes
+	}
+	if s.PingIntervalMS != nil {
+		if v := *s.PingIntervalMS; v != 0 && (v < 100 || v > 60000) {
+			return stream.Config{}, fmt.Errorf("stream.ping_interval_ms must be 0 or in [100, 60000], got %d", v)
+		}
+		cfg.PingInterval = time.Duration(*s.PingIntervalMS) * time.Millisecond
 	}
 	return cfg, nil
 }

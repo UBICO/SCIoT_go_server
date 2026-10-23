@@ -368,7 +368,13 @@ frame asked for it with `want_raw`, otherwise empty.
 
 `timing.server_ms` is the time from the moment the frame was read to the
 moment the result was ready, queue included; the device obtains the network
-time as its own round-trip time minus `server_ms`. `server_policy_version` is
+time as its own round-trip time minus `server_ms`. `timing.receive_ms` is how
+long the server took to read the frame, from its first to its last byte: the
+upload time without the latency, possibly underestimated (bytes already
+buffered by TCP; see RECORDING.md, "Network"). The server pings the device
+on the stream (WebSocket ping, every `stream.ping_interval_ms`): the device's
+WebSocket library must answer pings, which every standard one does while it
+reads. `server_policy_version` is
 the policy version of the server now: if it is newer than the device's, a
 policy change is on its way (as a `policy` message or with the next
 heartbeat).
@@ -497,7 +503,7 @@ the **device** for `LOCAL` frames, the **server** for `SPLIT` frames.
 | `split_point` | `null` in `LOCAL` |
 | `captured_at` | from the frame (NTP wall clock): lets consumers order and correlate results of different devices |
 | `timing.device_ms` | compute time on the device (segments `0..k`, or the whole model in `LOCAL`) |
-| `timing.queue_wait_ms`, `server_ms`, `layer_ms` | `SPLIT` only |
+| `timing.receive_ms`, `queue_wait_ms`, `server_ms`, `layer_ms` | `SPLIT` only |
 | `detections` | interpreted output: label, confidence, box normalized to `[0, 1]` (x, y = top-left). The post-processing (decoding, thresholds, NMS) is the same on device and server |
 
 On the stream the result also carries `"type": "result"`; `server_policy_version`

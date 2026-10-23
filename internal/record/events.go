@@ -5,6 +5,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 )
 
 // Event è un evento da registrare. Si passa sempre un puntatore
@@ -60,6 +61,8 @@ type Heartbeat struct {
 	SinceLastSeenMS float64       `json:"since_last_seen_ms"`
 	ServerLoad      load.Snapshot `json:"server_load"`
 	Queue           *Queue        `json:"queue,omitempty"` // nil senza data plane
+	// Network è la rete del device vista dal server; nil senza stream.
+	Network *netmeasure.State `json:"network,omitempty"`
 }
 
 // Applied è la policy che il device dichiara nell'heartbeat.
@@ -108,7 +111,13 @@ type Frame struct {
 	SplitPoint    int     `json:"split_point"`
 	RequestBytes  int     `json:"request_bytes"`
 	DeadlineMS    float64 `json:"deadline_ms"`
-	Outcome       string  `json:"outcome"` // Outcome*
+	// Ricezione del frame (netmeasure.Sample): anche per i frame rifiutati,
+	// la rete li ha comunque trasportati. ReceiveValid dice se il campione è
+	// entrato nella stima della banda.
+	ReceiveMS          float64 `json:"receive_ms"`
+	ReceiveWaitedShare float64 `json:"receive_waited_share"`
+	ReceiveValid       bool    `json:"receive_valid"`
+	Outcome            string  `json:"outcome"` // Outcome*
 	// Admission è la previsione del dispatcher: presente se il frame è stato
 	// ammesso o rifiutato per la scadenza (non se il worker non c'era).
 	Admission *Admission `json:"admission,omitempty"`

@@ -92,7 +92,11 @@ type Detection struct {
 
 // Timing contiene i tempi di un'inferenza. I campi del server ci sono solo in SPLIT.
 type Timing struct {
-	DeviceMS    *float64  `json:"device_ms,omitempty"`
+	DeviceMS *float64 `json:"device_ms,omitempty"`
+	// ReceiveMS: dall'inizio all'ultimo byte del frame, letti dal server. Non
+	// conta l'attesa del primo byte (latenza) e può essere sottostimato se i
+	// byte erano già nel buffer TCP (docs/RECORDING.md, "Network").
+	ReceiveMS   *float64  `json:"receive_ms,omitempty"`
 	QueueWaitMS *float64  `json:"queue_wait_ms,omitempty"`
 	ServerMS    *float64  `json:"server_ms,omitempty"`
 	LayerMS     []float64 `json:"layer_ms,omitempty"`

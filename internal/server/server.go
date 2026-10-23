@@ -17,6 +17,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
@@ -350,6 +351,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serverLoad := s.load.Snapshot()
+	network := s.network(req.DeviceID)
 	s.rec.Record(&record.Heartbeat{
 		DeviceID:        req.DeviceID,
 		SessionID:       req.SessionID,
@@ -359,6 +361,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		SinceLastSeenMS: float64(res.SinceLastSeen.Microseconds()) / 1000,
 		ServerLoad:      serverLoad,
 		Queue:           s.queueState(),
+		Network:         network,
 	})
 
 	if s.cfg.Verbose {
@@ -372,6 +375,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			sinceLastSeen:  res.SinceLastSeen,
 			requestBytes:   body.n,
 			serverLoad:     serverLoad,
+			network:        network,
 		})
 	}
 
@@ -502,6 +506,21 @@ func (s *Server) handleServerStatus(w http.ResponseWriter, _ *http.Request) {
 type StreamNotifier interface {
 	NotifyPolicy(deviceID string, p api.Policy)
 	EndSession(deviceID string)
+	// Network è la rete del device misurata sullo stream; false se il device
+	// non ha mai aperto uno stream.
+	Network(deviceID string) (netmeasure.State, bool)
+}
+
+// network restituisce la rete del device, nil senza data plane o senza stream.
+func (s *Server) network(deviceID string) *netmeasure.State {
+	if s.notifier == nil {
+		return nil
+	}
+	n, ok := s.notifier.Network(deviceID)
+	if !ok {
+		return nil
+	}
+	return &n
 }
 
 // SetStream abilita il data plane: registra GET /api/v1/stream (alla prossima

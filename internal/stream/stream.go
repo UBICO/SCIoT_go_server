@@ -21,6 +21,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
 )
 
@@ -113,6 +114,7 @@ type Config struct {
 	MaxMessageBytes int           // dimensione massima di un messaggio
 	DefaultDeadline time.Duration // per i frame senza deadline_ms
 	WriteTimeout    time.Duration // per scrivere un messaggio al device
+	PingInterval    time.Duration // ping per la latenza; 0 = mai
 }
 
 // DefaultConfig restituisce i valori di partenza della specifica.
@@ -122,6 +124,7 @@ func DefaultConfig() Config {
 		MaxMessageBytes: 8 << 20, // 8 MiB: il frame più grande di yolo-small è 3,2 MB
 		DefaultDeadline: time.Second,
 		WriteTimeout:    5 * time.Second,
+		PingInterval:    time.Second,
 	}
 }
 
@@ -145,13 +148,17 @@ type Handler struct {
 	// EndSession, chiamati dagli handler del control plane.
 	mu    sync.Mutex
 	conns map[string]*conn
+	// nets è la rete di ogni device che ha aperto almeno uno stream (stesso
+	// mutex). Sopravvive alla chiusura dello stream e alle nuove sessioni: la
+	// rete è del device, non della connessione.
+	nets map[string]*netmeasure.Estimator
 }
 
 // NewHandler crea un Handler.
 func NewHandler(sessions Sessions, catalog Catalog, exec Executor, cfg Config) *Handler {
 	return &Handler{
 		sessions: sessions, catalog: catalog, exec: exec, cfg: cfg, now: time.Now,
-		conns: map[string]*conn{},
+		conns: map[string]*conn{}, nets: map[string]*netmeasure.Estimator{},
 	}
 }
 
@@ -169,6 +176,7 @@ type conn struct {
 	// della sessione, che non cambia finché la sessione vive.
 	postprocess api.Postprocess
 	sizes       map[int]int // split point → byte attesi
+	net         *netmeasure.Estimator
 
 	mu       sync.Mutex
 	inflight map[uint64]bool // sequence_id dei frame in esecuzione
@@ -203,6 +211,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Da qui in poi la connessione HTTP diventa un WebSocket: niente più
 	// risposte HTTP, solo messaggi e codici di chiusura.
+	// Compressione disattivata (default di AcceptOptions) e da lasciare così:
+	// la misura della banda conta i byte del messaggio (internal/netmeasure).
 	ws, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("stream upgrade: device=%s: %v", deviceID, err)
@@ -216,7 +226,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ws: ws, deviceID: deviceID, sessionID: sessionID, modelKey: sess.ModelKey,
 		postprocess: sess.Postprocess,
 		sizes:       make(map[int]int, len(segments)), inflight: make(map[uint64]bool),
-		ready: make(chan struct{}),
+		ready: make(chan struct{}), net: h.estimator(deviceID),
 	}
 	for _, s := range segments {
 		c.sizes[s.SplitPoint] = s.InputBytes
@@ -250,7 +260,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	close(c.ready)
 
+	// Il ping vive quanto readLoop: Ping aspetta il pong che legge readLoop.
+	pingCtx, stopPing := context.WithCancel(ctx)
+	var pingDone sync.WaitGroup
+	if h.cfg.PingInterval > 0 {
+		pingDone.Go(func() { h.pingLoop(pingCtx, c) })
+	}
+
 	h.readLoop(ctx, c)
+	stopPing()
+	pingDone.Wait()
 	c.wg.Wait() // non chiudere mentre dei frame stanno ancora scrivendo
 	ws.Close(websocket.StatusNormalClosure, "")
 }
@@ -258,11 +277,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // readLoop legge i messaggi del device. Ogni frame valido viene eseguito in
 // una goroutine propria: il device non aspetta il risultato prima di inviare
 // il frame successivo (client asincrono).
+//
+// La lettura è in due tempi per misurare la ricezione: Reader ritorna quando
+// arriva l'inizio del messaggio (l'attesa tra un frame e l'altro non conta),
+// ReadMessage legge il resto e lo cronometra.
 func (h *Handler) readLoop(ctx context.Context, c *conn) {
 	for {
-		typ, msg, err := c.ws.Read(ctx)
+		typ, r, err := c.ws.Reader(ctx)
 		if err != nil {
-			return // chiusura del device, errore di rete o messaggio troppo grande
+			return // chiusura del device o errore di rete
+		}
+		msg, sample, err := netmeasure.ReadMessage(r, h.now(), h.now)
+		if err != nil {
+			return // errore di rete o messaggio troppo grande (SetReadLimit)
 		}
 		received := h.now()
 
@@ -270,6 +297,8 @@ func (h *Handler) readLoop(ctx context.Context, c *conn) {
 			h.sendError(ctx, c, 0, api.ErrCodeInvalidFrame, "frames must be binary messages")
 			continue
 		}
+		// Ogni frame binario misura la rete, anche se poi viene rifiutato.
+		c.net.Observe(sample)
 		rawHeader, payload, err := api.DecodeBinary(msg)
 		if err != nil {
 			h.sendError(ctx, c, 0, api.ErrCodeInvalidFrame, err.Error())
@@ -293,8 +322,31 @@ func (h *Handler) readLoop(ctx context.Context, c *conn) {
 		// Il frame resta "in volo" fino alla fine dell'esecuzione: lo libera
 		// handleFrame, PRIMA di inviare l'esito (vedi lì).
 		c.wg.Go(func() {
-			h.handleFrame(ctx, c, hdr, payload, received)
+			h.handleFrame(ctx, c, hdr, payload, received, sample)
 		})
+	}
+}
+
+// pingLoop misura la latenza con un ping ogni PingInterval, finché ctx vive.
+func (h *Handler) pingLoop(ctx context.Context, c *conn) {
+	t := time.NewTicker(h.cfg.PingInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		// Un pong che non torna entro l'intervallo si abbandona: era dietro un
+		// frame lento e non misurava la latenza (vedi netmeasure.PingWindow).
+		pctx, cancel := context.WithTimeout(ctx, h.cfg.PingInterval)
+		start := h.now()
+		err := c.ws.Ping(pctx)
+		rtt := h.now().Sub(start)
+		cancel()
+		if err == nil {
+			c.net.ObservePing(rtt)
+		}
 	}
 }
 
@@ -320,7 +372,8 @@ func (c *conn) release(seq uint64) {
 }
 
 // handleFrame esegue un frame e invia al device il risultato o l'errore.
-func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader, payload []byte, received time.Time) {
+func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader, payload []byte,
+	received time.Time, sample netmeasure.Sample) {
 	deadline := received.Add(h.cfg.DefaultDeadline)
 	if hdr.DeadlineMS != nil {
 		deadline = received.Add(time.Duration(*hdr.DeadlineMS * float64(time.Millisecond)))
@@ -355,7 +408,7 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 			log.Printf("stream: device=%s seq=%d: execute: %v", c.deviceID, hdr.SequenceID, err)
 			message = "worker unavailable"
 		}
-		h.rec.Record(frameEvent(c, hdr, len(payload), deadline.Sub(received), code, nil, nil, err))
+		h.rec.Record(frameEvent(c, hdr, len(payload), deadline.Sub(received), sample, code, nil, nil, err))
 		h.sendError(ctx, c, hdr.SequenceID, code, message)
 		return
 	}
@@ -369,6 +422,7 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 	}
 
 	serverMS := float64(h.now().Sub(received)) / float64(time.Millisecond)
+	receiveMS := float64(sample.Receive) / float64(time.Millisecond)
 	result := api.InferenceResult{
 		Schema:              api.ResultSchema,
 		Type:                api.MsgResult,
@@ -383,6 +437,7 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 		ComputedBy:          "server",
 		CapturedAt:          hdr.CapturedAt,
 		Timing: api.Timing{
+			ReceiveMS:   &receiveMS,
 			QueueWaitMS: &out.QueueWaitMS,
 			ServerMS:    &serverMS,
 			LayerMS:     out.LayerMS,
@@ -390,7 +445,7 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 		Detections: out.Detections,
 	}
 
-	h.rec.Record(frameEvent(c, hdr, len(payload), deadline.Sub(received), record.OutcomeResult,
+	h.rec.Record(frameEvent(c, hdr, len(payload), deadline.Sub(received), sample, record.OutcomeResult,
 		&out, &result.Timing, nil))
 
 	var raw []byte
@@ -408,18 +463,25 @@ func (h *Handler) handleFrame(ctx context.Context, c *conn, hdr api.FrameHeader,
 //   - out e timing: solo per un risultato (nil per un errore);
 //   - err: solo per un errore (nil per un risultato).
 func frameEvent(c *conn, hdr api.FrameHeader, requestBytes int, deadline time.Duration,
-	outcome string, out *Outcome, timing *api.Timing, err error) *record.Frame {
+	sample netmeasure.Sample, outcome string, out *Outcome, timing *api.Timing, err error) *record.Frame {
 	toMS := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
+	var waitedShare float64
+	if sample.Bytes > 0 {
+		waitedShare = float64(sample.WaitedBytes) / float64(sample.Bytes)
+	}
 	f := &record.Frame{
-		DeviceID:      c.deviceID,
-		SessionID:     c.sessionID,
-		SequenceID:    hdr.SequenceID,
-		PolicyVersion: hdr.PolicyVersion,
-		SplitPoint:    hdr.SplitPoint,
-		RequestBytes:  requestBytes,
-		DeadlineMS:    toMS(deadline),
-		Outcome:       outcome,
+		DeviceID:           c.deviceID,
+		SessionID:          c.sessionID,
+		SequenceID:         hdr.SequenceID,
+		PolicyVersion:      hdr.PolicyVersion,
+		SplitPoint:         hdr.SplitPoint,
+		RequestBytes:       requestBytes,
+		DeadlineMS:         toMS(deadline),
+		ReceiveMS:          toMS(sample.Receive),
+		ReceiveWaitedShare: waitedShare,
+		ReceiveValid:       sample.Valid,
+		Outcome:            outcome,
 	}
 
 	// La previsione viene dall'esito se il job è stato eseguito, altrimenti
@@ -528,6 +590,30 @@ func (h *Handler) unregister(c *conn) {
 	if h.conns[c.deviceID] == c {
 		delete(h.conns, c.deviceID)
 	}
+}
+
+// estimator restituisce la rete del device, creandola al primo stream.
+func (h *Handler) estimator(deviceID string) *netmeasure.Estimator {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	e, ok := h.nets[deviceID]
+	if !ok {
+		e = netmeasure.NewEstimator()
+		h.nets[deviceID] = e
+	}
+	return e
+}
+
+// Network restituisce la rete del device vista dal server; false se il
+// device non ha mai aperto uno stream.
+func (h *Handler) Network(deviceID string) (netmeasure.State, bool) {
+	h.mu.Lock()
+	e, ok := h.nets[deviceID]
+	h.mu.Unlock()
+	if !ok {
+		return netmeasure.State{}, false
+	}
+	return e.Snapshot(), true
 }
 
 // lookup restituisce lo stream aperto del device, o nil.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 )
 
 func f64(v float64) *float64 { return &v }
@@ -37,6 +38,7 @@ var fullRow = heartbeatRow{
 	sinceLastSeen: 1001 * time.Millisecond,
 	requestBytes:  178,
 	serverLoad:    load.Snapshot{CPUPercent: f64(23.44), MemoryAvailableBytes: u64(4096 << 20)},
+	network:       &netmeasure.State{BandwidthBps: f64(12.5e6), LatencyMS: f64(1.234)},
 }
 
 // emptyRow: nessuna inferenza, nessun opzionale, device id lungo, gap 0.
@@ -51,9 +53,18 @@ var emptyRow = heartbeatRow{
 }
 
 const (
-	wantFullRow  = "14:03:07.123 | web_192          | LOCAL | 1/1         |   16 |  16.0 |          61.82 |         74.10 |  38.0 |     8123 |        1.21 |        1001 |        178 |      23.4 |         4096"
-	wantEmptyRow = "14:03:07.123 | a-very-long-devi | LOCAL | 2/3         |    0 |   0.0 |            N/A |           N/A |   N/A |      N/A |         N/A |           0 |         95 |       N/A |          N/A"
+	wantFullRow  = "14:03:07.123 | web_192          | LOCAL | 1/1         |   16 |  16.0 |          61.82 |         74.10 |  38.0 |     8123 |        1.21 |        1001 |        178 |      23.4 |         4096 |       100.0 |      1.23"
+	wantEmptyRow = "14:03:07.123 | a-very-long-devi | LOCAL | 2/3         |    0 |   0.0 |            N/A |           N/A |   N/A |      N/A |         N/A |           0 |         95 |       N/A |          N/A |         N/A |       N/A"
 )
+
+// notLimitingRow: la banda misurata c'è ma la rete non limita; ping assente.
+func notLimitingRow() heartbeatRow {
+	r := emptyRow
+	r.network = &netmeasure.State{BandwidthBps: f64(1e9), NotLimiting: true}
+	return r
+}
+
+const wantNotLimitingRow = "14:03:07.123 | a-very-long-devi | LOCAL | 2/3         |    0 |   0.0 |            N/A |           N/A |   N/A |      N/A |         N/A |           0 |         95 |       N/A |          N/A |  not limit. |       N/A"
 
 // --- countingReader ----------------------------------------------------------
 
@@ -116,6 +127,7 @@ func TestFormatRow(t *testing.T) {
 	}{
 		{"tutti i campi", fullRow, wantFullRow},
 		{"finestra vuota, opzionali assenti, id lungo", emptyRow, wantEmptyRow},
+		{"rete non limitante", notLimitingRow(), wantNotLimitingRow},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
