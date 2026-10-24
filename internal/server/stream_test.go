@@ -9,6 +9,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
+	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 )
 
 // fakeNotifier registra le chiamate del control plane.
@@ -16,6 +17,16 @@ type fakeNotifier struct {
 	mu       sync.Mutex
 	policies []api.Policy
 	ended    []string
+	network  *netmeasure.State // restituito da Network; nil = nessuno stream
+}
+
+func (f *fakeNotifier) Network(deviceID string) (netmeasure.State, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.network == nil {
+		return netmeasure.State{}, false
+	}
+	return *f.network, true
 }
 
 func (f *fakeNotifier) NotifyPolicy(deviceID string, p api.Policy) {

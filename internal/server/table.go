@@ -9,6 +9,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,11 +29,12 @@ const (
 // tableHeader definisce le colonne e la loro larghezza. formatRow deve
 // produrre righe con le STESSE larghezze, separate da " | ".
 var tableHeader = fmt.Sprintf(
-	"%-12s | %-*s | %-5s | %-11s | %4s | %5s | %14s | %13s | %5s | %8s | %11s | %11s | %10s | %9s | %12s",
+	"%-12s | %-*s | %-5s | %-11s | %4s | %5s | %14s | %13s | %5s | %8s | %11s | %11s | %10s | %9s | %12s | %11s | %9s",
 	"Time", deviceColumnWidth, "Device", "Mode", "Ver app/srv", "Inf", "Inf/s",
 	"Comp mean (ms)", "Comp max (ms)", "CPU %", "Mem (MB)",
 	"HB RTT (ms)", "HB gap (ms)", "HB req (B)",
 	"Srv CPU %", "Srv mem (MB)",
+	"BW (Mbit/s)", "Ping (ms)",
 )
 
 // heartbeatRow contiene i valori di una riga.
@@ -43,9 +45,10 @@ type heartbeatRow struct {
 	appliedVersion uint64            // versione che il client dichiara di applicare
 	serverVersion  uint64            // versione della policy sul server
 	telemetry      api.Telemetry
-	sinceLastSeen  time.Duration // "HB gap": tempo dal contatto precedente
-	requestBytes   int64         // "HB req": byte del corpo dell'heartbeat
-	serverLoad     load.Snapshot // carico del server al momento dell'heartbeat
+	sinceLastSeen  time.Duration     // "HB gap": tempo dal contatto precedente
+	requestBytes   int64             // "HB req": byte del corpo dell'heartbeat
+	serverLoad     load.Snapshot     // carico del server al momento dell'heartbeat
+	network        *netmeasure.State // rete del device; nil senza stream
 }
 
 // ---------------------------------------------------------------------------
@@ -119,8 +122,21 @@ func formatRow(r heartbeatRow) string {
 
 	gapMS := float64(r.sinceLastSeen) / float64(time.Millisecond)
 
+	// "BW": la banda in Mbit/s; "not limit." se la rete non limita (la banda
+	// misurata sarebbe quella di lettura del server, non della rete).
+	bw, ping := "N/A", "N/A"
+	if n := r.network; n != nil {
+		switch {
+		case n.NotLimiting:
+			bw = "not limit."
+		case n.BandwidthBps != nil:
+			bw = fmt.Sprintf("%.1f", *n.BandwidthBps*8/1e6)
+		}
+		ping = formatOpt(n.LatencyMS, 1, 2)
+	}
+
 	return fmt.Sprintf(
-		"%-12s | %-*s | %-5s | %-11s | %4d | %5.1f | %14s | %13s | %5s | %8s | %11s | %11.0f | %10d | %9s | %12s",
+		"%-12s | %-*s | %-5s | %-11s | %4d | %5.1f | %14s | %13s | %5s | %8s | %11s | %11.0f | %10d | %9s | %12s | %11s | %9s",
 		r.at.Format(tableTimeFormat),
 		deviceColumnWidth, device,
 		r.appliedMode,
@@ -136,6 +152,7 @@ func formatRow(r heartbeatRow) string {
 		r.requestBytes,
 		formatOpt(r.serverLoad.CPUPercent, 1, 1),
 		formatOpt(srvMemMiB, 1, 0),
+		bw, ping,
 	)
 }
 

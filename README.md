@@ -130,6 +130,7 @@ paths):
 | `stream.max_inflight` | 3 | frames per device in flight at the same time |
 | `stream.default_deadline_ms` | 1000 | frame deadline when the client sends none |
 | `stream.max_message_bytes` | 8388608 | largest WebSocket message, 1024–67108864 |
+| `stream.ping_interval_ms` | 1000 | ping on the stream to measure each device's latency, 100–60000; 0 = never ([docs/RECORDING.md](docs/RECORDING.md#network)) |
 | `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)) |
 | `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
 | `models[].postprocess` | — | optional override of `score_threshold`, `iou_threshold`, `max_detections` |

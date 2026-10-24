@@ -52,7 +52,8 @@ need for the `config.json` of the run.
  "telemetry":{"inference_count":47,"inference_time_ms":21.3,"inference_time_max_ms":38.9,"cpu_load":0.42,"rtt_ms":3.1},
  "since_last_seen_ms":1001.2,
  "server_load":{"cpu_percent":18.2,"cpu_count":10,"load_avg_1_min":2.1,"memory_available_bytes":8517640192,"goroutines":41},
- "queue":{"slots":2,"running":1,"queued":0,"offered_per_s":9.8,"admitted_per_s":9.8,"utilization":0.31,"predicted_wait_ms":0}}
+ "queue":{"slots":2,"running":1,"queued":0,"offered_per_s":9.8,"admitted_per_s":9.8,"utilization":0.31,"predicted_wait_ms":0},
+ "network":{"bandwidth_bps":11250000,"latency_ms":1.8,"not_limiting":false,"valid_samples":412,"discarded_samples":37}}
 ```
 
 - `applied` is the policy the device declares, `server_policy` the server's
@@ -60,6 +61,8 @@ need for the `config.json` of the run.
 - `telemetry` is the device's window since its previous heartbeat (see
   PROTOCOL.md).
 - `queue` is the dispatcher's state, absent without the data plane.
+- `network` is the device's network seen by the server (see [Network](#network)),
+  absent if the device never opened a stream.
 
 ### `policy` — the server changed a device's policy
 
@@ -71,8 +74,9 @@ will add the algorithm's reasons).
 ```json
 {"kind":"frame","ts":"…","t_ms":81240.1,"device_id":"web_96","session_id":"YVOF…",
  "sequence_id":1042,"policy_version":2,"split_point":5,"request_bytes":819200,"deadline_ms":45,
+ "receive_ms":72.4,"receive_waited_share":0.98,"receive_valid":true,
  "outcome":"result","admission":{"predicted_wait_ms":3.1,"service_ms":8.2,"known":true},
- "timing":{"queue_wait_ms":2.8,"server_ms":11.4,"layer_ms":[1.1,0.9,2.0]},"detections":1}
+ "timing":{"receive_ms":72.4,"queue_wait_ms":2.8,"server_ms":11.4,"layer_ms":[1.1,0.9,2.0]},"detections":1}
 ```
 
 | Key | Meaning |
@@ -82,10 +86,46 @@ will add the algorithm's reasons).
 | `timing` | measured times, as in the result sent to the device; `result` only |
 | `detections` | how many objects were found; `result` only. Boxes are not recorded |
 | `deadline_ms` | the frame's deadline from when the server read it |
+| `receive_ms`, `receive_waited_share`, `receive_valid` | how long the server took to read the frame, the share of its bytes that came from reads that waited for the network, and whether the sample entered the bandwidth estimate (see [Network](#network)). For every outcome: the network carried the frame anyway |
 
 `ts` and `t_ms` of a `frame` are when its outcome was known (sent to the
 device), not when it arrived: for a `result`, the arrival is
 `t_ms − timing.server_ms`.
+
+### Network
+
+The server measures each device's network on its stream, with no help from
+the device and one clock per duration:
+
+    upload time of a frame ≈ latency + bytes / bandwidth
+
+- **Bandwidth.** The server reads every frame in fixed 64 KiB reads and
+  times each one. A read that took at least 200 µs waited for the network;
+  a faster one copied bytes already in the kernel's TCP buffer. A frame is a
+  *valid* sample if at least 90% of its bytes came from reads that waited:
+  only valid samples enter the moving average (`bandwidth_bps`, α 0.2).
+- **The limit.** The server sees bytes when it reads them, not when they
+  arrive. Bytes that piled up in the TCP buffer (the server was busy, or the
+  network is faster than the server reads) make `receive_ms` too short and
+  the bandwidth too high: that is why such samples are discarded, and counted
+  in `discarded_samples`. If fewer than 10% of the last 20 frames are valid,
+  `not_limiting` is true: the network is not the bottleneck (localhost, a
+  fast LAN) and `bandwidth_bps` must not be read as a limit.
+- **Latency.** A WebSocket ping every `stream.ping_interval_ms` (default
+  1000), its pong awaited up to 5 s: `latency_ms` is half the *minimum* RTT
+  of the pings of the last 60 s. Not an average: the device's pong travels
+  on the same link as its frames, and with the link saturated it waits
+  behind the bytes already in the device's TCP send buffer (bufferbloat:
+  ~170 ms at 50 Mbit/s, measured with the client repo's
+  `scripts/bench_network.py`), so those pings measure the queue, not the
+  latency. The long window keeps a value measured while the link was free
+  (LOCAL, startup, pauses) through a period of saturation; after more than
+  60 s of continuous saturation the latency includes the queue.
+- WebSocket compression stays disabled: with it, the bytes on the network
+  would not be the bytes of the message.
+
+The state belongs to the device, not to the stream: it survives reconnects
+and new sessions.
 
 ### `end` — the last line, at shutdown
 

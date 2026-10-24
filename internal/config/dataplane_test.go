@@ -105,6 +105,7 @@ func TestStreamConfigErrors(t *testing.T) {
 		{"max_inflight zero", `{"max_inflight": 0}`, "max_inflight"},
 		{"deadline zero", `{"default_deadline_ms": 0}`, "default_deadline_ms"},
 		{"messaggio troppo piccolo", `{"max_message_bytes": 100}`, "max_message_bytes"},
+		{"ping troppo frequente", `{"ping_interval_ms": 10}`, "ping_interval_ms"},
 		{"messaggio oltre il limite gRPC", `{"max_message_bytes": 1073741824}`, "max_message_bytes"},
 	}
 	for _, tc := range cases {
