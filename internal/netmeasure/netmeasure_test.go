@@ -144,12 +144,12 @@ func TestEstimatorBandwidthEWMA(t *testing.T) {
 	if s := e.Snapshot(); s.BandwidthBps != nil || s.LatencyMS != nil {
 		t.Fatalf("stato iniziale %+v: attesi nil", s)
 	}
-	e.Observe(valid(1000, time.Millisecond)) // 1e6 B/s
+	e.Observe(time.Time{}, valid(1000, time.Millisecond)) // 1e6 B/s
 	first := e.Snapshot().BandwidthBps
 	if first == nil || *first != 1e6 {
 		t.Fatalf("primo campione: banda %v, attesa 1e6", first)
 	}
-	e.Observe(valid(2000, time.Millisecond)) // 2e6 B/s
+	e.Observe(time.Time{}, valid(2000, time.Millisecond)) // 2e6 B/s
 	got := *e.Snapshot().BandwidthBps
 	want := BandwidthAlpha*2e6 + (1-BandwidthAlpha)*1e6
 	if got != want {
@@ -162,8 +162,8 @@ func TestEstimatorBandwidthEWMA(t *testing.T) {
 
 func TestEstimatorDiscardedDoNotMoveBandwidth(t *testing.T) {
 	e := NewEstimator()
-	e.Observe(valid(1000, time.Millisecond))
-	e.Observe(Sample{Bytes: 1000, Receive: time.Microsecond}) // dal buffer: 1e9 B/s
+	e.Observe(time.Time{}, valid(1000, time.Millisecond))
+	e.Observe(time.Time{}, Sample{Bytes: 1000, Receive: time.Microsecond}) // dal buffer: 1e9 B/s
 	s := e.Snapshot()
 	if *s.BandwidthBps != 1e6 || s.Valid != 1 || s.Discarded != 1 {
 		t.Errorf("stato %+v: banda 1e6, 1 valido, 1 scartato", s)
@@ -174,21 +174,21 @@ func TestEstimatorNotLimiting(t *testing.T) {
 	e := NewEstimator()
 	discarded := Sample{Bytes: 1000, Receive: time.Microsecond}
 	for range RecentWindow - 1 {
-		e.Observe(discarded)
+		e.Observe(time.Time{}, discarded)
 	}
 	if e.Snapshot().NotLimiting {
 		t.Fatal("con meno di RecentWindow campioni non si può dire")
 	}
-	e.Observe(discarded)
+	e.Observe(time.Time{}, discarded)
 	if !e.Snapshot().NotLimiting {
 		t.Fatal("RecentWindow campioni tutti scartati: rete non limitante")
 	}
 	// Ne bastano 2 validi su 20 (10%) perché la rete torni a limitare.
-	e.Observe(valid(1000, time.Millisecond))
+	e.Observe(time.Time{}, valid(1000, time.Millisecond))
 	if !e.Snapshot().NotLimiting {
 		t.Fatal("1 valido su 20 (5%) è ancora sotto NotLimitingShare")
 	}
-	e.Observe(valid(1000, time.Millisecond))
+	e.Observe(time.Time{}, valid(1000, time.Millisecond))
 	if e.Snapshot().NotLimiting {
 		t.Fatal("2 validi su 20 (10%) non è sotto NotLimitingShare")
 	}
@@ -228,6 +228,18 @@ func TestEstimatorKeepsTheLastPing(t *testing.T) {
 	e.ObservePing(t0.Add(10*LatencyWindow), 6*time.Millisecond)
 	if got := *e.Snapshot().LatencyMS; got != 3 {
 		t.Errorf("latenza %v ms, attesa 3", got)
+	}
+}
+
+func TestEstimatorLastSample(t *testing.T) {
+	e := NewEstimator()
+	if !e.LastSample().IsZero() {
+		t.Fatal("senza campioni LastSample deve essere zero")
+	}
+	t1 := time.Unix(10, 0)
+	e.Observe(t1, Sample{Bytes: 1, Receive: time.Microsecond}) // scartato: conta lo stesso
+	if !e.LastSample().Equal(t1) {
+		t.Errorf("LastSample = %v, atteso %v", e.LastSample(), t1)
 	}
 }
 

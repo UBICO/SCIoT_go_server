@@ -23,6 +23,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
@@ -87,6 +88,10 @@ type Stream struct {
 	// PingIntervalMS: ogni quanto il server misura la latenza con un ping
 	// WebSocket; 0 = mai.
 	PingIntervalMS *int `json:"ping_interval_ms,omitempty"`
+	// ProbeIntervalMS: dopo quanto senza misure di banda il server chiede un
+	// probe al device; 0 = mai. ProbeBytes: la sua dimensione.
+	ProbeIntervalMS *int `json:"probe_interval_ms,omitempty"`
+	ProbeBytes      *int `json:"probe_bytes,omitempty"`
 }
 
 // Server è la sezione "server". Ogni campo è opzionale: se manca vale il
@@ -267,8 +272,30 @@ func (f File) StreamConfig() (stream.Config, error) {
 		}
 		cfg.PingInterval = time.Duration(*s.PingIntervalMS) * time.Millisecond
 	}
+	if s.ProbeIntervalMS != nil {
+		if v := *s.ProbeIntervalMS; v != 0 && (v < 1000 || v > 3600000) {
+			return stream.Config{}, fmt.Errorf("stream.probe_interval_ms must be 0 or in [1000, 3600000], got %d", v)
+		}
+		cfg.ProbeInterval = time.Duration(*s.ProbeIntervalMS) * time.Millisecond
+	}
+	// Dopo max_message_bytes: il probe è un messaggio e deve starci.
+	maxProbe := cfg.MaxMessageBytes - probeHeaderRoom
+	if s.ProbeBytes != nil {
+		if v := *s.ProbeBytes; v < netmeasure.ReadChunk || v > maxProbe {
+			return stream.Config{}, fmt.Errorf("stream.probe_bytes must be in [%d, max_message_bytes - %d], got %d",
+				netmeasure.ReadChunk, probeHeaderRoom, v)
+		}
+		cfg.ProbeBytes = *s.ProbeBytes
+	} else {
+		// Il default non deve impedire un max_message_bytes piccolo.
+		cfg.ProbeBytes = min(cfg.ProbeBytes, maxProbe)
+	}
 	return cfg, nil
 }
+
+// probeHeaderRoom sono i byte lasciati all'header del messaggio probe (4 di
+// lunghezza + il JSON, ~40) dentro max_message_bytes.
+const probeHeaderRoom = 64
 
 // removedKeys sono chiavi di models[] tolte quando il server ha cominciato a
 // leggere il manifest.json del modello: un config.json vecchio fallisce con

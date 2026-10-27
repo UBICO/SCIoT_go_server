@@ -62,7 +62,7 @@ func registerBody(modelHash string) string {
 		"device_id": "web_192",
 		"device_type": "python",
 		"model_hash": "` + modelHash + `",
-		"capabilities": {"raw_input_split": true}
+		"capabilities": {"probe": true, "raw_input_split": true}
 	}`
 }
 
@@ -100,7 +100,7 @@ func TestRegisterOK(t *testing.T) {
 	if !ok {
 		t.Fatal("device non salvato nello Store")
 	}
-	if d.SessionID != resp.SessionID || d.Type != "python" || !d.Capabilities.RawInputSplit {
+	if d.SessionID != resp.SessionID || d.Type != "python" || !d.Capabilities.Probe {
 		t.Errorf("stato nello Store errato: %+v", d)
 	}
 }

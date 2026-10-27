@@ -4,6 +4,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -53,7 +54,7 @@ func TestRegisterRequestDecode(t *testing.T) {
 		"device_id": "web_192",
 		"device_type": "python",
 		"model_hash": "abc123",
-		"capabilities": {"raw_input_split": true}
+		"capabilities": {"probe": true}
 	}`
 
 	var req RegisterRequest
@@ -66,7 +67,7 @@ func TestRegisterRequestDecode(t *testing.T) {
 		DeviceID:        "web_192",
 		DeviceType:      "python",
 		ModelHash:       "abc123",
-		Capabilities:    Capabilities{RawInputSplit: true},
+		Capabilities:    Capabilities{Probe: true},
 	}
 	// Le struct composte solo da tipi confrontabili si possono confrontare con ==.
 	if req != want {
@@ -88,13 +89,14 @@ func TestRegisterResponseJSON(t *testing.T) {
 		},
 		Policy:              Policy{Mode: ModeLocal, PolicyVersion: 1},
 		HeartbeatIntervalMS: 1000,
+		DataPlane:           true,
 	}
 	want := `{"session_id":"s1",` +
 		`"model":{"model_key":"yolo_small_320","num_layers":8,"last_offloading_layer":7,` +
 		`"input":{"shape":[1,320,320,3],"dtype":"float32"},` +
 		`"postprocess":{"decoder":"yolo_pro","labels":["bicycle","stop sign"],"score_threshold":0.5,"iou_threshold":0.2,"max_detections":200}},` +
 		`"policy":{"mode":"LOCAL","split_point":null,"policy_version":1},` +
-		`"heartbeat_interval_ms":1000}`
+		`"heartbeat_interval_ms":1000,"data_plane":true}`
 
 	got, err := json.Marshal(resp)
 	if err != nil {
@@ -102,6 +104,48 @@ func TestRegisterResponseJSON(t *testing.T) {
 	}
 	if string(got) != want {
 		t.Errorf("JSON errato\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// decodeStrict decodifica come il server (server.decodeJSON): un campo
+// sconosciuto è un errore.
+func decodeStrict(body string) (RegisterRequest, error) {
+	var req RegisterRequest
+	dec := json.NewDecoder(strings.NewReader(body))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&req)
+	return req, err
+}
+
+func TestUnknownCapabilitiesAreIgnored(t *testing.T) {
+	// Un client più nuovo del server: capability che il server non conosce.
+	req, err := decodeStrict(`{"protocol_version": 1, "device_id": "d", "model_hash": "h",
+		"capabilities": {"probe": true, "raw_input_split": true, "segment_dtypes": ["int8"]}}`)
+	if err != nil {
+		t.Fatalf("capability sconosciute devono essere ignorate: %v", err)
+	}
+	if !req.Capabilities.Probe {
+		t.Errorf("Probe = false, atteso true: le capability note vanno comunque lette")
+	}
+}
+
+func TestCapabilitiesStrictOutside(t *testing.T) {
+	cases := map[string]string{
+		"campo sconosciuto fuori da capabilities": `{"protocol_version": 1, "devce_id": "d"}`,
+		"capabilities non è un oggetto":           `{"protocol_version": 1, "capabilities": 5}`,
+		"capability di tipo sbagliato":            `{"protocol_version": 1, "capabilities": {"probe": "yes"}}`,
+	}
+	for name, body := range cases {
+		if _, err := decodeStrict(body); err == nil {
+			t.Errorf("%s: atteso un errore", name)
+		}
+	}
+}
+
+func TestMissingCapabilitiesMeanNo(t *testing.T) {
+	req, err := decodeStrict(`{"protocol_version": 1, "device_id": "d", "model_hash": "h"}`)
+	if err != nil || req.Capabilities.Probe {
+		t.Errorf("senza capabilities: %+v, %v; atteso Probe false", req.Capabilities, err)
 	}
 }
 
