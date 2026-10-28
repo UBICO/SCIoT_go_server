@@ -37,6 +37,32 @@ wait in steady state?
 - `ρ' ≥ 1`: the queue is unstable, the wait unbounded; the real server bounds
   it by refusing frames.
 
+## Variables
+
+| Symbol | In the code | Unit | Meaning | Source |
+|---|---|---|---|---|
+| `c` | `Queue.Slots` | — | servers: frames the worker runs in parallel | worker slots |
+| `λ` | `lambda` | frames/s | arrival rate at the server | devices' rates; replay: served frames / window |
+| `S` | `ServiceMS`, `s` | ms (s in the formulas) | mean service time, queue excluded | dispatcher estimate per split point |
+| `a` | `a` | erlang | offered load `λ·S`: slots busy on average | computed |
+| `ρ` | `Rho` | — | utilization per slot `a / c`; ≥ 1 = unstable queue | computed |
+| `ca` | `Queue.CA` | — | std / mean of the intervals between arrivals: 0 regular, 1 Poisson | dispatcher `interarrival` |
+| `cs` | `Queue.CS` | — | std / mean of `S`: 0 constant, 1 exponential | std of the `S` estimates |
+| `C(c, a)` | `ErlangC` | probability | an arriving frame has to wait (all slots busy), M/M/c | Erlang B recursion `B(k)` |
+| `Wq` | `WaitMMc`, `WaitGGc` | s (ms in `Prediction`) | mean wait in queue, M/M/c or G/G/c | formulas above |
+| `λ_k` | `Prediction.FramesPerSec` | frames/s | the device's rate at split `k`: `1000 / max(prefix, upload)`, an upper bound | computed |
+| `λ_others`, `a_others` | `Queue.OthersLambda`, `Queue.OthersErlangs` | frames/s, erlang | load of the other devices, without the one moved | caller |
+| `ρ'` | `Prediction.Rho` | — | utilization after the move: `(a_others + λ_k·S(k)) / c` | computed |
+| — | `erlangs / lambda` | s | mean `S` weighted by rate, when devices use different split points | computed |
+| — | `Prediction.Saturated` | — | `ρ' ≥ 1` or unbounded `λ_k`: wait is `+Inf` | computed |
+| — | `Prediction.Missing` | — | unknown inputs (segment, network, `S`, slots) | computed |
+
+In `sciot-replay queue`, per window: arrival = `t_ms − timing.server_ms`,
+service = `server_ms − queue_wait_ms`, measured wait = mean `queue_wait_ms`,
+`c` = `queue.slots` of the last heartbeat; `λ`, `S`, `ca`, `cs` from the
+served frames of the window. Bands of `ρ`: 0–0.5, 0.5–0.8, 0.8–0.95,
+0.95–1, ≥ 1.
+
 ## Verification 1 (2026-10-28)
 
 `go run ./cmd/sciot-replay queue record.jsonl`: per 5 s window, the measured
