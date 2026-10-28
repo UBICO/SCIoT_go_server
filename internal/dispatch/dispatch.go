@@ -101,6 +101,11 @@ type Dispatcher struct {
 	overhead map[string]ewma.Stat // per modello: S misurata − Σ layer_ms, in secondi
 	last     map[string]int       // indice dell'ultimo segmento di ogni modello
 
+	// Intervalli tra arrivi successivi (frame offerti, ammessi o no), in
+	// secondi: la loro variazione è ca della coda G/G/c (internal/costmodel).
+	interarrival ewma.Stat
+	lastArrival  time.Time
+
 	window *window
 	totals Totals
 }
@@ -158,6 +163,10 @@ func (d *Dispatcher) admit(job stream.Job, now time.Time) (*entry, error) {
 	defer d.mu.Unlock()
 
 	d.window.add(now, bucket{offered: 1})
+	if !d.lastArrival.IsZero() {
+		d.interarrival.Update(now, now.Sub(d.lastArrival).Seconds(), d.cfg.ServiceTau)
+	}
+	d.lastArrival = now
 	slots := d.backend.Slots()
 	if slots == 0 {
 		d.totals.Unavailable++

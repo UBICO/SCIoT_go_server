@@ -87,6 +87,9 @@ type Queue struct {
 	AdmittedPerSec  float64  `json:"admitted_per_s"`
 	Utilization     *float64 `json:"utilization,omitempty"`
 	PredictedWaitMS float64  `json:"predicted_wait_ms"`
+	// Intervalli tra frame offerti: media e deviazione (dispatch.Snapshot).
+	InterarrivalMS    *float64 `json:"interarrival_ms,omitempty"`
+	InterarrivalStdMS *float64 `json:"interarrival_std_ms,omitempty"`
 }
 
 // Policy: il server ha cambiato la policy di un device.
