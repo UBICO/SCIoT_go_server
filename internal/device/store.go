@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 )
 
 // Device è lo stato di un device registrato.
@@ -36,7 +37,17 @@ type Device struct {
 	// opzionali): una copia del Device li condivide con lo Store. È sicuro
 	// solo perché nessuno modifica una Telemetry dopo averla ricevuta.
 	LastTelemetry api.Telemetry
+	// Segments è la stima del tempo del device per ogni segmento del
+	// modello, in ms, dai segment_ms degli heartbeat (vuota per un segmento
+	// mai eseguito). nil fino al primo heartbeat che li porta; si azzera con
+	// una nuova registrazione. Come LastTelemetry, una copia la condivide con
+	// lo Store: per questo Heartbeat ne crea sempre una nuova (mai in place).
+	Segments []ewma.Stat
 }
+
+// DefaultSegmentTau è la costante di tempo delle stime per segmento: un
+// campione per heartbeat (1 s), dieci heartbeat di memoria.
+const DefaultSegmentTau = 10 * time.Second
 
 // ErrSessionExpired indica che device o sessione non sono (più) validi:
 // device mai registrato, server riavviato (lo Store è in memoria) oppure
@@ -69,16 +80,23 @@ type Store struct {
 	// lo sostituiamo con un orologio finto per avere tempi prevedibili.
 	// In Go le funzioni sono valori: si possono salvare in un campo.
 	now func() time.Time
+
+	segmentTau time.Duration // vedi SetSegmentTau
 }
 
 // NewStore crea uno Store vuoto.
 func NewStore() *Store {
 	// mu non va inizializzato: il valore zero di sync.Mutex è pronto all'uso.
 	return &Store{
-		devices: make(map[string]Device),
-		now:     time.Now,
+		devices:    make(map[string]Device),
+		now:        time.Now,
+		segmentTau: DefaultSegmentTau,
 	}
 }
+
+// SetSegmentTau cambia la costante di tempo delle stime per segmento
+// (server.device_segment_tau_ms). Va chiamata prima di servire richieste.
+func (s *Store) SetSegmentTau(tau time.Duration) { s.segmentTau = tau }
 
 // Register registra (o ri-registra) un device e ne restituisce lo stato.
 //
@@ -137,6 +155,9 @@ type HeartbeatResult struct {
 	// o registrazione): con un intervallo di 1 s dovrebbe valere ~1 s, e
 	// scostamenti grandi indicano un client o una rete in difficoltà.
 	SinceLastSeen time.Duration
+	// Segments è la stima per segmento dopo questo heartbeat (ms); nil se il
+	// device non ha mai inviato segment_ms.
+	Segments []ewma.Stat
 }
 
 // Heartbeat registra un heartbeat e restituisce la policy corrente.
@@ -166,8 +187,11 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 	d.LastSeen = now
 	d.AppliedPolicyVersion = appliedVersion
 	d.LastTelemetry = t
+	if t.SegmentMS != nil {
+		d.Segments = updateSegments(d.Segments, t.SegmentMS, now, s.segmentTau)
+	}
 	s.devices[id] = d
-	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since}, nil
+	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments}, nil
 }
 
 // newSessionID genera un identificatore casuale e non indovinabile.
@@ -215,4 +239,19 @@ func (s *Store) SetPolicy(id string, req api.SetPolicyRequest) (Device, error) {
 	}
 	s.devices[id] = d
 	return d, nil
+}
+
+// updateSegments restituisce una COPIA di old (o una stima nuova, se old è
+// nil) con i segmenti eseguiti nella finestra aggiornati: un campione per
+// segmento, la media della finestra, arrivato in at. I segmenti null non
+// cambiano: la loro stima invecchia (Stat.Last).
+func updateSegments(old []ewma.Stat, ms []*float64, at time.Time, tau time.Duration) []ewma.Stat {
+	stats := make([]ewma.Stat, len(ms))
+	copy(stats, old) // old ha la stessa lunghezza, o è nil: Heartbeat l'ha controllata
+	for i, v := range ms {
+		if v != nil {
+			stats[i].Update(at, *v, tau)
+		}
+	}
+	return stats
 }

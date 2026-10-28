@@ -139,100 +139,107 @@ func valid(bytes int, d time.Duration) Sample {
 	return Sample{Bytes: bytes, Receive: d, WaitedBytes: bytes, Valid: true}
 }
 
-func TestEstimatorBandwidthEWMA(t *testing.T) {
-	e := NewEstimator()
-	if s := e.Snapshot(); s.BandwidthBps != nil || s.LatencyMS != nil {
+var t0 = time.Unix(1000, 0)
+
+func TestEstimatorBandwidthIsTimeWeighted(t *testing.T) {
+	e := NewEstimator(time.Minute)
+	if s := e.Snapshot(t0); s.BandwidthBps != nil || s.LatencyMS != nil {
 		t.Fatalf("stato iniziale %+v: attesi nil", s)
 	}
-	e.Observe(time.Time{}, valid(1000, time.Millisecond)) // 1e6 B/s
-	first := e.Snapshot().BandwidthBps
+	e.Observe(t0, valid(1000, time.Millisecond)) // 1e6 B/s
+	first := e.Snapshot(t0).BandwidthBps
 	if first == nil || *first != 1e6 {
 		t.Fatalf("primo campione: banda %v, attesa 1e6", first)
 	}
-	e.Observe(time.Time{}, valid(2000, time.Millisecond)) // 2e6 B/s
-	got := *e.Snapshot().BandwidthBps
-	want := BandwidthAlpha*2e6 + (1-BandwidthAlpha)*1e6
-	if got != want {
-		t.Errorf("banda %v, attesa %v", got, want)
+	// Un'ora dopo (probe rari): il campione nuovo prende quasi tutto il peso.
+	e.Observe(t0.Add(time.Hour), valid(2000, time.Millisecond)) // 2e6 B/s
+	s := e.Snapshot(t0.Add(time.Hour + 2*time.Second))
+	if got := *s.BandwidthBps; got < 2e6-1 {
+		t.Errorf("banda %v, attesa ~2e6: con campioni rari conta il più recente", got)
+	}
+	if s.BandwidthAgeMS == nil || *s.BandwidthAgeMS != 2000 || s.BandwidthStdBps == nil {
+		t.Errorf("età %v, std %v: attese 2000 ms e una deviazione", s.BandwidthAgeMS, s.BandwidthStdBps)
 	}
 	if *first != 1e6 {
-		t.Errorf("il puntatore del primo Snapshot è cambiato: %v", *first)
+		t.Errorf("il valore del primo Snapshot è cambiato: %v", *first)
 	}
 }
 
 func TestEstimatorDiscardedDoNotMoveBandwidth(t *testing.T) {
-	e := NewEstimator()
-	e.Observe(time.Time{}, valid(1000, time.Millisecond))
-	e.Observe(time.Time{}, Sample{Bytes: 1000, Receive: time.Microsecond}) // dal buffer: 1e9 B/s
-	s := e.Snapshot()
+	e := NewEstimator(time.Minute)
+	e.Observe(t0, valid(1000, time.Millisecond))
+	e.Observe(t0.Add(time.Second), Sample{Bytes: 1000, Receive: time.Microsecond}) // dal buffer: 1e9 B/s
+	s := e.Snapshot(t0.Add(time.Second))
 	if *s.BandwidthBps != 1e6 || s.Valid != 1 || s.Discarded != 1 {
 		t.Errorf("stato %+v: banda 1e6, 1 valido, 1 scartato", s)
 	}
 }
 
-func TestEstimatorNotLimiting(t *testing.T) {
-	e := NewEstimator()
+func TestEstimatorNotLimitingOverTime(t *testing.T) {
+	e := NewEstimator(time.Minute)
 	discarded := Sample{Bytes: 1000, Receive: time.Microsecond}
-	for range RecentWindow - 1 {
-		e.Observe(time.Time{}, discarded)
+	// Un probe ogni 30 s, tutti scartati (rete più veloce del server).
+	at := func(i int) time.Time { return t0.Add(time.Duration(i) * 30 * time.Second) }
+	e.Observe(at(0), discarded)
+	e.Observe(at(1), discarded)
+	if e.Snapshot(at(1)).NotLimiting {
+		t.Fatal("2 campioni: meno di NotLimitingMinSamples, non si può dire")
 	}
-	if e.Snapshot().NotLimiting {
-		t.Fatal("con meno di RecentWindow campioni non si può dire")
+	e.Observe(at(2), discarded) // 0, 30, 60 s: tutti nella finestra di 60 s
+	if !e.Snapshot(at(2)).NotLimiting {
+		t.Fatal("3 campioni scartati in 60 s: rete non limitante")
 	}
-	e.Observe(time.Time{}, discarded)
-	if !e.Snapshot().NotLimiting {
-		t.Fatal("RecentWindow campioni tutti scartati: rete non limitante")
+	// Un valido tra 3: 33% non è sotto NotLimitingShare.
+	e.Observe(at(3), valid(1000, time.Millisecond)) // finestra: 30, 60, 90 s
+	if e.Snapshot(at(3)).NotLimiting {
+		t.Fatal("1 valido su 3 non è sotto NotLimitingShare")
 	}
-	// Ne bastano 2 validi su 20 (10%) perché la rete torni a limitare.
-	e.Observe(time.Time{}, valid(1000, time.Millisecond))
-	if !e.Snapshot().NotLimiting {
-		t.Fatal("1 valido su 20 (5%) è ancora sotto NotLimitingShare")
+	// Nessun campione per due minuti: la conclusione scade.
+	e2 := NewEstimator(time.Minute)
+	for i := range 3 {
+		e2.Observe(at(i), discarded)
 	}
-	e.Observe(time.Time{}, valid(1000, time.Millisecond))
-	if e.Snapshot().NotLimiting {
-		t.Fatal("2 validi su 20 (10%) non è sotto NotLimitingShare")
-	}
-	if s := e.Snapshot(); s.Valid+s.Discarded != RecentWindow+2 {
-		t.Errorf("contati %d campioni, attesi %d", s.Valid+s.Discarded, RecentWindow+2)
+	if e2.Snapshot(at(2).Add(2 * time.Minute)).NotLimiting {
+		t.Fatal("campioni più vecchi di NotLimitingWindow: non valgono più")
 	}
 }
 
 func TestEstimatorLatencyIsWindowedMin(t *testing.T) {
-	e := NewEstimator()
+	e := NewEstimator(time.Minute)
 	t0 := time.Unix(0, 0)
 	e.ObservePing(t0, 10*time.Millisecond)
 	e.ObservePing(t0.Add(time.Second), 4*time.Millisecond)
 	e.ObservePing(t0.Add(2*time.Second), 300*time.Millisecond) // pong dietro la coda
-	if got := *e.Snapshot().LatencyMS; got != 2 {
+	if got := *e.Snapshot(t0).LatencyMS; got != 2 {
 		t.Errorf("latenza %v ms, attesa 2 (metà del minimo)", got)
 	}
 	// Il minimo resta finché ha meno di LatencyWindow, anche con tanti ping in coda.
 	for i := range 50 {
 		e.ObservePing(t0.Add(time.Duration(3+i)*time.Second), 300*time.Millisecond)
 	}
-	if got := *e.Snapshot().LatencyMS; got != 2 {
+	if got := *e.Snapshot(t0).LatencyMS; got != 2 {
 		t.Errorf("dopo 53 s latenza %v ms, attesa ancora 2", got)
 	}
 	// Oltre LatencyWindow il minimo vecchio esce dalla finestra.
 	e.ObservePing(t0.Add(time.Second+LatencyWindow+time.Millisecond), 8*time.Millisecond)
-	if got := *e.Snapshot().LatencyMS; got != 4 {
+	if got := *e.Snapshot(t0).LatencyMS; got != 4 {
 		t.Errorf("latenza %v ms, attesa 4", got)
 	}
 }
 
 func TestEstimatorKeepsTheLastPing(t *testing.T) {
 	// Un ping arrivato dopo una lunga pausa non svuota la finestra.
-	e := NewEstimator()
+	e := NewEstimator(time.Minute)
 	t0 := time.Unix(0, 0)
 	e.ObservePing(t0, 2*time.Millisecond)
 	e.ObservePing(t0.Add(10*LatencyWindow), 6*time.Millisecond)
-	if got := *e.Snapshot().LatencyMS; got != 3 {
+	if got := *e.Snapshot(t0).LatencyMS; got != 3 {
 		t.Errorf("latenza %v ms, attesa 3", got)
 	}
 }
 
 func TestEstimatorLastSample(t *testing.T) {
-	e := NewEstimator()
+	e := NewEstimator(time.Minute)
 	if !e.LastSample().IsZero() {
 		t.Fatal("senza campioni LastSample deve essere zero")
 	}

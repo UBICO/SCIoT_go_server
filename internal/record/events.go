@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 )
@@ -36,8 +37,8 @@ type Start struct {
 
 // DispatchConfig sono i parametri del dispatcher in uso.
 type DispatchConfig struct {
-	ServiceEWMAAlpha float64 `json:"service_ewma_alpha"`
-	WindowS          float64 `json:"window_s"`
+	ServiceTauMS float64 `json:"service_tau_ms"`
+	WindowS      float64 `json:"window_s"`
 }
 
 // Session: un device si è registrato (nuova sessione).
@@ -63,6 +64,10 @@ type Heartbeat struct {
 	Queue           *Queue        `json:"queue,omitempty"` // nil senza data plane
 	// Network è la rete del device vista dal server; nil senza stream.
 	Network *netmeasure.State `json:"network,omitempty"`
+	// DeviceSegments è la stima del server dei tempi del device per segmento
+	// (ms) dopo questo heartbeat; null per un segmento mai eseguito. Assente
+	// se il device non invia segment_ms.
+	DeviceSegments []*ewma.Estimate `json:"device_segments,omitempty"`
 }
 
 // Applied è la policy che il device dichiara nell'heartbeat.

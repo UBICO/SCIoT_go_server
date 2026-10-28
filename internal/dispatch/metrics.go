@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"slices"
 	"time"
+
+	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 )
 
 // Totals sono i contatori dall'avvio. Insieme a λ e ρ dicono alla Fase 3
@@ -18,23 +20,37 @@ type Totals struct {
 
 // ServiceTime è la S stimata per un modello e uno split point.
 type ServiceTime struct {
-	ModelKey   string  `json:"model_key"`
-	SplitPoint int     `json:"split_point"`
-	MeanMS     float64 `json:"mean_ms"`
+	ModelKey   string `json:"model_key"`
+	SplitPoint int    `json:"split_point"`
+	Stats
 }
 
 // SegmentTime è il tempo medio di invoke() di un segmento.
 type SegmentTime struct {
-	ModelKey string  `json:"model_key"`
-	Index    int     `json:"index"`
-	MeanMS   float64 `json:"mean_ms"`
+	ModelKey string `json:"model_key"`
+	Index    int    `json:"index"`
+	Stats
 }
 
 // OverheadTime è il tempo medio, per modello, che S misura oltre ai
 // segmenti (gRPC, copia del tensore, attesa nel worker).
 type OverheadTime struct {
-	ModelKey string  `json:"model_key"`
-	MeanMS   float64 `json:"mean_ms"`
+	ModelKey string `json:"model_key"`
+	Stats
+}
+
+// Stats è una stima del dispatcher in millisecondi: media, deviazione
+// standard dei campioni, quanti campioni e da quanto non ne arriva uno.
+type Stats struct {
+	MeanMS  float64 `json:"mean_ms"`
+	StdMS   float64 `json:"std_ms"`
+	Samples uint64  `json:"samples"`
+	AgeMS   float64 `json:"age_ms"`
+}
+
+func statsOf(s ewma.Stat, now time.Time) Stats {
+	e, _ := s.Estimate(now, 1000) // secondi → millisecondi
+	return Stats{MeanMS: e.Mean, StdMS: e.Std, Samples: e.N, AgeMS: e.AgeMS}
 }
 
 // Snapshot è lo stato della coda in un istante: esposto in
@@ -86,20 +102,20 @@ func (d *Dispatcher) Snapshot() Snapshot {
 		snap.PredictedWaitMS = ms(predictWait(slots, d.remainingLocked(now), d.queuedLocked()))
 	}
 	for k, s := range d.service {
-		snap.Service = append(snap.Service, ServiceTime{ModelKey: k.model, SplitPoint: k.split, MeanMS: ms(s)})
+		snap.Service = append(snap.Service, ServiceTime{ModelKey: k.model, SplitPoint: k.split, Stats: statsOf(s, now)})
 	}
 	// Ordine stabile: le mappe in Go non hanno ordine, il JSON sì.
 	slices.SortFunc(snap.Service, func(a, b ServiceTime) int {
 		return cmp.Or(cmp.Compare(a.ModelKey, b.ModelKey), cmp.Compare(a.SplitPoint, b.SplitPoint))
 	})
 	for k, s := range d.segments {
-		snap.Segments = append(snap.Segments, SegmentTime{ModelKey: k.model, Index: k.index, MeanMS: ms(s)})
+		snap.Segments = append(snap.Segments, SegmentTime{ModelKey: k.model, Index: k.index, Stats: statsOf(s, now)})
 	}
 	slices.SortFunc(snap.Segments, func(a, b SegmentTime) int {
 		return cmp.Or(cmp.Compare(a.ModelKey, b.ModelKey), cmp.Compare(a.Index, b.Index))
 	})
 	for m, s := range d.overhead {
-		snap.Overhead = append(snap.Overhead, OverheadTime{ModelKey: m, MeanMS: ms(s)})
+		snap.Overhead = append(snap.Overhead, OverheadTime{ModelKey: m, Stats: statsOf(s, now)})
 	}
 	slices.SortFunc(snap.Overhead, func(a, b OverheadTime) int { return cmp.Compare(a.ModelKey, b.ModelKey) })
 	return snap

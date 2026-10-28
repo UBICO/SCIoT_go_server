@@ -133,6 +133,9 @@ paths):
 | `stream.ping_interval_ms` | 1000 | ping on the stream to measure each device's latency, 100–60000; 0 = never ([docs/RECORDING.md](docs/RECORDING.md#network)) |
 | `stream.probe_interval_ms` | 30000 | ask a probe of a device (with the `probe` capability) whose network has not been measured for this long, 1000–3600000; 0 = never ([docs/PROTOCOL.md](docs/PROTOCOL.md#probe)) |
 | `stream.probe_bytes` | 524288 | size of a probe, 65536 to `max_message_bytes` − 64 (by default capped to fit `max_message_bytes`) |
+| `stream.bandwidth_tau_ms` | 60000 | time constant of the bandwidth estimate, 100–3600000 ([docs/RECORDING.md](docs/RECORDING.md#estimates)) |
+| `dispatch.service_tau_ms` | 10000 | time constant of the service time estimates `S` (per split point, segment, overhead), 100–3600000 |
+| `server.device_segment_tau_ms` | 10000 | time constant of the estimates of the device's time per segment, 100–3600000 |
 | `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)) |
 | `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
 | `models[].postprocess` | — | optional override of `score_threshold`, `iou_threshold`, `max_detections` |
