@@ -44,30 +44,52 @@ mean queue wait against the two predictions, with `λ`, `S`, `c`, `ca` and `cs`
 measured in the same window (arrival = `t_ms − timing.server_ms`, service =
 `server_ms − queue_wait_ms`, frames served by the server only).
 
-yolo-small, split 6 (S ≈ 27 ms), worker 2 slots × 2 threads, MacBook; one,
-then two, then three devices added every 40 s (all on the same machine):
+yolo-small, MacBook; one, then two, then three devices added every 40 s, all
+on the same machine as the server. Mean wait per utilization band (windows
+in brackets):
 
-| ρ | windows | measured | M/M/c | G/G/c |
-|---|---|---|---|---|
-| 0–0.5 | 1 | 0.00 ms | 1.79 ms | 0.00 ms |
-| 0.5–0.8 | 9 | 1.06 ms | 21.68 ms | 1.47 ms |
-| 0.8–0.95 | 16 | 9.95 ms | 82.81 ms | 19.67 ms |
+| Split, worker | S, ca, cs | ρ | measured | M/M/c | G/G/c |
+|---|---|---|---|---|---|
+| 6, 2 slots × 2 threads | 27 ms, 0.6, 0.03 | 0–0.5 (1) | 0.00 ms | 1.79 ms | 0.00 ms |
+| | | 0.5–0.8 (9) | 1.06 ms | 21.68 ms | 1.47 ms |
+| | | 0.8–0.95 (16) | 9.95 ms | 82.81 ms | 19.67 ms |
+| 4, 2 slots × 2 threads | 31 ms, 1.1, 0.02 | 0–0.5 (1) | 6.18 ms | 1.99 ms | 1.13 ms |
+| | | 0.5–0.8 (23) | 9.45 ms | 36.52 ms | 21.04 ms |
+| | | 0.8–0.95 (2) | 11.74 ms | 63.37 ms | 32.69 ms |
+| 6, 4 slots × 1 thread | 50 ms, 0.3, 0.01 | 0–0.5 (4) | 0.00 ms | 0.82 ms | 0.01 ms |
+| | | 0.5–0.8 (2) | 0.00 ms | 6.93 ms | 1.15 ms |
+| 6, 1 slot × 4 threads | 16 ms, 0.4, 0.04 | 0–0.5 (1) | 16.74 ms | 14.66 ms | 2.31 ms |
+| | | 0.5–0.8 (8) | 0.00 ms | 47.64 ms | 0.06 ms |
+| | | 0.8–0.95 (7) | 16.88 ms | 187.65 ms | 40.43 ms |
+| | | 0.95–1 (10) | 19.97 ms | 481.89 ms | 74.47 ms |
 
-- **M/M/c overestimates 8–20×**: service is almost constant (`cs` ≈ 0.03) and
-  arrivals are not Poisson (`ca` ≈ 0.6 with several devices, ≈ 0.05 with one).
-  Kept only as an upper bound.
-- **G/G/c is close at medium load and ~2× above near saturation**, on the
-  prudent side. The algorithm uses it, **without** a correction factor fitted
-  on these data: it would depend on the machine, the slots and the load.
-- **Admission cuts the queue**: with the third device `ρ` stays below ~0.9,
-  because the dispatcher refuses the frames that would not finish in time.
-  The real queue is shorter than the unconstrained one the formula describes:
-  the likely main cause of the factor 2. A queue model with limited capacity
+`ca` and `cs` are the mean over the windows.
+
+- **M/M/c overestimates 4–25×** in every configuration: service is almost
+  constant (`cs` ≤ 0.04) and arrivals are not Poisson. Kept only as an
+  upper bound.
+- **G/G/c is close below ρ ≈ 0.8 and 2–4× above it**, the more the closer to
+  1 (1 slot: 2.4× at 0.8–0.95, 3.7× at 0.95–1), on the prudent side, for
+  every split point and worker size tried. The algorithm uses it,
+  **without** a correction factor fitted on these data: it would depend on
+  the machine, the slots and the load.
+- The few single windows where the measured wait is higher than both
+  predictions are at the start of a stage (a device just arrived, queue
+  not yet in steady state): a steady-state model does not describe them.
+- With 4 slots the three devices never pushed ρ above 0.8 (S grew to 50 ms
+  with four inferences and three clients on the same CPU): no data near
+  saturation for `c` = 4.
+- **Admission cuts the queue**: near saturation the dispatcher refuses the
+  frames that would not finish in time (split 6 with 2 slots: ρ stays below
+  ~0.9 with the third device). The real queue is shorter than the
+  unconstrained one the formula describes: the likely main cause of the
+  overestimate, which indeed grows as ρ approaches 1. A queue model with limited capacity
   is the next step only if the replay shows the overestimate leads to wrong
   decisions (verification 2, phase 3.8).
 - With one device the queue never forms (regular arrivals, window of 3
   frames): verifying the model needs several devices.
 
-**Limits**: one split point (6) and one worker size (2 × 2); clients and
-worker on the same machine, so CPU contention adds noise to `S` (`cs`) and
-to the device's times.
+**Limits**: clients and worker on the same machine, so CPU contention adds
+noise to `S` (`cs`) and to the device's times, and with many slots it slows
+everything down (no data near saturation for `c` = 4). To repeat with the
+devices on other machines (phase 4).
