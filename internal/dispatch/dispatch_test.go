@@ -391,6 +391,22 @@ func TestFailedExecutionFreesTheSlotAndIsNotMeasured(t *testing.T) {
 	}
 }
 
+func TestInterarrival(t *testing.T) {
+	d := New(newBackend(3, false), DefaultConfig())
+	t0 := time.Unix(1000, 0)
+	for _, ms := range []int{0, 100, 300} { // intervalli 100 e 200 ms
+		if _, err := d.admit(job(0, time.Hour), t0.Add(time.Duration(ms)*time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ia := d.Snapshot().Interarrival
+	// Campioni ravvicinati rispetto a τ: media e deviazione semplici.
+	if ia == nil || ia.Samples != 2 || !sameDur(time.Duration(ia.MeanMS*float64(time.Millisecond)), 150*time.Millisecond) ||
+		!sameDur(time.Duration(ia.StdMS*float64(time.Millisecond)), 50*time.Millisecond) {
+		t.Errorf("Interarrival = %+v: attesi 2 campioni, media 150 ms, deviazione 50 ms", ia)
+	}
+}
+
 func TestSnapshotRates(t *testing.T) {
 	d := New(newBackend(2, false), Config{ServiceTau: 10 * time.Second, Window: 2 * time.Second})
 	for i := range byte(4) {

@@ -69,6 +69,11 @@ type Snapshot struct {
 	// PredictedWaitMS è l'attesa in coda che vedrebbe un frame in arrivo adesso.
 	PredictedWaitMS float64 `json:"predicted_wait_ms"`
 
+	// Interarrival sono gli intervalli tra frame offerti: deviazione / media
+	// è il coefficiente di variazione degli arrivi (ca). nil con meno di due
+	// arrivi.
+	Interarrival *Stats `json:"interarrival,omitempty"`
+
 	Service  []ServiceTime  `json:"service"`  // S misurata per split point
 	Segments []SegmentTime  `json:"segments"` // per stimare S degli split mai usati
 	Overhead []OverheadTime `json:"overhead"`
@@ -100,6 +105,10 @@ func (d *Dispatcher) Snapshot() Snapshot {
 		rho := sum.busy.Seconds() / (float64(slots) * w)
 		snap.Utilization = &rho
 		snap.PredictedWaitMS = ms(predictWait(slots, d.remainingLocked(now), d.queuedLocked()))
+	}
+	if d.interarrival.N() > 0 {
+		st := statsOf(d.interarrival, now)
+		snap.Interarrival = &st
 	}
 	for k, s := range d.service {
 		snap.Service = append(snap.Service, ServiceTime{ModelKey: k.model, SplitPoint: k.split, Stats: statsOf(s, now)})

@@ -573,11 +573,15 @@ func (s *Server) queueState() *record.Queue {
 		return nil
 	}
 	q := s.queue.Snapshot()
-	return &record.Queue{
+	r := &record.Queue{
 		Slots: q.Slots, Running: q.Running, Queued: q.Queued,
 		OfferedPerSec: q.OfferedPerSec, AdmittedPerSec: q.AdmittedPerSec,
 		Utilization: q.Utilization, PredictedWaitMS: q.PredictedWaitMS,
 	}
+	if ia := q.Interarrival; ia != nil {
+		r.InterarrivalMS, r.InterarrivalStdMS = &ia.MeanMS, &ia.StdMS
+	}
+	return r
 }
 
 // segmentEstimates espone le stime per segmento del device; nil per un

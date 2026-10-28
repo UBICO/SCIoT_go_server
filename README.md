@@ -40,6 +40,7 @@ documentation, with the SPLIT benchmark, is `docs/GO_CONTROL_PLANE.md` there.
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | the v1 protocol: control plane and data plane, the contract for every client |
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
+| [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point, the queue model and its verification (`sciot-replay queue`) |
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
 | [worker/README.md](worker/README.md) | the Python worker and the model build tool |
 
