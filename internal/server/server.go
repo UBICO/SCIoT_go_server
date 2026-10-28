@@ -283,6 +283,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		// Milliseconds() restituisce int64: le conversioni numeriche in Go
 		// sono sempre esplicite.
 		HeartbeatIntervalMS: int(s.cfg.HeartbeatInterval.Milliseconds()),
+		DataPlane:           s.stream != nil,
 	})
 }
 
@@ -542,7 +543,8 @@ func (s storeSessions) Lookup(deviceID, sessionID string) (stream.Session, bool)
 	if !ok || d.SessionID != sessionID {
 		return stream.Session{}, false
 	}
-	return stream.Session{ModelKey: d.Model.ModelKey, Policy: d.Policy, Postprocess: d.Model.Postprocess}, true
+	return stream.Session{ModelKey: d.Model.ModelKey, Policy: d.Policy, Postprocess: d.Model.Postprocess,
+		Probe: d.Capabilities.Probe}, true
 }
 
 // QueueSource fornisce lo stato della coda del data plane.

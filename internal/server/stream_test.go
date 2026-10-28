@@ -136,3 +136,32 @@ func TestServerStatusDispatchSection(t *testing.T) {
 		t.Errorf("dispatch = %+v", resp.Dispatch)
 	}
 }
+
+func TestRegisterSaysWhetherThereIsADataPlane(t *testing.T) {
+	dataPlane := func(s *Server, modelHash string) bool {
+		t.Helper()
+		rec := do(t, s, http.MethodPost, "/api/v1/register", registerBody(modelHash))
+		var resp api.RegisterResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.DataPlane
+	}
+	s, modelHash, _ := testServer(t)
+	if dataPlane(s, modelHash) {
+		t.Error("senza SetStream data_plane deve essere false")
+	}
+	s.SetStream(http.NotFoundHandler(), &fakeNotifier{})
+	if !dataPlane(s, modelHash) {
+		t.Error("con SetStream data_plane deve essere true")
+	}
+}
+
+func TestSessionsAdapterCarriesTheProbeCapability(t *testing.T) {
+	s, modelHash, store := testServer(t)
+	session := registerSession(t, s, modelHash) // registerBody dichiara "probe": true
+	got, ok := Sessions(store).Lookup("web_192", session)
+	if !ok || !got.Probe {
+		t.Errorf("Lookup = %+v, %v: atteso Probe true", got, ok)
+	}
+}

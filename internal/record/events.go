@@ -126,6 +126,19 @@ type Frame struct {
 	Detections *int        `json:"detections,omitempty"` // quante; i box non si registrano
 }
 
+// Probe: il device ha risposto a un probe_request (misura della banda senza
+// frame, internal/stream). Stessi campi di ricezione di Frame.
+type Probe struct {
+	Header
+	DeviceID           string  `json:"device_id"`
+	SessionID          string  `json:"session_id"`
+	ProbeID            uint64  `json:"probe_id"`
+	Bytes              int     `json:"bytes"`
+	ReceiveMS          float64 `json:"receive_ms"`
+	ReceiveWaitedShare float64 `json:"receive_waited_share"`
+	ReceiveValid       bool    `json:"receive_valid"`
+}
+
 // Admission è ciò che il dispatcher ha previsto per il frame.
 type Admission struct {
 	PredictedWaitMS float64 `json:"predicted_wait_ms"`
@@ -145,4 +158,5 @@ func (*Session) kind() string   { return "session" }
 func (*Heartbeat) kind() string { return "heartbeat" }
 func (*Policy) kind() string    { return "policy" }
 func (*Frame) kind() string     { return "frame" }
+func (*Probe) kind() string     { return "probe" }
 func (*End) kind() string       { return "end" }

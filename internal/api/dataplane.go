@@ -25,6 +25,9 @@ const (
 	MsgResult = "result"
 	MsgError  = "error"
 	MsgPolicy = "policy"
+	// Misura della banda in LOCAL (docs/PROTOCOL.md, "Probe").
+	MsgProbeRequest = "probe_request" // server → device
+	MsgProbe        = "probe"         // device → server, binario
 )
 
 // Codici di chiusura dello stream (docs/PROTOCOL.md, "Closing").
@@ -133,6 +136,22 @@ type StreamError struct {
 type PolicyMessage struct {
 	Type   string `json:"type"`
 	Policy Policy `json:"policy"`
+}
+
+// ProbeRequest è il messaggio "probe_request": il server chiede al device di
+// inviare Bytes byte, per misurare la banda quando non arrivano frame.
+type ProbeRequest struct {
+	Type    string `json:"type"`
+	ProbeID uint64 `json:"probe_id"`
+	Bytes   int    `json:"bytes"`
+}
+
+// ProbeHeader è l'header del messaggio binario "probe" (device → server); il
+// payload sono i Bytes richiesti, di contenuto qualunque (zeri). Il server lo
+// misura come un frame e non lo esegue.
+type ProbeHeader struct {
+	Type    string `json:"type"`
+	ProbeID uint64 `json:"probe_id"`
 }
 
 // ---------------------------------------------------------------------------

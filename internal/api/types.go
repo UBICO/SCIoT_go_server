@@ -5,6 +5,8 @@
 // dall'esterno: per esempio api.RegisterRequest.
 package api
 
+import "encoding/json"
+
 // ---------------------------------------------------------------------------
 // Modalità di esecuzione
 // ---------------------------------------------------------------------------
@@ -25,10 +27,34 @@ const (
 // Registrazione: richiesta (client → server)
 // ---------------------------------------------------------------------------
 
-// Capabilities descrive cosa sa fare il client.
-// Esempio completo: guardalo come modello per le struct qui sotto.
+// Capabilities descrive cosa sa fare il client (docs/PROTOCOL.md,
+// "Capabilities"). Regole:
+//   - le dichiara il codice del client, una volta, alla registrazione;
+//   - assente = "non lo so fare": il server non chiede mai ciò che non è
+//     dichiarato;
+//   - il server IGNORA le capability che non conosce (UnmarshalJSON): un
+//     client più nuovo del server deve potersi registrare. Nel resto della
+//     richiesta un campo sconosciuto resta un errore.
 type Capabilities struct {
-	RawInputSplit bool `json:"raw_input_split"`
+	// Probe: il client risponde a "probe_request" sullo stream.
+	Probe bool `json:"probe"`
+}
+
+// UnmarshalJSON decodifica le capability ignorando i nomi sconosciuti.
+//
+// Serve perché il server decodifica le richieste con DisallowUnknownFields
+// (server.decodeJSON): quella regola vale anche per le struct annidate, a
+// meno che il tipo non si decodifichi da solo implementando json.Unmarshaler,
+// come qui.
+func (c *Capabilities) UnmarshalJSON(data []byte) error {
+	// plain non ha UnmarshalJSON: niente ricorsione infinita.
+	type plain Capabilities
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*c = Capabilities(p)
+	return nil
 }
 
 // RegisterRequest è il corpo di POST /api/v1/register.
@@ -40,7 +66,7 @@ type Capabilities struct {
 //	  "device_id": "web_192",
 //	  "device_type": "python",
 //	  "model_hash": "3f2a...",
-//	  "capabilities": {"raw_input_split": true}
+//	  "capabilities": {"probe": true}
 //	}
 type RegisterRequest struct {
 	ProtocolVersion int          `json:"protocol_version"`
@@ -108,13 +134,18 @@ type Policy struct {
 //	  "session_id": "b1c2...",
 //	  "model": { ...ModelInfo... },
 //	  "policy": { ...Policy... },
-//	  "heartbeat_interval_ms": 1000
+//	  "heartbeat_interval_ms": 1000,
+//	  "data_plane": true
 //	}
 type RegisterResponse struct {
 	SessionID           string    `json:"session_id"`
 	Model               ModelInfo `json:"model"`
 	Policy              Policy    `json:"policy"`
 	HeartbeatIntervalMS int       `json:"heartbeat_interval_ms"`
+	// DataPlane: il server ha lo stream (GET /api/v1/stream). Il device lo
+	// apre subito dopo la registrazione, anche in LOCAL: ping, policy e probe
+	// passano di lì. false = solo control plane, niente stream.
+	DataPlane bool `json:"data_plane"`
 }
 
 // ---------------------------------------------------------------------------

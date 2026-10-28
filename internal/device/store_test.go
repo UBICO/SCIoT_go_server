@@ -28,9 +28,9 @@ func TestRegisterNewDevice(t *testing.T) {
 	t0 := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	s := newTestStore(t0)
 
-	d := s.Register("web_192", "python", fomo, api.Capabilities{RawInputSplit: true})
+	d := s.Register("web_192", "python", fomo, api.Capabilities{Probe: true})
 
-	if d.ID != "web_192" || d.Type != "python" || !reflect.DeepEqual(d.Model, fomo) || !d.Capabilities.RawInputSplit {
+	if d.ID != "web_192" || d.Type != "python" || !reflect.DeepEqual(d.Model, fomo) || !d.Capabilities.Probe {
 		t.Errorf("campi errati: %+v", d)
 	}
 	if d.SessionID == "" {

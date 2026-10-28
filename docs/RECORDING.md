@@ -121,11 +121,27 @@ the device and one clock per duration:
   latency. The long window keeps a value measured while the link was free
   (LOCAL, startup, pauses) through a period of saturation; after more than
   60 s of continuous saturation the latency includes the queue.
+- **Probe.** In `LOCAL` no frames flow. To a device that declared the
+  capability `probe` the server sends a `probe_request` when no message has
+  been measured for `stream.probe_interval_ms` (default 30 s); the device's
+  answer (`stream.probe_bytes`, default 512 KiB) is measured like a frame
+  (docs/PROTOCOL.md, "Probe"). The stream stays open in `LOCAL`, so pings
+  also run on a free link there.
 - WebSocket compression stays disabled: with it, the bytes on the network
   would not be the bytes of the message.
 
 The state belongs to the device, not to the stream: it survives reconnects
 and new sessions.
+
+### `probe` — a device answered a probe_request
+
+```json
+{"kind":"probe","ts":"…","t_ms":91240.1,"device_id":"web_96","session_id":"YVOF…",
+ "probe_id":3,"bytes":524288,"receive_ms":41.9,"receive_waited_share":0.97,"receive_valid":true}
+```
+
+Same reception fields as a `frame`. Only answers the server accepted (right
+`probe_id` and size) are recorded.
 
 ### `end` — the last line, at shutdown
 

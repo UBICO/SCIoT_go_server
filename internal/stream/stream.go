@@ -36,6 +36,9 @@ type Session struct {
 	// Postprocess è come decodificare l'output: gli stessi parametri che il
 	// device ha ricevuto alla registrazione.
 	Postprocess api.Postprocess
+	// Probe: il device ha dichiarato la capability "probe" (risponde a
+	// probe_request). Senza, il server non gliela chiede mai.
+	Probe bool
 }
 
 // Sessions verifica una sessione e ne restituisce lo stato attuale.
@@ -115,6 +118,10 @@ type Config struct {
 	DefaultDeadline time.Duration // per i frame senza deadline_ms
 	WriteTimeout    time.Duration // per scrivere un messaggio al device
 	PingInterval    time.Duration // ping per la latenza; 0 = mai
+	// ProbeInterval: si chiede un probe a un device (con la capability) che
+	// non invia byte misurabili da più di così; 0 = mai.
+	ProbeInterval time.Duration
+	ProbeBytes    int // dimensione del probe
 }
 
 // DefaultConfig restituisce i valori di partenza della specifica.
@@ -125,6 +132,10 @@ func DefaultConfig() Config {
 		DefaultDeadline: time.Second,
 		WriteTimeout:    5 * time.Second,
 		PingInterval:    time.Second,
+		ProbeInterval:   30 * time.Second,
+		// 8 letture da 64 KiB (netmeasure.ReadChunk): abbastanza per misurare,
+		// ~0,4 s di link a 10 Mbit/s ogni ProbeInterval.
+		ProbeBytes: 8 * netmeasure.ReadChunk,
 	}
 }
 
@@ -178,8 +189,14 @@ type conn struct {
 	sizes       map[int]int // split point → byte attesi
 	net         *netmeasure.Estimator
 
+	probe bool // il device risponde ai probe (capability)
+
 	mu       sync.Mutex
 	inflight map[uint64]bool // sequence_id dei frame in esecuzione
+	// Probe in attesa di risposta (stesso mutex): probeID 0 = nessuno.
+	probeID     uint64
+	probeSentAt time.Time
+	lastProbeID uint64 // per numerare i probe di questo stream
 
 	// ready viene chiuso dopo l'invio dell'hello: NotifyPolicy lo aspetta,
 	// perché l'hello deve essere il primo messaggio dello stream.
@@ -226,7 +243,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ws: ws, deviceID: deviceID, sessionID: sessionID, modelKey: sess.ModelKey,
 		postprocess: sess.Postprocess,
 		sizes:       make(map[int]int, len(segments)), inflight: make(map[uint64]bool),
-		ready: make(chan struct{}), net: h.estimator(deviceID),
+		ready: make(chan struct{}), net: h.estimator(deviceID), probe: sess.Probe,
 	}
 	for _, s := range segments {
 		c.sizes[s.SplitPoint] = s.InputBytes
@@ -260,16 +277,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	close(c.ready)
 
-	// Il ping vive quanto readLoop: Ping aspetta il pong che legge readLoop.
-	pingCtx, stopPing := context.WithCancel(ctx)
-	var pingDone sync.WaitGroup
+	// Ping e probe vivono quanto readLoop: Ping aspetta il pong che legge
+	// readLoop, e la risposta a un probe arriva da readLoop.
+	bgCtx, stopBg := context.WithCancel(ctx)
+	var bgDone sync.WaitGroup
 	if h.cfg.PingInterval > 0 {
-		pingDone.Go(func() { h.pingLoop(pingCtx, c) })
+		bgDone.Go(func() { h.pingLoop(bgCtx, c) })
+	}
+	if c.probe && h.cfg.ProbeInterval > 0 {
+		bgDone.Go(func() { h.probeLoop(bgCtx, c) })
 	}
 
 	h.readLoop(ctx, c)
-	stopPing()
-	pingDone.Wait()
+	stopBg()
+	bgDone.Wait()
 	c.wg.Wait() // non chiudere mentre dei frame stanno ancora scrivendo
 	ws.Close(websocket.StatusNormalClosure, "")
 }
@@ -297,8 +318,9 @@ func (h *Handler) readLoop(ctx context.Context, c *conn) {
 			h.sendError(ctx, c, 0, api.ErrCodeInvalidFrame, "frames must be binary messages")
 			continue
 		}
-		// Ogni frame binario misura la rete, anche se poi viene rifiutato.
-		c.net.Observe(sample)
+		// Ogni messaggio binario (frame o probe) misura la rete, anche se poi
+		// viene rifiutato.
+		c.net.Observe(received, sample)
 		rawHeader, payload, err := api.DecodeBinary(msg)
 		if err != nil {
 			h.sendError(ctx, c, 0, api.ErrCodeInvalidFrame, err.Error())
@@ -307,6 +329,10 @@ func (h *Handler) readLoop(ctx context.Context, c *conn) {
 		var hdr api.FrameHeader
 		if err := json.Unmarshal(rawHeader, &hdr); err != nil {
 			h.sendError(ctx, c, 0, api.ErrCodeInvalidFrame, "invalid frame header: "+err.Error())
+			continue
+		}
+		if hdr.Type == api.MsgProbe {
+			h.handleProbe(ctx, c, rawHeader, len(payload), sample)
 			continue
 		}
 		expected := func(sp int) (int, bool) { n, ok := c.sizes[sp]; return n, ok }

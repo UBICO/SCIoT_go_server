@@ -91,9 +91,12 @@ Request:
   "device_id": "web_96",
   "device_type": "python",
   "model_hash": "2b319af7002697e06bf876905d72d6a5",
-  "capabilities": {"raw_input_split": true}
+  "capabilities": {"probe": true}
 }
 ```
+
+`capabilities` is what the client's code can do (see
+[Capabilities](#capabilities)); it may be omitted.
 
 `200`:
 
@@ -107,9 +110,15 @@ Request:
                             "score_threshold": 0.5, "iou_threshold": 0.2,
                             "max_detections": 200}},
   "policy": {"mode": "LOCAL", "split_point": null, "policy_version": 1},
-  "heartbeat_interval_ms": 1000
+  "heartbeat_interval_ms": 1000,
+  "data_plane": true
 }
 ```
+
+`data_plane` says whether the server has the stream (`GET /api/v1/stream`).
+When true the device opens it right after registering, in any mode: in `LOCAL`
+it carries no frames, but pings (latency), `policy` messages and probes
+(bandwidth). When false the device uses the control plane only.
 
 `model` comes from the model's `manifest.json` ([MODELS.md](MODELS.md)):
 `input` is the tensor the device prepares (shape with batch 1, data type);
@@ -119,6 +128,26 @@ result reads the same whoever computed it. `iou_threshold` is absent for
 decoders without NMS.
 
 Errors: `400 invalid_request`, `400 unsupported_protocol`, `404 model_not_found`.
+
+#### Capabilities
+
+A capability says the client can do something the server may ask for. Rules:
+
+- The client's **code** declares them, once, at registration. A configuration
+  may only withdraw one (e.g. a device on a metered link turning off
+  `probe`), never declare one the code lacks.
+- **Absent means no.** The server never asks for what was not declared.
+- The server **ignores capabilities it does not know**, so a client newer than
+  the server still registers. Everywhere else in a request an unknown field is
+  `400 invalid_request`.
+- Static for the session: state that changes (load, memory) is telemetry.
+
+| Capability | Meaning |
+|---|---|
+| `probe` | the client answers `probe_request` on the stream ([Probe](#probe)) |
+
+`raw_input_split` (sent by earlier clients) is no longer defined: every client
+can be told split `-1`; servers ignore it.
 On `model_not_found` the client should run LOCAL-only and not retry.
 
 ### `POST /api/v1/heartbeat`
@@ -295,8 +324,9 @@ X-SCIoT-Device: web_96
 X-SCIoT-Session: YVOFM5HEJSRDMW2JBQU4ADGDD6
 ```
 
-The device opens **one** stream after registering, with the `device_id` and
-`session_id` of its current session. Before the upgrade the server answers
+The device opens **one** stream after registering (when the registration
+answer has `data_plane: true`), with the `device_id` and `session_id` of its
+current session, and keeps it open in every mode. Before the upgrade the server answers
 with the usual JSON errors: `409 session_expired` (unknown session),
 `400 invalid_request` (missing header), `503 worker_unavailable` (no data plane
 for this model yet). If the device opens a second stream, the first one is
@@ -448,6 +478,38 @@ moving a device to or from `SPLIT`; admission itself needs no model.
 
 Sent when the policy of the device changes. The device applies it with the
 same rules as a policy received in a heartbeat (only if newer).
+
+### Probe
+
+The server measures each device's network on the stream (see the Go repo's
+`docs/RECORDING.md`, "Network"): bandwidth from how long it takes to read a
+message, latency from WebSocket pings. Frames are the measurement in `SPLIT`;
+in `LOCAL` no bytes flow, so the server may ask for a probe:
+
+```json
+{"type": "probe_request", "probe_id": 7, "bytes": 524288}
+```
+
+The device answers with a **binary** message, same layout as a frame (see
+[Message format](#message-format)), header
+
+```json
+{"type": "probe", "probe_id": 7}
+```
+
+and a payload of exactly `bytes` bytes, any content (zeros). The server
+measures it like a frame and does not run it.
+
+- Only to devices that declared the capability `probe`.
+- When the measurement is old: no message measured for
+  `stream.probe_interval_ms` (default 30 s). A device that keeps sending
+  frames is never asked. One probe at a time; one unanswered for that long
+  is replaced by a new one.
+- A `probe` with an unknown `probe_id` or the wrong size is answered with an
+  `error` (`invalid_frame`, `sequence_id` 0); the probe it should have
+  answered stays open.
+- The device answers from its receiving side, without waiting for its
+  inference loop: a late answer measures the device, not the network.
 
 ### Closing
 

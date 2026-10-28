@@ -98,6 +98,16 @@ func TestStreamConfig(t *testing.T) {
 	if err != nil || cfg.MaxInflight != 5 || cfg.DefaultDeadline != 250*time.Millisecond || cfg.MaxMessageBytes != 2048 {
 		t.Errorf("cfg = %+v, err %v", cfg, err)
 	}
+	// Il probe di default si adatta a un messaggio piccolo.
+	if cfg.ProbeBytes != 2048-probeHeaderRoom {
+		t.Errorf("probe_bytes = %d, atteso %d", cfg.ProbeBytes, 2048-probeHeaderRoom)
+	}
+
+	f = loadSections(t, `"stream": {"probe_interval_ms": 0, "probe_bytes": 131072},`)
+	cfg, err = f.StreamConfig()
+	if err != nil || cfg.ProbeInterval != 0 || cfg.ProbeBytes != 131072 {
+		t.Errorf("cfg = %+v, err %v", cfg, err)
+	}
 }
 
 func TestStreamConfigErrors(t *testing.T) {
@@ -106,6 +116,9 @@ func TestStreamConfigErrors(t *testing.T) {
 		{"deadline zero", `{"default_deadline_ms": 0}`, "default_deadline_ms"},
 		{"messaggio troppo piccolo", `{"max_message_bytes": 100}`, "max_message_bytes"},
 		{"ping troppo frequente", `{"ping_interval_ms": 10}`, "ping_interval_ms"},
+		{"probe troppo frequente", `{"probe_interval_ms": 10}`, "probe_interval_ms"},
+		{"probe troppo piccolo", `{"probe_bytes": 1000}`, "probe_bytes"},
+		{"probe oltre il messaggio", `{"max_message_bytes": 1048576, "probe_bytes": 1048576}`, "probe_bytes"},
 		{"messaggio oltre il limite gRPC", `{"max_message_bytes": 1073741824}`, "max_message_bytes"},
 	}
 	for _, tc := range cases {

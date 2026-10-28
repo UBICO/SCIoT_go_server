@@ -72,6 +72,9 @@ type Estimator struct {
 	valid     uint64
 	discarded uint64
 	recent    []bool // validità degli ultimi campioni, al massimo RecentWindow
+	// lastSample è quando è arrivato l'ultimo campione, valido o no: dice
+	// quanto è vecchia la misura (la regola del probe, internal/stream).
+	lastSample time.Time
 }
 
 // ping è un ping riuscito: quando è tornato il pong e la durata.
@@ -83,10 +86,11 @@ type ping struct {
 // NewEstimator crea uno stato vuoto.
 func NewEstimator() *Estimator { return &Estimator{} }
 
-// Observe aggiunge un campione di ricezione.
-func (e *Estimator) Observe(s Sample) {
+// Observe aggiunge un campione di ricezione, arrivato in at.
+func (e *Estimator) Observe(at time.Time, s Sample) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.lastSample = at
 	if s.Valid {
 		e.valid++
 	} else {
@@ -105,6 +109,16 @@ func (e *Estimator) Observe(s Sample) {
 	}
 	// Puntatore nuovo: Snapshot lo restituisce, chi lo legge non deve vederlo cambiare.
 	e.bandwidth = &v
+}
+
+// LastSample è quando è arrivato l'ultimo campione; zero se nessuno.
+//
+// Un campione scartato conta quanto uno valido: dice che la rete non limita,
+// ed è anche quella una misura aggiornata.
+func (e *Estimator) LastSample() time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.lastSample
 }
 
 // ObservePing aggiunge la durata di un ping (andata e ritorno) il cui pong è
