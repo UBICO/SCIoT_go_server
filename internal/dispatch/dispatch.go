@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
 )
 
@@ -34,17 +35,20 @@ type Backend interface {
 
 // Config contiene i parametri del dispatcher.
 type Config struct {
-	// ServiceEWMAAlpha è il peso del campione nuovo nella media del tempo di
-	// servizio S, in (0, 1]. Più alto = segue prima un cambiamento (carico
-	// della CPU, modello più lento), ma è più rumoroso.
-	ServiceEWMAAlpha float64
+	// ServiceTau è la costante di tempo delle stime di S (per split, per
+	// segmento, overhead): pesate sul tempo (internal/ewma). Più corta =
+	// segue prima un cambiamento (carico della CPU, modello più lento), ma è
+	// più rumorosa.
+	ServiceTau time.Duration
 	// Window è la finestra su cui si misurano λ e ρ.
 	Window time.Duration
 }
 
 // DefaultConfig restituisce i valori di partenza.
 func DefaultConfig() Config {
-	return Config{ServiceEWMAAlpha: 0.2, Window: 10 * time.Second}
+	// τ = la finestra di λ e ρ: le due misure del servizio guardano lo stesso
+	// passato.
+	return Config{ServiceTau: 10 * time.Second, Window: 10 * time.Second}
 }
 
 // key identifica un tipo di job: S dipende dal modello e da quanti layer
@@ -89,13 +93,13 @@ type Dispatcher struct {
 	mu      sync.Mutex
 	queue   []*entry            // in attesa di uno slot, in ordine di arrivo
 	running map[*entry]struct{} // in esecuzione nel worker
-	service map[key]time.Duration
+	service map[key]ewma.Stat   // S misurata per split point, in secondi
 
 	// Stima per segmento: permette di prevedere S anche per uno split point
 	// mai usato, se i suoi segmenti sono già stati eseguiti per altri split.
-	segments map[segKey]time.Duration // EWMA di layer_ms per segmento
-	overhead map[string]time.Duration // EWMA per modello di (S misurata − Σ layer_ms)
-	last     map[string]int           // indice dell'ultimo segmento di ogni modello
+	segments map[segKey]ewma.Stat // layer_ms per segmento, in secondi
+	overhead map[string]ewma.Stat // per modello: S misurata − Σ layer_ms, in secondi
+	last     map[string]int       // indice dell'ultimo segmento di ogni modello
 
 	window *window
 	totals Totals
@@ -110,10 +114,10 @@ func New(backend Backend, cfg Config) *Dispatcher {
 		cfg:     cfg,
 		now:     time.Now,
 		running: map[*entry]struct{}{},
-		service: map[key]time.Duration{},
+		service: map[key]ewma.Stat{},
 
-		segments: map[segKey]time.Duration{},
-		overhead: map[string]time.Duration{},
+		segments: map[segKey]ewma.Stat{},
+		overhead: map[string]ewma.Stat{},
 		last:     map[string]int{},
 
 		window: newWindow(cfg.Window),
@@ -253,8 +257,8 @@ func (d *Dispatcher) finish(e *entry, layerMS []float64, execErr error) {
 		d.totals.Failed++
 	} else {
 		d.totals.Completed++
-		d.observeLocked(key{e.job.ModelKey, e.job.SplitPoint}, elapsed)
-		d.observeSegmentsLocked(e.job.ModelKey, e.job.SplitPoint, layerMS, elapsed)
+		d.observeLocked(now, key{e.job.ModelKey, e.job.SplitPoint}, elapsed)
+		d.observeSegmentsLocked(now, e.job.ModelKey, e.job.SplitPoint, layerMS, elapsed)
 	}
 	d.dispatchLocked(now)
 }
@@ -284,36 +288,35 @@ func (d *Dispatcher) dispatchLocked(now time.Time) {
 //     nessuna misura, 0. Solo in questo caso known è false.
 func (d *Dispatcher) estimate(k key) (time.Duration, bool) {
 	if s, ok := d.service[k]; ok {
-		return s, true
+		return mean(s), true
 	}
 	if s, ok := d.fromSegments(k); ok {
 		return s, true
 	}
 	var longest time.Duration
 	for _, s := range d.service {
-		longest = max(longest, s)
+		longest = max(longest, mean(s))
 	}
 	return longest, false
 }
 
-// observeLocked aggiorna la media di S per k con un nuovo campione.
-func (d *Dispatcher) observeLocked(k key, sample time.Duration) {
-	updateEWMA(d.service, k, sample, d.cfg.ServiceEWMAAlpha)
+// observeLocked aggiorna la stima di S per k con un campione arrivato in now.
+func (d *Dispatcher) observeLocked(now time.Time, k key, sample time.Duration) {
+	update(d.service, k, now, sample, d.cfg.ServiceTau)
 }
 
-// updateEWMA aggiorna la media mobile m[k] con un nuovo campione. È generica
-// ([K comparable]): la stessa funzione serve per le mappe con chiave key,
-// segKey e string. comparable = tipi utilizzabili come chiave di una mappa.
-func updateEWMA[K comparable](m map[K]time.Duration, k K, sample time.Duration, alpha float64) {
-	prev, ok := m[k]
-	if !ok {
-		// Primo campione: partire da 0 sottostimerebbe S per molti campioni e
-		// farebbe ammettere troppo.
-		m[k] = sample
-		return
-	}
-	m[k] = time.Duration(alpha*float64(sample) + (1-alpha)*float64(prev))
+// update aggiorna la stima m[k] con un nuovo campione (in secondi). È
+// generica ([K comparable]): la stessa funzione serve per le mappe con chiave
+// key, segKey e string. comparable = tipi utilizzabili come chiave di una
+// mappa. ewma.Stat è un valore: si legge, si aggiorna e si rimette.
+func update[K comparable](m map[K]ewma.Stat, k K, at time.Time, sample, tau time.Duration) {
+	s := m[k] // assente = stima vuota: il primo campione diventa la media
+	s.Update(at, sample.Seconds(), tau)
+	m[k] = s
 }
+
+// mean è la media di s come durata.
+func mean(s ewma.Stat) time.Duration { return time.Duration(s.Mean() * float64(time.Second)) }
 
 // observeSegmentsLocked aggiorna i tempi dei segmenti eseguiti e l'overhead
 // del modello.
@@ -321,24 +324,24 @@ func updateEWMA[K comparable](m map[K]time.Duration, k K, sample time.Duration, 
 // layerMS[j] è il segmento split+1+j (il worker esegue split+1 .. last, in
 // ordine). L'overhead è ciò che S misura oltre ai segmenti: gRPC, copia del
 // tensore, attesa nel worker.
-func (d *Dispatcher) observeSegmentsLocked(model string, split int, layerMS []float64, elapsed time.Duration) {
+func (d *Dispatcher) observeSegmentsLocked(now time.Time, model string, split int, layerMS []float64, elapsed time.Duration) {
 	if len(layerMS) == 0 {
 		return // backend che non misura i segmenti: niente da imparare
 	}
-	alpha := d.cfg.ServiceEWMAAlpha
+	tau := d.cfg.ServiceTau
 	var sum time.Duration
 	for j, v := range layerMS {
 		// time.Duration(v) * time.Millisecond troncherebbe v a intero prima di
 		// moltiplicare: si converte dopo.
 		dur := time.Duration(v * float64(time.Millisecond))
-		updateEWMA(d.segments, segKey{model, split + 1 + j}, dur, alpha)
+		update(d.segments, segKey{model, split + 1 + j}, now, dur, tau)
 		sum += dur
 	}
 	// Il worker esegue split+1 .. last: l'ultimo segmento eseguito è l'ultimo
 	// del modello.
 	d.last[model] = split + len(layerMS)
 	// Mai sotto zero: le due misure vengono da orologi diversi (Go e Python).
-	updateEWMA(d.overhead, model, max(0, elapsed-sum), alpha)
+	update(d.overhead, model, now, max(0, elapsed-sum), tau)
 }
 
 // fromSegments stima S per k come somma dei segmenti split+1 .. last più
@@ -364,13 +367,13 @@ func (d *Dispatcher) fromSegments(k key) (time.Duration, bool) {
 		if !ok {
 			return 0, false
 		}
-		total += s
+		total += mean(s)
 	}
 	overhead, ok := d.overhead[k.model]
 	if !ok {
 		return 0, false
 	}
-	return total + overhead, true
+	return total + mean(overhead), true
 }
 
 // remainingLocked restituisce il tempo di servizio residuo previsto di ogni

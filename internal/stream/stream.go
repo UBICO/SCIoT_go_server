@@ -122,6 +122,8 @@ type Config struct {
 	// non invia byte misurabili da più di così; 0 = mai.
 	ProbeInterval time.Duration
 	ProbeBytes    int // dimensione del probe
+	// BandwidthTau è la costante di tempo della stima della banda.
+	BandwidthTau time.Duration
 }
 
 // DefaultConfig restituisce i valori di partenza della specifica.
@@ -135,7 +137,8 @@ func DefaultConfig() Config {
 		ProbeInterval:   30 * time.Second,
 		// 8 letture da 64 KiB (netmeasure.ReadChunk): abbastanza per misurare,
 		// ~0,4 s di link a 10 Mbit/s ogni ProbeInterval.
-		ProbeBytes: 8 * netmeasure.ReadChunk,
+		ProbeBytes:   8 * netmeasure.ReadChunk,
+		BandwidthTau: netmeasure.DefaultBandwidthTau,
 	}
 }
 
@@ -624,7 +627,7 @@ func (h *Handler) estimator(deviceID string) *netmeasure.Estimator {
 	defer h.mu.Unlock()
 	e, ok := h.nets[deviceID]
 	if !ok {
-		e = netmeasure.NewEstimator()
+		e = netmeasure.NewEstimator(h.cfg.BandwidthTau)
 		h.nets[deviceID] = e
 	}
 	return e
@@ -639,7 +642,7 @@ func (h *Handler) Network(deviceID string) (netmeasure.State, bool) {
 	if !ok {
 		return netmeasure.State{}, false
 	}
-	return e.Snapshot(), true
+	return e.Snapshot(h.now()), true
 }
 
 // lookup restituisce lo stream aperto del device, o nil.

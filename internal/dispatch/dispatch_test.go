@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
 )
 
@@ -82,11 +83,25 @@ func job(id byte, deadline time.Duration) stream.Job {
 	return stream.Job{ModelKey: "yolo", SplitPoint: 4, Tensor: []byte{id}, Deadline: time.Now().Add(deadline)}
 }
 
+// tObs è l'istante dei campioni osservati direttamente nei test.
+var tObs = time.Unix(1000, 0)
+
+// stat è una stima con il solo campione d.
+func stat(d time.Duration) ewma.Stat {
+	var s ewma.Stat
+	s.Update(tObs, d.Seconds(), time.Second)
+	return s
+}
+
+// sameDur confronta due durate a meno di 1 µs: le stime sono float64 in
+// secondi e la conversione può perdere qualche ns.
+func sameDur(a, b time.Duration) bool { return (a - b).Abs() < time.Microsecond }
+
 // seed imposta S come se fosse già stata misurata.
 func seed(d *Dispatcher, s time.Duration) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.service[key{"yolo", 4}] = s
+	d.service[key{"yolo", 4}] = stat(s)
 }
 
 type result struct {
@@ -156,15 +171,15 @@ func TestPredictWait(t *testing.T) {
 }
 
 func TestServiceEWMA(t *testing.T) {
-	d := New(newBackend(1, false), Config{ServiceEWMAAlpha: 0.5, Window: time.Second})
+	d := New(newBackend(1, false), Config{ServiceTau: time.Hour, Window: time.Second})
 	k := key{"yolo", 4}
-	d.observeLocked(k, 10*time.Millisecond)
-	if d.service[k] != 10*time.Millisecond {
-		t.Errorf("primo campione: S = %v, attesa 10ms", d.service[k])
+	d.observeLocked(tObs, k, 10*time.Millisecond)
+	if !sameDur(mean(d.service[k]), 10*time.Millisecond) {
+		t.Errorf("primo campione: S = %v, attesa 10ms", mean(d.service[k]))
 	}
-	d.observeLocked(k, 20*time.Millisecond)
-	if d.service[k] != 15*time.Millisecond {
-		t.Errorf("secondo campione: S = %v, attesa 15ms", d.service[k])
+	d.observeLocked(tObs, k, 20*time.Millisecond)
+	if !sameDur(mean(d.service[k]), 15*time.Millisecond) {
+		t.Errorf("secondo campione: S = %v, attesa 15ms", mean(d.service[k]))
 	}
 }
 
@@ -173,8 +188,8 @@ func TestEstimateUsesTheLongestKnownForUnknownKeys(t *testing.T) {
 	if s, known := d.estimate(key{"yolo", 4}); s != 0 || known {
 		t.Errorf("senza misure: %v, %v", s, known)
 	}
-	d.service[key{"yolo", 2}] = 30 * time.Millisecond
-	d.service[key{"fomo", 0}] = 5 * time.Millisecond
+	d.service[key{"yolo", 2}] = stat(30 * time.Millisecond)
+	d.service[key{"fomo", 0}] = stat(5 * time.Millisecond)
 	if s, known := d.estimate(key{"yolo", 4}); s != 30*time.Millisecond || known {
 		t.Errorf("key sconosciuto: %v, %v", s, known)
 	}
@@ -377,7 +392,7 @@ func TestFailedExecutionFreesTheSlotAndIsNotMeasured(t *testing.T) {
 }
 
 func TestSnapshotRates(t *testing.T) {
-	d := New(newBackend(2, false), Config{ServiceEWMAAlpha: 0.2, Window: 2 * time.Second})
+	d := New(newBackend(2, false), Config{ServiceTau: 10 * time.Second, Window: 2 * time.Second})
 	for i := range byte(4) {
 		if _, err := d.Execute(context.Background(), job(i, time.Second)); err != nil {
 			t.Fatal(err)
@@ -422,26 +437,26 @@ func TestConcurrentLoad(t *testing.T) {
 const msD = time.Millisecond
 
 func TestObserveSegments(t *testing.T) {
-	d := New(newBackend(1, false), Config{ServiceEWMAAlpha: 0.5, Window: time.Second})
+	d := New(newBackend(1, false), Config{ServiceTau: time.Hour, Window: time.Second})
 	// split 4, il worker esegue i segmenti 5, 6, 7.
-	d.observeSegmentsLocked("yolo", 4, []float64{1, 2, 3.5}, 10*msD)
+	d.observeSegmentsLocked(tObs, "yolo", 4, []float64{1, 2, 3.5}, 10*msD)
 
 	want := map[segKey]time.Duration{{"yolo", 5}: msD, {"yolo", 6}: 2 * msD, {"yolo", 7}: 3500 * time.Microsecond}
 	for k, w := range want {
-		if got := d.segments[k]; got != w {
+		if got := mean(d.segments[k]); !sameDur(got, w) {
 			t.Errorf("segmento %d = %v, want %v (i decimali di layer_ms non vanno persi)", k.index, got, w)
 		}
 	}
 	if d.last["yolo"] != 7 {
 		t.Errorf("ultimo segmento = %d, atteso 7", d.last["yolo"])
 	}
-	if got := d.overhead["yolo"]; got != 3500*time.Microsecond {
+	if got := mean(d.overhead["yolo"]); !sameDur(got, 3500*time.Microsecond) {
 		t.Errorf("overhead = %v, atteso 10 − 6.5 = 3.5ms", got)
 	}
 
-	// Secondo campione: EWMA anche sui segmenti (alpha 0.5).
-	d.observeSegmentsLocked("yolo", 6, []float64{5.5}, 6*msD)
-	if got := d.segments[segKey{"yolo", 7}]; got != 4500*time.Microsecond {
+	// Secondo campione: media anche sui segmenti (peso 1/2, vedi ewma.Alpha).
+	d.observeSegmentsLocked(tObs, "yolo", 6, []float64{5.5}, 6*msD)
+	if got := mean(d.segments[segKey{"yolo", 7}]); !sameDur(got, 4500*time.Microsecond) {
 		t.Errorf("segmento 7 dopo due campioni = %v, atteso 4.5ms", got)
 	}
 }
@@ -449,16 +464,16 @@ func TestObserveSegments(t *testing.T) {
 func TestObserveSegmentsOverheadNeverNegative(t *testing.T) {
 	d := New(newBackend(1, false), DefaultConfig())
 	// Orologi diversi: Go misura meno della somma di Python.
-	d.observeSegmentsLocked("yolo", 4, []float64{3, 3}, 5*msD)
-	if got := d.overhead["yolo"]; got != 0 {
+	d.observeSegmentsLocked(tObs, "yolo", 4, []float64{3, 3}, 5*msD)
+	if got := mean(d.overhead["yolo"]); got != 0 {
 		t.Errorf("overhead = %v, atteso 0", got)
 	}
 }
 
 func TestEstimateFromSegments(t *testing.T) {
 	d := New(newBackend(1, false), DefaultConfig())
-	d.observeLocked(key{"yolo", 4}, 10*msD)
-	d.observeSegmentsLocked("yolo", 4, []float64{1, 2, 3}, 10*msD) // overhead 4
+	d.observeLocked(tObs, key{"yolo", 4}, 10*msD)
+	d.observeSegmentsLocked(tObs, "yolo", 4, []float64{1, 2, 3}, 10*msD) // overhead 4
 
 	// Split 5 mai usato: segmenti 6 e 7 noti → 2 + 3 + 4.
 	if s, known := d.estimate(key{"yolo", 5}); s != 9*msD || !known {
@@ -480,8 +495,8 @@ func TestEstimateFromSegments(t *testing.T) {
 
 func TestDirectMeasureBeatsSegments(t *testing.T) {
 	d := New(newBackend(1, false), DefaultConfig())
-	d.observeSegmentsLocked("yolo", 4, []float64{1, 2, 3}, 10*msD)
-	d.observeLocked(key{"yolo", 5}, 20*msD) // misura diretta, diversa dalla somma (9ms)
+	d.observeSegmentsLocked(tObs, "yolo", 4, []float64{1, 2, 3}, 10*msD)
+	d.observeLocked(tObs, key{"yolo", 5}, 20*msD) // misura diretta, diversa dalla somma (9ms)
 	if s, _ := d.estimate(key{"yolo", 5}); s != 20*msD {
 		t.Errorf("S = %v: la misura diretta ha la precedenza", s)
 	}

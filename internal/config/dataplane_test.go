@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
 )
 
@@ -117,6 +118,7 @@ func TestStreamConfigErrors(t *testing.T) {
 		{"messaggio troppo piccolo", `{"max_message_bytes": 100}`, "max_message_bytes"},
 		{"ping troppo frequente", `{"ping_interval_ms": 10}`, "ping_interval_ms"},
 		{"probe troppo frequente", `{"probe_interval_ms": 10}`, "probe_interval_ms"},
+		{"tau della banda troppo corto", `{"bandwidth_tau_ms": 10}`, "bandwidth_tau_ms"},
 		{"probe troppo piccolo", `{"probe_bytes": 1000}`, "probe_bytes"},
 		{"probe oltre il messaggio", `{"max_message_bytes": 1048576, "probe_bytes": 1048576}`, "probe_bytes"},
 		{"messaggio oltre il limite gRPC", `{"max_message_bytes": 1073741824}`, "max_message_bytes"},
@@ -158,5 +160,23 @@ func TestRecordDir(t *testing.T) {
 	}
 	if _, _, err := loadSections(t, `"record": {},`).RecordDir(); err == nil || !strings.Contains(err.Error(), "record.dir") {
 		t.Errorf("dir mancante: err = %v", err)
+	}
+}
+
+func TestTauOptions(t *testing.T) {
+	f := loadSections(t, `"dispatch": {"service_tau_ms": 5000}, "stream": {"bandwidth_tau_ms": 120000},`)
+	d, err := f.DispatchConfig()
+	if err != nil || d.ServiceTau != 5*time.Second {
+		t.Errorf("dispatch = %+v, %v", d, err)
+	}
+	st, err := f.StreamConfig()
+	if err != nil || st.BandwidthTau != 2*time.Minute {
+		t.Errorf("stream = %+v, %v", st, err)
+	}
+	if tau, err := loadSections(t, "").DeviceSegmentTau(); err != nil || tau != device.DefaultSegmentTau {
+		t.Errorf("default device_segment_tau = %v, %v", tau, err)
+	}
+	if _, err := loadSections(t, `"dispatch": {"service_tau_ms": 4000000},`).DispatchConfig(); err == nil {
+		t.Error("service_tau_ms oltre l'ora: atteso un errore")
 	}
 }

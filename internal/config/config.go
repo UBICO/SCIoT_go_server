@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
@@ -49,11 +51,18 @@ type File struct {
 
 	// Worker e Stream sono opzionali: senza la sezione "worker" il server
 	// gira solo con il control plane (nessun data plane, tutti LOCAL).
-	Worker *Worker `json:"worker,omitempty"`
-	Stream Stream  `json:"stream"`
+	Worker   *Worker  `json:"worker,omitempty"`
+	Stream   Stream   `json:"stream"`
+	Dispatch Dispatch `json:"dispatch"`
 
 	// Record è opzionale: senza la sezione il server non registra nulla.
 	Record *Record `json:"record,omitempty"`
+}
+
+// Dispatch è la sezione "dispatch": la coda davanti al worker. Opzionale.
+type Dispatch struct {
+	// ServiceTauMS: costante di tempo delle stime del tempo di servizio S.
+	ServiceTauMS *int `json:"service_tau_ms,omitempty"`
 }
 
 // Record è la sezione "record": dove scrivere la registrazione degli eventi
@@ -92,6 +101,8 @@ type Stream struct {
 	// probe al device; 0 = mai. ProbeBytes: la sua dimensione.
 	ProbeIntervalMS *int `json:"probe_interval_ms,omitempty"`
 	ProbeBytes      *int `json:"probe_bytes,omitempty"`
+	// BandwidthTauMS: costante di tempo della stima della banda.
+	BandwidthTauMS *int `json:"bandwidth_tau_ms,omitempty"`
 }
 
 // Server è la sezione "server". Ogni campo è opzionale: se manca vale il
@@ -105,6 +116,10 @@ type Server struct {
 	// Campionamento del carico della macchina del server (internal/load).
 	LoadSampleIntervalMS *int     `json:"load_sample_interval_ms,omitempty"`
 	LoadCPUEWMAAlpha     *float64 `json:"load_cpu_ewma_alpha,omitempty"`
+
+	// DeviceSegmentTauMS: costante di tempo delle stime dei tempi del device
+	// per segmento (segment_ms della telemetria).
+	DeviceSegmentTauMS *int `json:"device_segment_tau_ms,omitempty"`
 }
 
 // Load legge e decodifica il file di configurazione.
@@ -290,7 +305,46 @@ func (f File) StreamConfig() (stream.Config, error) {
 		// Il default non deve impedire un max_message_bytes piccolo.
 		cfg.ProbeBytes = min(cfg.ProbeBytes, maxProbe)
 	}
+	bw, err := tau("stream.bandwidth_tau_ms", s.BandwidthTauMS, cfg.BandwidthTau)
+	if err != nil {
+		return stream.Config{}, err
+	}
+	cfg.BandwidthTau = bw
 	return cfg, nil
+}
+
+// DispatchConfig restituisce i parametri del dispatcher:
+// dispatch.DefaultConfig() con sopra i valori presenti nel file.
+func (f File) DispatchConfig() (dispatch.Config, error) {
+	cfg := dispatch.DefaultConfig()
+	var err error
+	cfg.ServiceTau, err = tau("dispatch.service_tau_ms", f.Dispatch.ServiceTauMS, cfg.ServiceTau)
+	return cfg, err
+}
+
+// DeviceSegmentTau è la costante di tempo delle stime dei tempi del device
+// per segmento (device.Store.SetSegmentTau).
+func (f File) DeviceSegmentTau() (time.Duration, error) {
+	return tau("server.device_segment_tau_ms", f.Server.DeviceSegmentTauMS, device.DefaultSegmentTau)
+}
+
+// Limiti delle costanti di tempo (internal/ewma): sotto i 100 ms una stima
+// non media più niente, sopra l'ora non segue più il sistema.
+const (
+	minTau = 100 * time.Millisecond
+	maxTau = time.Hour
+)
+
+// tau legge una costante di tempo in ms; def se assente.
+func tau(name string, ms *int, def time.Duration) (time.Duration, error) {
+	if ms == nil {
+		return def, nil
+	}
+	d := time.Duration(*ms) * time.Millisecond
+	if d < minTau || d > maxTau {
+		return 0, fmt.Errorf("%s must be in [%d, %d], got %d", name, minTau.Milliseconds(), maxTau.Milliseconds(), *ms)
+	}
+	return d, nil
 }
 
 // probeHeaderRoom sono i byte lasciati all'header del messaggio probe (4 di

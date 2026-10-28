@@ -453,8 +453,10 @@ predicted      = predicted_wait + S
   `Describe`;
 - each running frame frees its slot after its remaining service time
   (`S − elapsed`, at least 0); a free slot is free now;
-- `S`: mean service time for that model and split point, a moving average
-  (EWMA) of the measured execution time without queue. Frames of different
+- `S`: mean service time for that model and split point, a time-weighted
+  moving average of the measured execution time without queue (see the
+  Go repo's `docs/RECORDING.md`, "Estimates"; `GET /api/v1/server/status`
+  also gives its standard deviation, samples and age). Frames of different
   models or split points have different `S`, which is why the wait is
   simulated slot by slot instead of using a single `S`. With the same `S` for
   every frame it reduces to `(queued + running − c + 1) / c × S`;

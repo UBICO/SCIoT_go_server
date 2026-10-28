@@ -73,6 +73,11 @@ func main() {
 	// --- 3. Store, monitor del carico e Server -------------------------------
 
 	devices := device.NewStore()
+	segmentTau, err := f.DeviceSegmentTau()
+	if err != nil {
+		log.Fatalf("server config: %v", err)
+	}
+	devices.SetSegmentTau(segmentTau)
 
 	loadCfg, err := f.LoadConfig()
 	if err != nil {
@@ -100,7 +105,10 @@ func main() {
 	// workerDone viene chiuso quando sup.Run è terminato, cioè quando il
 	// processo del worker è uscito. nil senza data plane: il main non aspetta.
 	var workerDone chan struct{}
-	dispatchCfg := dispatch.DefaultConfig()
+	dispatchCfg, err := f.DispatchConfig()
+	if err != nil {
+		log.Fatalf("dispatch config: %v", err)
+	}
 
 	workerOpts, dataPlane, err := f.WorkerOptions(reg.Models())
 	if err != nil {
@@ -155,8 +163,8 @@ func main() {
 		}
 		if dataPlane {
 			start.Dispatch = &record.DispatchConfig{
-				ServiceEWMAAlpha: dispatchCfg.ServiceEWMAAlpha,
-				WindowS:          dispatchCfg.Window.Seconds(),
+				ServiceTauMS: float64(dispatchCfg.ServiceTau.Milliseconds()),
+				WindowS:      dispatchCfg.Window.Seconds(),
 			}
 		}
 		rec, err = record.Open(recordDir, start, record.DefaultOptions())

@@ -3,12 +3,15 @@ package netmeasure
 import (
 	"sync"
 	"time"
+
+	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 )
 
 // Parametri della stima, fissi: non serve esporli in config.json.
 const (
-	// BandwidthAlpha è il peso del campione nuovo nella media della banda.
-	BandwidthAlpha = 0.2
+	// DefaultBandwidthTau è la costante di tempo della stima della banda
+	// (internal/ewma): con un probe ogni 30 s segue un cambio in un minuto.
+	DefaultBandwidthTau = 60 * time.Second
 	// LatencyWindow: la latenza è il MINIMO dei ping degli ultimi
 	// LatencyWindow, non una media. Il pong del device viaggia sullo stesso
 	// link dei frame: con il link saturo aspetta dietro i byte già nel buffer
@@ -24,18 +27,25 @@ const (
 	// con il link saturo un pong in ritardo è meglio di nessuna misura (a
 	// 10 Mbit/s la coda supera 1 s).
 	PingTimeout = 5 * time.Second
-	// Rete "non limitante": tra gli ultimi RecentWindow campioni, meno di
-	// NotLimitingShare sono validi. Il server legge più lentamente di quanto i
-	// byte arrivino: la rete non è il collo di bottiglia (localhost, LAN).
-	RecentWindow     = 20
-	NotLimitingShare = 0.1
+	// Rete "non limitante": tra i campioni dell'ultimo NotLimitingWindow
+	// (almeno NotLimitingMinSamples), meno di NotLimitingShare sono validi. Il
+	// server legge più lentamente di quanto i byte arrivino: la rete non è il
+	// collo di bottiglia (localhost, LAN). Una finestra di tempo, non di
+	// campioni: con un probe ogni 30 s, 20 campioni sarebbero 10 minuti.
+	NotLimitingWindow     = 60 * time.Second
+	NotLimitingMinSamples = 3
+	NotLimitingShare      = 0.1
 )
 
 // State è la rete di un device vista dal server.
 type State struct {
 	// BandwidthBps è la media mobile della banda dei campioni validi, in byte
-	// al secondo; nil se non c'è ancora un campione valido.
-	BandwidthBps *float64 `json:"bandwidth_bps,omitempty"`
+	// al secondo, pesata sul tempo; nil se non c'è ancora un campione valido.
+	// BandwidthStdBps è la deviazione standard dei campioni, BandwidthAgeMS da
+	// quanto non arriva un campione valido.
+	BandwidthBps    *float64 `json:"bandwidth_bps,omitempty"`
+	BandwidthStdBps *float64 `json:"bandwidth_std_bps,omitempty"`
+	BandwidthAgeMS  *float64 `json:"bandwidth_age_ms,omitempty"`
 	// LatencyMS è metà del minimo RTT dei ping degli ultimi LatencyWindow;
 	// nil senza ping.
 	LatencyMS *float64 `json:"latency_ms,omitempty"`
@@ -67,11 +77,12 @@ func (s State) UploadMS(bytes int) (ms float64, ok bool) {
 // lo stream lo aggiorna (letture e ping), il control plane lo legge.
 type Estimator struct {
 	mu        sync.Mutex
-	bandwidth *float64
-	pings     []ping // dell'ultimo LatencyWindow, dal più vecchio
+	tau       time.Duration // della banda
+	bandwidth ewma.Stat     // dei campioni validi, in byte al secondo
+	pings     []ping        // dell'ultimo LatencyWindow, dal più vecchio
 	valid     uint64
 	discarded uint64
-	recent    []bool // validità degli ultimi campioni, al massimo RecentWindow
+	recent    []mark // campioni dell'ultimo NotLimitingWindow, dal più vecchio
 	// lastSample è quando è arrivato l'ultimo campione, valido o no: dice
 	// quanto è vecchia la misura (la regola del probe, internal/stream).
 	lastSample time.Time
@@ -83,8 +94,17 @@ type ping struct {
 	rtt time.Duration
 }
 
-// NewEstimator crea uno stato vuoto.
-func NewEstimator() *Estimator { return &Estimator{} }
+// mark è un campione per la regola "non limitante": quando e se valido.
+type mark struct {
+	at    time.Time
+	valid bool
+}
+
+// NewEstimator crea uno stato vuoto; bandwidthTau è la costante di tempo
+// della banda (DefaultBandwidthTau, o stream.bandwidth_tau_ms).
+func NewEstimator(bandwidthTau time.Duration) *Estimator {
+	return &Estimator{tau: bandwidthTau}
+}
 
 // Observe aggiunge un campione di ricezione, arrivato in at.
 func (e *Estimator) Observe(at time.Time, s Sample) {
@@ -96,19 +116,14 @@ func (e *Estimator) Observe(at time.Time, s Sample) {
 	} else {
 		e.discarded++
 	}
-	e.recent = append(e.recent, s.Valid)
-	if len(e.recent) > RecentWindow {
+	e.recent = append(e.recent, mark{at: at, valid: s.Valid})
+	cutoff := at.Add(-NotLimitingWindow)
+	for len(e.recent) > 0 && e.recent[0].at.Before(cutoff) {
 		e.recent = e.recent[1:]
 	}
-	if !s.Valid {
-		return
+	if s.Valid {
+		e.bandwidth.Update(at, s.BandwidthBps(), e.tau)
 	}
-	v := s.BandwidthBps()
-	if e.bandwidth != nil {
-		v = BandwidthAlpha*v + (1-BandwidthAlpha)**e.bandwidth
-	}
-	// Puntatore nuovo: Snapshot lo restituisce, chi lo legge non deve vederlo cambiare.
-	e.bandwidth = &v
 }
 
 // LastSample è quando è arrivato l'ultimo campione; zero se nessuno.
@@ -136,17 +151,21 @@ func (e *Estimator) ObservePing(at time.Time, rtt time.Duration) {
 	}
 }
 
-// Snapshot restituisce lo stato attuale.
-func (e *Estimator) Snapshot() State {
+// Snapshot restituisce lo stato visto in now.
+func (e *Estimator) Snapshot(now time.Time) State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return State{
-		BandwidthBps: e.bandwidth,
-		LatencyMS:    latencyMS(e.pings),
-		NotLimiting:  notLimiting(e.recent),
-		Valid:        e.valid,
-		Discarded:    e.discarded,
+	st := State{
+		LatencyMS:   latencyMS(e.pings),
+		NotLimiting: notLimiting(e.recent, now),
+		Valid:       e.valid,
+		Discarded:   e.discarded,
 	}
+	// Valori nuovi a ogni Snapshot: chi tiene lo State non li vede cambiare.
+	if b, ok := e.bandwidth.Estimate(now, 1); ok {
+		st.BandwidthBps, st.BandwidthStdBps, st.BandwidthAgeMS = &b.Mean, &b.Std, &b.AgeMS
+	}
+	return st
 }
 
 // latencyMS è la latenza di sola andata: metà del minimo RTT, in ms. nil
@@ -163,17 +182,25 @@ func latencyMS(pings []ping) *float64 {
 	return &v
 }
 
-// notLimiting dice se la rete non è il collo di bottiglia.
-func notLimiting(recent []bool) bool {
-	// Con pochi campioni non si può dire.
-	if len(recent) < RecentWindow {
-		return false
-	}
-	valid := 0
-	for _, v := range recent {
-		if v {
+// notLimiting dice se, visto da now, la rete non è il collo di bottiglia.
+// recent sono i campioni in ordine di arrivo; Observe toglie quelli più
+// vecchi di NotLimitingWindow rispetto all'ULTIMO campione, non a now.
+func notLimiting(recent []mark, now time.Time) bool {
+	// Solo i campioni entro NotLimitingWindow da now: se non arriva niente da
+	// un minuto, la vecchia conclusione non vale più.
+	cutoff := now.Add(-NotLimitingWindow)
+	total, valid := 0, 0
+	for _, m := range recent {
+		if m.at.Before(cutoff) {
+			continue
+		}
+		total++
+		if m.valid {
 			valid++
 		}
 	}
-	return float64(valid)/float64(len(recent)) < NotLimitingShare
+	if total < NotLimitingMinSamples {
+		return false
+	}
+	return float64(valid)/float64(total) < NotLimitingShare
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
+	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
@@ -368,6 +369,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ServerLoad:      serverLoad,
 		Queue:           s.queueState(),
 		Network:         network,
+		DeviceSegments:  segmentEstimates(res.Segments, s.now()),
 	})
 
 	if s.cfg.Verbose {
@@ -576,4 +578,19 @@ func (s *Server) queueState() *record.Queue {
 		OfferedPerSec: q.OfferedPerSec, AdmittedPerSec: q.AdmittedPerSec,
 		Utilization: q.Utilization, PredictedWaitMS: q.PredictedWaitMS,
 	}
+}
+
+// segmentEstimates espone le stime per segmento del device; nil per un
+// segmento mai eseguito, nil in tutto senza stime.
+func segmentEstimates(stats []ewma.Stat, now time.Time) []*ewma.Estimate {
+	if stats == nil {
+		return nil
+	}
+	out := make([]*ewma.Estimate, len(stats))
+	for i, st := range stats {
+		if e, ok := st.Estimate(now, 1); ok { // già in ms
+			out[i] = &e
+		}
+	}
+	return out
 }

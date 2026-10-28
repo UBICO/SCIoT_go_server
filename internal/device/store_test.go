@@ -181,6 +181,52 @@ func TestHeartbeatSegmentsMustMatchTheModel(t *testing.T) {
 	}
 }
 
+func TestHeartbeatUpdatesSegmentEstimates(t *testing.T) {
+	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	s := newTestStore(t0)
+	model := api.ModelInfo{ModelKey: "m", NumLayers: 3, LastOffloadingLayer: 2}
+	d := s.Register("web_96", "python", model, api.Capabilities{})
+	window := func(ms ...*float64) api.Telemetry {
+		count := make([]int, len(ms))
+		for i, v := range ms {
+			if v != nil {
+				count[i] = 1
+			}
+		}
+		return api.Telemetry{SegmentMS: ms, SegmentCount: count}
+	}
+
+	s.now = func() time.Time { return t0.Add(time.Second) }
+	first, err := s.Heartbeat("web_96", d.SessionID, 1, window(ptr(2.0), ptr(4.0), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Segments) != 3 || first.Segments[0].Mean() != 2 || first.Segments[2].N() != 0 {
+		t.Fatalf("stime dopo il primo heartbeat: %+v", first.Segments)
+	}
+
+	s.now = func() time.Time { return t0.Add(2 * time.Second) }
+	second, err := s.Heartbeat("web_96", d.SessionID, 1, window(ptr(4.0), nil, ptr(8.0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Segmento 0: due campioni a 1 s di distanza (τ 10 s): pesa la media
+	// semplice (1/2). Segmento 1 non eseguito: invariato. Segmento 2: primo.
+	if second.Segments[0].Mean() != 3 || second.Segments[1].Mean() != 4 || second.Segments[2].Mean() != 8 {
+		t.Errorf("stime dopo il secondo heartbeat: %v %v %v",
+			second.Segments[0].Mean(), second.Segments[1].Mean(), second.Segments[2].Mean())
+	}
+	if first.Segments[0].Mean() != 2 {
+		t.Errorf("il risultato del primo heartbeat è cambiato: %v (la stima va copiata)", first.Segments[0].Mean())
+	}
+
+	// Una nuova registrazione azzera le stime.
+	d = s.Register("web_96", "python", model, api.Capabilities{})
+	if got, _ := s.Get("web_96"); got.Segments != nil {
+		t.Errorf("stime dopo la ri-registrazione: %+v", got.Segments)
+	}
+}
+
 func TestHeartbeatSessionExpired(t *testing.T) {
 	s := newTestStore(time.Now())
 	old := s.Register("web_96", "python", fomo, api.Capabilities{})
