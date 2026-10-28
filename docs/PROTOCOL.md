@@ -128,6 +128,7 @@ result reads the same whoever computed it. `iou_threshold` is absent for
 decoders without NMS.
 
 Errors: `400 invalid_request`, `400 unsupported_protocol`, `404 model_not_found`.
+On `model_not_found` the client should run LOCAL-only and not retry.
 
 #### Capabilities
 
@@ -148,7 +149,6 @@ A capability says the client can do something the server may ask for. Rules:
 
 `raw_input_split` (sent by earlier clients) is no longer defined: every client
 can be told split `-1`; servers ignore it.
-On `model_not_found` the client should run LOCAL-only and not retry.
 
 ### `POST /api/v1/heartbeat`
 
@@ -171,7 +171,9 @@ Request:
     "inference_time_max_ms": 38.9,
     "cpu_load": 0.42,
     "rtt_ms": 3.1,
-    "memory_available_bytes": 812345344
+    "memory_available_bytes": 812345344,
+    "segment_ms": [0.5, 2.7, 0.5, 3.8, 2.7, 0.6, 6.8, null],
+    "segment_count": [47, 47, 47, 47, 47, 47, 47, 0]
   }
 }
 ```
@@ -189,8 +191,16 @@ Request:
   | `cpu_load` | no | `0..1`, average over the window |
   | `rtt_ms` | no | duration of the **previous** heartbeat; absent after a failed one |
   | `memory_available_bytes` | no | `>= 0` |
+  | `segment_ms` | no, with `segment_count` | per segment `0..last` of the model, the mean compute time of the window on the device; `null` for a segment not run in the window |
+  | `segment_count` | with `segment_ms` | per segment, how many times it ran in the window, `>= 0`; `0` if and only if `segment_ms` is `null` there |
 
   Optional fields are omitted when unknown: `0` is a value, not "absent".
+  `segment_ms` and `segment_count` have one entry per segment of the
+  session's model (`num_layers`), or `400 invalid_request`. They are the raw
+  window, like the rest of the telemetry: the server keeps the moving
+  averages; with them it estimates the device's cost of a split it has
+  not used. A segment counts every run, the prefix of a frame and the
+  completion of a refused one.
   `NaN` and `Infinity` are not valid JSON and must never be sent.
 
 `200`:

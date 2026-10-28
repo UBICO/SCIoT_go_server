@@ -152,6 +152,35 @@ func TestHeartbeatUpdatesState(t *testing.T) {
 	}
 }
 
+func TestHeartbeatSegmentsMustMatchTheModel(t *testing.T) {
+	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	s := newTestStore(t0)
+	d := s.Register("web_96", "python", fomo, api.Capabilities{}) // 59 segmenti
+	s.now = func() time.Time { return t0.Add(time.Second) }
+
+	short := api.Telemetry{SegmentMS: make([]*float64, 3), SegmentCount: make([]int, 3)}
+	if _, err := s.Heartbeat("web_96", d.SessionID, 1, short); !errors.Is(err, ErrInvalidTelemetry) {
+		t.Fatalf("err = %v, want ErrInvalidTelemetry", err)
+	}
+	// Rifiutato: lo stato non cambia.
+	if got, _ := s.Get("web_96"); !got.LastSeen.Equal(t0) || got.AppliedPolicyVersion != 0 {
+		t.Errorf("heartbeat rifiutato ma stato aggiornato: %+v", got)
+	}
+
+	ok := api.Telemetry{SegmentMS: make([]*float64, 59), SegmentCount: make([]int, 59)}
+	if _, err := s.Heartbeat("web_96", d.SessionID, 1, ok); err != nil {
+		t.Fatalf("lunghezza giusta: %v", err)
+	}
+	if got, _ := s.Get("web_96"); len(got.LastTelemetry.SegmentMS) != 59 {
+		t.Errorf("segment_ms non salvato: %+v", got.LastTelemetry)
+	}
+
+	// Sessione scaduta prima della telemetria sbagliata.
+	if _, err := s.Heartbeat("web_96", "vecchia", 1, short); !errors.Is(err, ErrSessionExpired) {
+		t.Errorf("err = %v, want ErrSessionExpired", err)
+	}
+}
+
 func TestHeartbeatSessionExpired(t *testing.T) {
 	s := newTestStore(time.Now())
 	old := s.Register("web_96", "python", fomo, api.Capabilities{})

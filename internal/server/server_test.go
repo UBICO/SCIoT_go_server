@@ -276,6 +276,8 @@ func TestHeartbeatErrors(t *testing.T) {
 		{"mode non valido", strings.Replace(heartbeatBody(session), `"LOCAL"`, `"REMOTE"`, 1), 400, api.ErrCodeInvalidRequest},
 		{"telemetria fuori range", strings.Replace(heartbeatBody(session), `0.4`, `1.5`, 1), 400, api.ErrCodeInvalidRequest},
 		{"media sopra il massimo", strings.Replace(heartbeatBody(session), `"inference_time_max_ms": 50`, `"inference_time_max_ms": 30`, 1), 400, api.ErrCodeInvalidRequest},
+		{"segmenti incoerenti", strings.Replace(heartbeatBody(session), `"cpu_load": 0.4`, `"cpu_load": 0.4, "segment_ms": [1.5], "segment_count": [0]`, 1), 400, api.ErrCodeInvalidRequest},
+		{"segmenti diversi dal modello", strings.Replace(heartbeatBody(session), `"cpu_load": 0.4`, `"cpu_load": 0.4, "segment_ms": [1.5], "segment_count": [1]`, 1), 400, api.ErrCodeInvalidRequest},
 		{"sessione sconosciuta", heartbeatBody("SESSIONE-VECCHIA"), 409, api.ErrCodeSessionExpired},
 		{"device sconosciuto", strings.Replace(heartbeatBody(session), `"web_192"`, `"mai-visto"`, 1), 409, api.ErrCodeSessionExpired},
 	}

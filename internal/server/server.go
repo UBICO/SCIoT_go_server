@@ -345,6 +345,11 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if errors.Is(err, device.ErrInvalidTelemetry) {
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest, err.Error())
+		return
+	}
+
 	if err != nil {
 		log.Printf("heartbeat error: device=%s: %v", req.DeviceID, err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
