@@ -54,7 +54,7 @@ func (t Telemetry) Validate() error {
 		return fmt.Errorf("memory_available_bytes must be >= 0, got %v", *t.MemoryAvailableBytes)
 	}
 
-	return nil
+	return t.validateSegments()
 }
 
 // Validate controlla una richiesta di policy rispetto al modello del device:
@@ -81,6 +81,34 @@ func (r SetPolicyRequest) Validate(m ModelInfo) error {
 		}
 	default:
 		return fmt.Errorf("invalid mode %q", r.Mode)
+	}
+	return nil
+}
+
+// validateSegments controlla segment_ms e segment_count tra loro. La
+// lunghezza rispetto al modello la controlla device.Store.Heartbeat, che
+// conosce il modello della sessione.
+func (t Telemetry) validateSegments() error {
+	// Entrambi assenti è valido (client che non li invia); uno solo no.
+	if (t.SegmentMS == nil) != (t.SegmentCount == nil) {
+		return errors.New("segment_ms and segment_count must be sent together")
+	}
+	if len(t.SegmentMS) != len(t.SegmentCount) {
+		return fmt.Errorf("segment_ms has %d entries but segment_count has %d", len(t.SegmentMS), len(t.SegmentCount))
+	}
+
+	for i, ms := range t.SegmentMS {
+		n := t.SegmentCount[i]
+		switch {
+		case n < 0:
+			return fmt.Errorf("segment_count[%d] must be >= 0, got %d", i, n)
+		case ms == nil && n > 0:
+			return fmt.Errorf("segment_ms[%d] is null but segment_count[%d] is %d", i, i, n)
+		case ms != nil && n == 0:
+			return fmt.Errorf("segment_ms[%d] is %v but segment_count[%d] is 0", i, *ms, i)
+		case ms != nil && *ms < 0:
+			return fmt.Errorf("segment_ms[%d] must be >= 0, got %v", i, *ms)
+		}
 	}
 	return nil
 }

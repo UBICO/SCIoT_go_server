@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func f64(v float64) *float64 { return &v }
 func i64(v int64) *int64     { return &v }
@@ -39,10 +42,21 @@ func TestTelemetryValidate(t *testing.T) {
 		{"cpu_load negativo", Telemetry{CPULoad: f64(-0.1)}, true},
 		{"rtt negativo", Telemetry{RTTMS: f64(-3)}, true},
 		{"memoria negativa", Telemetry{MemoryAvailableBytes: i64(-1)}, true},
+		{"segmenti validi", Telemetry{SegmentMS: []*float64{f64(0.5), f64(0), nil}, SegmentCount: []int{3, 1, 0}}, false},
+		{"segment_ms senza segment_count", Telemetry{SegmentMS: []*float64{f64(1)}}, true},
+		{"segment_count senza segment_ms", Telemetry{SegmentCount: []int{1}}, true},
+		{"lunghezze diverse", Telemetry{SegmentMS: []*float64{f64(1), f64(2)}, SegmentCount: []int{1}}, true},
+		{"segmento eseguito senza media", Telemetry{SegmentMS: []*float64{nil}, SegmentCount: []int{2}}, true},
+		{"media di un segmento non eseguito", Telemetry{SegmentMS: []*float64{f64(1)}, SegmentCount: []int{0}}, true},
+		{"conteggio negativo", Telemetry{SegmentMS: []*float64{nil}, SegmentCount: []int{-1}}, true},
+		{"media negativa di un segmento", Telemetry{SegmentMS: []*float64{f64(-1)}, SegmentCount: []int{1}}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.tel.Validate()
+			if err != nil && tc.wantErr && strings.Contains(tc.name, "segment") && !strings.Contains(err.Error(), "segment_") {
+				t.Errorf("il messaggio deve nominare il campo JSON: %v", err)
+			}
 			if (err != nil) != tc.wantErr {
 				t.Errorf("Validate() = %v, wantErr %v", err, tc.wantErr)
 			}

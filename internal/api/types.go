@@ -196,9 +196,16 @@ type ErrorDetail struct {
 // l'ESP32 non ha un "cpu_load" come Linux). Un campo opzionale si modella con
 // un puntatore: nil = "non inviato", che è diverso da 0 ("inviato, vale zero").
 //
+// Tempi del device per segmento (opzionali, insieme): per ogni segmento
+// 0..last del modello, la media della finestra e quante volte è stato
+// eseguito. null / 0 = segmento non eseguito nella finestra. Servono al server
+// per stimare il costo per il device di uno split mai provato; media mobile e
+// varianza le calcola il server.
+//
 //	{"inference_count": 47, "inference_time_ms": 21.3,
 //	 "inference_time_max_ms": 38.9, "cpu_load": 0.42, "rtt_ms": 3.1,
-//	 "memory_available_bytes": 812345344}
+//	 "memory_available_bytes": 812345344,
+//	 "segment_ms": [0.5, 2.7, null], "segment_count": [47, 47, 0]}
 type Telemetry struct {
 	// InferenceCount non è un puntatore: assente = 0 = "nessuna inferenza".
 	// Un client che lo dimentica ma invia la media viene rifiutato da Validate.
@@ -208,6 +215,11 @@ type Telemetry struct {
 	CPULoad              *float64 `json:"cpu_load,omitempty"` // (0..1)
 	RTTMS                *float64 `json:"rtt_ms,omitempty"`
 	MemoryAvailableBytes *int64   `json:"memory_available_bytes,omitempty"`
+	// SegmentMS[i] è la media del segmento i nella finestra; nil se non
+	// eseguito. SegmentCount[i] quante volte. Stessa lunghezza: il numero di
+	// segmenti del modello (lo controlla device.Store.Heartbeat).
+	SegmentMS    []*float64 `json:"segment_ms,omitempty"`
+	SegmentCount []int      `json:"segment_count,omitempty"`
 }
 
 // HeartbeatRequest è il corpo di POST /api/v1/heartbeat.

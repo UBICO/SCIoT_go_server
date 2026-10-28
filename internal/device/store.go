@@ -50,6 +50,10 @@ var ErrDeviceNotFound = errors.New("device not found")
 // chiama può distinguerlo con errors.Is senza conoscerne il testo.
 var ErrInvalidPolicy = errors.New("invalid policy")
 
+// ErrInvalidTelemetry: telemetria valida in sé ma non per il modello della
+// sessione (per esempio segment_ms di lunghezza diversa dai segmenti).
+var ErrInvalidTelemetry = errors.New("invalid telemetry")
+
 // Store contiene i device registrati, indicizzati per ID.
 type Store struct {
 	// mu protegge devices. Convenzione Go: il mutex si dichiara subito
@@ -148,6 +152,13 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 
 	if !ok || d.SessionID != sessionID {
 		return HeartbeatResult{}, ErrSessionExpired
+	}
+
+	// Sotto il lock: il modello è quello della sessione attuale. La sessione
+	// è già verificata sopra, quindi un device scaduto riceve session_expired.
+	if t.SegmentMS != nil && len(t.SegmentMS) != d.Model.NumLayers {
+		return HeartbeatResult{}, fmt.Errorf("%w: segment_ms has %d entries, the model has %d segments",
+			ErrInvalidTelemetry, len(t.SegmentMS), d.Model.NumLayers)
 	}
 
 	now := s.now()
