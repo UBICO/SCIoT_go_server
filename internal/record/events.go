@@ -68,6 +68,23 @@ type Heartbeat struct {
 	// (ms) dopo questo heartbeat; null per un segmento mai eseguito. Assente
 	// se il device non invia segment_ms.
 	DeviceSegments []*ewma.Estimate `json:"device_segments,omitempty"`
+
+	// Il resto dello stato che un algoritmo vede per questo device, così il
+	// replay (cmd/sciot-replay algo) gli dà esattamente gli stessi ingressi:
+	// il modello (segmenti 0..num_segments−1), S del server per split point
+	// di quel modello, i byte che il device invia a ogni split point.
+	ModelKey    string            `json:"model_key"`
+	NumSegments int               `json:"num_segments"`
+	Service     []SplitService    `json:"service,omitempty"`     // nil senza data plane
+	InputBytes  []api.SegmentSize `json:"input_bytes,omitempty"` // nil senza data plane
+}
+
+// SplitService è S stimato dal dispatcher per uno split point.
+type SplitService struct {
+	SplitPoint int     `json:"split_point"`
+	MeanMS     float64 `json:"mean_ms"`
+	StdMS      float64 `json:"std_ms"`
+	Samples    uint64  `json:"samples"`
 }
 
 // Applied è la policy che il device dichiara nell'heartbeat.
@@ -99,6 +116,39 @@ type Policy struct {
 	SessionID string     `json:"session_id"`
 	Policy    api.Policy `json:"policy"`
 	Reason    string     `json:"reason"` // "admin"; nella Fase 3 l'algoritmo
+}
+
+// Decision: un algoritmo di offloading ha deciso la policy di un device a
+// un suo heartbeat (dal vivo dalla Fase 3.6; nel replay con sciot-replay
+// algo -out). Registrata anche quando la policy non cambia: le previsioni
+// spiegano perché.
+type Decision struct {
+	Header
+	DeviceID  string     `json:"device_id"`
+	Algorithm string     `json:"algorithm"`
+	Current   api.Policy `json:"current"` // la policy prima della decisione
+	// Mode e SplitPoint della policy scelta.
+	Mode        api.ExecutionMode `json:"mode"`
+	SplitPoint  *int              `json:"split_point"`
+	Changed     bool              `json:"changed"`
+	Reason      string            `json:"reason"`
+	Predictions []Prediction      `json:"predictions,omitempty"`
+}
+
+// Prediction è una previsione del modello di costo (internal/costmodel) per
+// uno split point. I valori infiniti (coda satura) sono null: il JSON non li
+// rappresenta, Saturated lo dice.
+type Prediction struct {
+	SplitPoint int      `json:"split_point"`
+	Local      bool     `json:"local"`
+	TotalMS    *float64 `json:"total_ms"`
+	DeviceMS   float64  `json:"device_ms"`
+	UploadMS   float64  `json:"upload_ms"`
+	WaitMS     *float64 `json:"wait_ms"`
+	ServiceMS  float64  `json:"service_ms"`
+	Rho        *float64 `json:"rho"`
+	Saturated  bool     `json:"saturated"`
+	Missing    []string `json:"missing,omitempty"`
 }
 
 // Esiti di un frame.
@@ -167,4 +217,5 @@ func (*Heartbeat) kind() string { return "heartbeat" }
 func (*Policy) kind() string    { return "policy" }
 func (*Frame) kind() string     { return "frame" }
 func (*Probe) kind() string     { return "probe" }
+func (*Decision) kind() string  { return "decision" }
 func (*End) kind() string       { return "end" }

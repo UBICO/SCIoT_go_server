@@ -158,6 +158,8 @@ type HeartbeatResult struct {
 	// Segments è la stima per segmento dopo questo heartbeat (ms); nil se il
 	// device non ha mai inviato segment_ms.
 	Segments []ewma.Stat
+	// Model è il modello della sessione.
+	Model api.ModelInfo
 }
 
 // Heartbeat registra un heartbeat e restituisce la policy corrente.
@@ -191,7 +193,7 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 		d.Segments = updateSegments(d.Segments, t.SegmentMS, now, s.segmentTau)
 	}
 	s.devices[id] = d
-	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments}, nil
+	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Model: d.Model}, nil
 }
 
 // newSessionID genera un identificatore casuale e non indovinabile.

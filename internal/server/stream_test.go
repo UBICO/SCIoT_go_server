@@ -20,6 +20,8 @@ type fakeNotifier struct {
 	network  *netmeasure.State // restituito da Network; nil = nessuno stream
 }
 
+func (f *fakeNotifier) Segments(modelKey string) ([]api.SegmentSize, bool) { return nil, false }
+
 func (f *fakeNotifier) Network(deviceID string) (netmeasure.State, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

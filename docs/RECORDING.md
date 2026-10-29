@@ -69,6 +69,12 @@ need for the `config.json` of the run.
   standard deviation of the window means, number of windows, age; `null`
   for a segment the device never ran. Absent if the device sends no
   `segment_ms`. See [Estimates](#estimates).
+- `model_key`, `num_segments`: the device's model. `service` is the
+  dispatcher's `S` per split point of that model (`split_point`, `mean_ms`,
+  `std_ms`, `samples`), only for split points the server has measured;
+  `input_bytes` the bytes a device sends at each split point (`split_point`,
+  `input_bytes`), from the worker. With these a replay rebuilds the cost
+  model's inputs (`sciot-replay algo`).
 
 ### `policy` — the server changed a device's policy
 
@@ -178,6 +184,21 @@ uses them (phase 3's algorithm) decides how; the metric does not.
 
 Same reception fields as a `frame`. Only answers the server accepted (right
 `probe_id` and size) are recorded.
+
+### `decision` — an offloading algorithm's choice at a heartbeat
+
+```json
+{"kind":"decision","ts":"…","t_ms":81234.5,"device_id":"web_96","algorithm":"static",
+ "current":{"mode":"SPLIT","split_point":6,"policy_version":2},
+ "mode":"SPLIT","split_point":6,"changed":false,"reason":"static",
+ "predictions":[{"split_point":6,"local":false,"total_ms":59.6,"device_ms":31.2,"upload_ms":2.1,
+   "wait_ms":1.4,"service_ms":24.9,"rho":0.62,"saturated":false},"…"]}
+```
+
+Written by `sciot-replay algo -out` today, by the server from phase 3.6, in
+the same format. `predictions` has one entry per split point (the last is
+LOCAL); `total_ms`, `wait_ms` and `rho` are `null` when infinite (saturated
+queue), and `missing` lists the inputs a prediction lacked.
 
 ### `end` — the last line, at shutdown
 
