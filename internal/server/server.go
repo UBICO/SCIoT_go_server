@@ -370,6 +370,10 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Queue:           s.queueState(),
 		Network:         network,
 		DeviceSegments:  segmentEstimates(res.Segments, s.now()),
+		ModelKey:        res.Model.ModelKey,
+		NumSegments:     res.Model.NumLayers,
+		Service:         s.splitService(res.Model.ModelKey),
+		InputBytes:      s.inputBytes(res.Model.ModelKey),
 	})
 
 	if s.cfg.Verbose {
@@ -517,6 +521,9 @@ type StreamNotifier interface {
 	// Network è la rete del device misurata sullo stream; false se il device
 	// non ha mai aperto uno stream.
 	Network(deviceID string) (netmeasure.State, bool)
+	// Segments sono i byte attesi a ogni split point del modello; false se il
+	// worker non lo serve (ancora).
+	Segments(modelKey string) ([]api.SegmentSize, bool)
 }
 
 // network restituisce la rete del device, nil senza data plane o senza stream.
@@ -566,6 +573,30 @@ func (s *Server) SetQueue(q QueueSource) { s.queue = q }
 // SetRecorder attiva la registrazione di sessioni, heartbeat e cambi di
 // policy (internal/record).
 func (s *Server) SetRecorder(r *record.Recorder) { s.rec = r }
+
+// splitService è S per split point del modello, per la registrazione; nil
+// senza data plane o senza registrazione.
+func (s *Server) splitService(model string) []record.SplitService {
+	if s.queue == nil || s.rec == nil {
+		return nil
+	}
+	var out []record.SplitService
+	for _, st := range s.queue.Snapshot().Service {
+		if st.ModelKey == model {
+			out = append(out, record.SplitService{SplitPoint: st.SplitPoint, MeanMS: st.MeanMS, StdMS: st.StdMS, Samples: st.Samples})
+		}
+	}
+	return out
+}
+
+// inputBytes sono i byte per split point del modello; nil senza data plane.
+func (s *Server) inputBytes(model string) []api.SegmentSize {
+	if s.notifier == nil || s.rec == nil {
+		return nil
+	}
+	sizes, _ := s.notifier.Segments(model)
+	return sizes
+}
 
 // queueState è lo stato della coda per la registrazione; nil senza data plane.
 func (s *Server) queueState() *record.Queue {

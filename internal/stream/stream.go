@@ -645,6 +645,11 @@ func (h *Handler) Network(deviceID string) (netmeasure.State, bool) {
 	return e.Snapshot(h.now()), true
 }
 
+// Segments sono i byte attesi a ogni split point del modello (dal worker).
+func (h *Handler) Segments(modelKey string) ([]api.SegmentSize, bool) {
+	return h.catalog.Segments(modelKey)
+}
+
 // lookup restituisce lo stream aperto del device, o nil.
 func (h *Handler) lookup(deviceID string) *conn {
 	h.mu.Lock()
