@@ -120,6 +120,16 @@ type fixedQueue struct{ snap dispatch.Snapshot }
 
 func (f fixedQueue) Snapshot() dispatch.Snapshot { return f.snap }
 
+// Estimate: S misurata per gli split in snap.Service, nient'altro.
+func (f fixedQueue) Estimate(model string, split int) (dispatch.Stats, dispatch.Source, bool) {
+	for _, st := range f.snap.Service {
+		if st.ModelKey == model && st.SplitPoint == split {
+			return st.Stats, dispatch.SourceMeasured, true
+		}
+	}
+	return dispatch.Stats{}, "", false
+}
+
 func TestServerStatusDispatchSection(t *testing.T) {
 	s, _, _ := testServer(t)
 	if body := do(t, s, http.MethodGet, "/api/v1/server/status", "").Body.String(); strings.Contains(body, `"dispatch"`) {

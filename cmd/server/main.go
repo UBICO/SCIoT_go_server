@@ -118,8 +118,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("stream config: %v", err)
 	}
+	// dispatcher, catalog e profileReady servono anche dopo la registrazione
+	// (3c): il profilo registra i suoi eventi.
+	var dispatcher *dispatch.Dispatcher
+	var catalog *worker.Catalog
+	profileReady := make(chan struct{}, 1)
 	if dataPlane {
-		catalog := worker.NewCatalog()
+		catalog = worker.NewCatalog()
+		workerOpts.OnReady = func() { signalReady(profileReady) }
 		sup, err := worker.NewSupervisor(workerOpts, catalog)
 		if err != nil {
 			log.Fatalf("worker supervisor: %v", err)
@@ -134,7 +140,7 @@ func main() {
 
 		// Il dispatcher sta davanti al Supervisor: ammissione per scadenza,
 		// coda FIFO, mai più job in volo degli slot del worker.
-		dispatcher := dispatch.New(sup, dispatchCfg)
+		dispatcher = dispatch.New(sup, dispatchCfg)
 		srv.SetQueue(dispatcher)
 		streamHandler = stream.NewHandler(server.Sessions(devices), catalog, dispatcher, streamCfg)
 		// Prima di srv.Routes(), che legge la rotta una volta sola.
@@ -176,6 +182,12 @@ func main() {
 			streamHandler.SetRecorder(rec)
 		}
 		log.Printf("recording to %s", rec.Stats().File)
+	}
+
+	// Il profilo parte dopo la registrazione, così ne registra gli eventi: un
+	// worker già pronto ha lasciato il segnale nel buffer di profileReady.
+	if dataPlane && dispatchCfg.ProfileRuns > 0 {
+		go profileLoop(ctx, dispatcher, catalog, profileReady, dispatchCfg.ProfileRuns, rec)
 	}
 
 	// --- 4. Server HTTP con timeout ------------------------------------------

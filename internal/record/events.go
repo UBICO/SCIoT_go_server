@@ -79,12 +79,15 @@ type Heartbeat struct {
 	InputBytes  []api.SegmentSize `json:"input_bytes,omitempty"` // nil senza data plane
 }
 
-// SplitService è S stimato dal dispatcher per uno split point.
+// SplitService è S stimato dal dispatcher per uno split point. Source è
+// "measured" (frame di quello split) o "segments" (somma dei segmenti più
+// overhead): StdMS e Samples solo per "measured".
 type SplitService struct {
 	SplitPoint int     `json:"split_point"`
 	MeanMS     float64 `json:"mean_ms"`
 	StdMS      float64 `json:"std_ms"`
 	Samples    uint64  `json:"samples"`
+	Source     string  `json:"source"`
 }
 
 // Applied è la policy che il device dichiara nell'heartbeat.
@@ -197,6 +200,19 @@ type Probe struct {
 	ReceiveValid       bool    `json:"receive_valid"`
 }
 
+// Profile: il server ha profilato un modello quando il worker è diventato
+// pronto (internal/dispatch, profile.go). Error non vuoto = profilo
+// interrotto; le esecuzioni già misurate (Runs) sono comunque nelle stime.
+type Profile struct {
+	Header
+	ModelKey   string    `json:"model_key"`
+	Runs       int       `json:"runs"`
+	SegmentMS  []float64 `json:"segment_ms"`
+	OverheadMS float64   `json:"overhead_ms"`
+	DurationMS float64   `json:"duration_ms"`
+	Error      string    `json:"error,omitempty"`
+}
+
 // Admission è ciò che il dispatcher ha previsto per il frame.
 type Admission struct {
 	PredictedWaitMS float64 `json:"predicted_wait_ms"`
@@ -218,4 +234,5 @@ func (*Policy) kind() string    { return "policy" }
 func (*Frame) kind() string     { return "frame" }
 func (*Probe) kind() string     { return "probe" }
 func (*Decision) kind() string  { return "decision" }
+func (*Profile) kind() string   { return "profile" }
 func (*End) kind() string       { return "end" }

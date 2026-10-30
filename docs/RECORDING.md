@@ -71,7 +71,11 @@ need for the `config.json` of the run.
   `segment_ms`. See [Estimates](#estimates).
 - `model_key`, `num_segments`: the device's model. `service` is the
   dispatcher's `S` per split point of that model (`split_point`, `mean_ms`,
-  `std_ms`, `samples`), only for split points the server has measured;
+  `std_ms`, `samples`, `source`), for every split point it can estimate:
+  `source` is `measured` (frames at that split point) or `segments` (sum of
+  the segments still to run plus the model's overhead, measured on other
+  split points or by the [profile](#profile--the-server-profiled-a-model));
+  `std_ms` and `samples` only for `measured`;
   `input_bytes` the bytes a device sends at each split point (`split_point`,
   `input_bytes`), from the worker. With these a replay rebuilds the cost
   model's inputs (`sciot-replay algo`).
@@ -184,6 +188,26 @@ uses them (phase 3's algorithm) decides how; the metric does not.
 
 Same reception fields as a `frame`. Only answers the server accepted (right
 `probe_id` and size) are recorded.
+
+### `profile` — the server profiled a model
+
+```json
+{"kind":"profile","ts":"…","t_ms":2210.4,"model_key":"yolo_small","runs":5,
+ "segment_ms":[3.1,2.4,"…",19.8],"overhead_ms":4.2,"duration_ms":212.7}
+```
+
+When the worker becomes ready (at start and after every restart) the server
+runs each whole model (split −1) `dispatch.profile_runs` times, after one
+discarded warm-up, on a zero input, without decoder. The runs seed the
+dispatcher's time per segment and the model's overhead, so `S` is known for
+every split point before a device uses it (`source: segments`). They wait
+for a free slot like frames but are not traffic: they do not enter λ, ρ,
+interarrivals or `S` per split point, and are counted in `totals.profiled`.
+`segment_ms` and `overhead_ms` are the means of the measured runs; `error`
+says why a profile stopped (the runs before it are in the estimates).
+
+The overhead is measured with the largest tensor (the raw input) and no
+decoder: a frame's own measures replace it as they arrive.
 
 ### `decision` — an offloading algorithm's choice at a heartbeat
 

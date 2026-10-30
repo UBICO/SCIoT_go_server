@@ -2,6 +2,8 @@ package worker
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
@@ -32,6 +34,13 @@ func (c *Catalog) Segments(modelKey string) ([]api.SegmentSize, bool) {
 	defer c.mu.RUnlock()
 	s, ok := c.models[modelKey]
 	return s, ok
+}
+
+// Models restituisce le chiavi dei modelli disponibili, in ordine.
+func (c *Catalog) Models() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return slices.Sorted(maps.Keys(c.models))
 }
 
 // Replace sostituisce tutto il contenuto (nil = nessun modello disponibile,

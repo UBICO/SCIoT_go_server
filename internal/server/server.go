@@ -372,7 +372,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		DeviceSegments:  segmentEstimates(res.Segments, s.now()),
 		ModelKey:        res.Model.ModelKey,
 		NumSegments:     res.Model.NumLayers,
-		Service:         s.splitService(res.Model.ModelKey),
+		Service:         s.splitService(res.Model.ModelKey, res.Model.NumLayers),
 		InputBytes:      s.inputBytes(res.Model.ModelKey),
 	})
 
@@ -565,6 +565,8 @@ func (s storeSessions) Lookup(deviceID, sessionID string) (stream.Session, bool)
 // *dispatch.Dispatcher la soddisfa.
 type QueueSource interface {
 	Snapshot() dispatch.Snapshot
+	// Estimate è S per modello e split point, misurata o ricavata dai segmenti.
+	Estimate(model string, split int) (dispatch.Stats, dispatch.Source, bool)
 }
 
 // SetQueue aggiunge lo stato della coda a GET /api/v1/server/status.
@@ -574,16 +576,18 @@ func (s *Server) SetQueue(q QueueSource) { s.queue = q }
 // policy (internal/record).
 func (s *Server) SetRecorder(r *record.Recorder) { s.rec = r }
 
-// splitService è S per split point del modello, per la registrazione; nil
+// splitService è S per ogni split point −1..numSegments−2 del modello che il
+// dispatcher sa stimare (misurata o dai segmenti), per la registrazione; nil
 // senza data plane o senza registrazione.
-func (s *Server) splitService(model string) []record.SplitService {
+func (s *Server) splitService(model string, numSegments int) []record.SplitService {
 	if s.queue == nil || s.rec == nil {
 		return nil
 	}
 	var out []record.SplitService
-	for _, st := range s.queue.Snapshot().Service {
-		if st.ModelKey == model {
-			out = append(out, record.SplitService{SplitPoint: st.SplitPoint, MeanMS: st.MeanMS, StdMS: st.StdMS, Samples: st.Samples})
+	for k := -1; k < numSegments-1; k++ {
+		st, src, ok := s.queue.Estimate(model, k)
+		if ok {
+			out = append(out, record.SplitService{SplitPoint: k, MeanMS: st.MeanMS, StdMS: st.StdMS, Samples: st.Samples, Source: string(src)})
 		}
 	}
 	return out

@@ -136,6 +136,7 @@ paths):
 | `stream.probe_bytes` | 524288 | size of a probe, 65536 to `max_message_bytes` − 64 (by default capped to fit `max_message_bytes`) |
 | `stream.bandwidth_tau_ms` | 60000 | time constant of the bandwidth estimate, 100–3600000 ([docs/RECORDING.md](docs/RECORDING.md#estimates)) |
 | `dispatch.service_tau_ms` | 10000 | time constant of the service time estimates `S` (per split point, segment, overhead), 100–3600000 |
+| `dispatch.profile_runs` | 5 | when the worker becomes ready, run each whole model this many times (plus one warm-up) on a zero input, so `S` is known for every split point before any device uses it, 0–100; 0 = no profile ([docs/RECORDING.md](docs/RECORDING.md#profile--the-server-profiled-a-model)) |
 | `server.device_segment_tau_ms` | 10000 | time constant of the estimates of the device's time per segment, 100–3600000 |
 | `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)) |
 | `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
