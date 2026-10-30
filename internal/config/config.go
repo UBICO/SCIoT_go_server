@@ -63,6 +63,9 @@ type File struct {
 type Dispatch struct {
 	// ServiceTauMS: costante di tempo delle stime del tempo di servizio S.
 	ServiceTauMS *int `json:"service_tau_ms,omitempty"`
+	// ProfileRuns: esecuzioni misurate del profilo di ogni modello quando il
+	// worker diventa pronto; 0 = nessun profilo.
+	ProfileRuns *int `json:"profile_runs,omitempty"`
 }
 
 // Record è la sezione "record": dove scrivere la registrazione degli eventi
@@ -319,8 +322,20 @@ func (f File) DispatchConfig() (dispatch.Config, error) {
 	cfg := dispatch.DefaultConfig()
 	var err error
 	cfg.ServiceTau, err = tau("dispatch.service_tau_ms", f.Dispatch.ServiceTauMS, cfg.ServiceTau)
-	return cfg, err
+	if err != nil {
+		return cfg, err
+	}
+	if r := f.Dispatch.ProfileRuns; r != nil {
+		// Oltre 100 il profilo occupa il worker per secondi senza migliorare la stima.
+		if *r < 0 || *r > maxProfileRuns {
+			return cfg, fmt.Errorf("dispatch.profile_runs must be in [0, %d], got %d", maxProfileRuns, *r)
+		}
+		cfg.ProfileRuns = *r
+	}
+	return cfg, nil
 }
+
+const maxProfileRuns = 100
 
 // DeviceSegmentTau è la costante di tempo delle stime dei tempi del device
 // per segmento (device.Store.SetSegmentTau).

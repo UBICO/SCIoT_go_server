@@ -45,6 +45,11 @@ type Options struct {
 	MaxBackoff     time.Duration // attesa massima (raddoppia fino a qui)
 	StopGrace      time.Duration // dopo SIGTERM, SIGKILL se non è ancora uscito
 	HealthInterval time.Duration // solo worker esterno: ogni quanto controllarlo
+
+	// OnReady, se non nil, è chiamata ogni volta che il worker diventa pronto
+	// (all'avvio e dopo ogni riavvio), con il catalogo già aggiornato. Gira
+	// nella goroutine del supervisore: non deve bloccare.
+	OnReady func()
 }
 
 // Supervisor gestisce il ciclo di vita del worker e fa da stream.Executor:
@@ -132,6 +137,9 @@ func (s *Supervisor) setReady(models map[string][]api.SegmentSize, slots int) {
 	}
 	s.mu.Unlock()
 	s.catalog.Replace(models)
+	if models != nil && s.opts.OnReady != nil {
+		s.opts.OnReady()
+	}
 }
 
 // Run gestisce il worker finché ctx non viene cancellato. Va avviato in una

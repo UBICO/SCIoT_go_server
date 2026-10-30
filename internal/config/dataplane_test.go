@@ -180,3 +180,17 @@ func TestTauOptions(t *testing.T) {
 		t.Error("service_tau_ms oltre l'ora: atteso un errore")
 	}
 }
+
+func TestProfileRuns(t *testing.T) {
+	if d, err := loadSections(t, "").DispatchConfig(); err != nil || d.ProfileRuns != 5 {
+		t.Errorf("default = %+v, %v", d, err)
+	}
+	if d, err := loadSections(t, `"dispatch": {"profile_runs": 0},`).DispatchConfig(); err != nil || d.ProfileRuns != 0 {
+		t.Errorf("0 = %+v, %v (0 spegne il profilo)", d, err)
+	}
+	for _, bad := range []string{"-1", "101"} {
+		if _, err := loadSections(t, `"dispatch": {"profile_runs": `+bad+`},`).DispatchConfig(); err == nil {
+			t.Errorf("profile_runs %s: atteso un errore", bad)
+		}
+	}
+}

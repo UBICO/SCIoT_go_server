@@ -16,6 +16,7 @@ type Totals struct {
 	Completed   uint64 `json:"completed"`   // eseguiti con successo
 	Failed      uint64 `json:"failed"`      // ammessi, ma l'esecuzione è fallita
 	Unavailable uint64 `json:"unavailable"` // arrivati senza un worker pronto
+	Profiled    uint64 `json:"profiled"`    // esecuzioni del profilo all'avvio (non sono frame)
 }
 
 // ServiceTime è la S stimata per un modello e uno split point.

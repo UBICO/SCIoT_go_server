@@ -42,13 +42,16 @@ type Config struct {
 	ServiceTau time.Duration
 	// Window è la finestra su cui si misurano λ e ρ.
 	Window time.Duration
+	// ProfileRuns sono le esecuzioni misurate del profilo di ogni modello,
+	// quando il worker diventa pronto (profile.go); 0 = nessun profilo.
+	ProfileRuns int
 }
 
 // DefaultConfig restituisce i valori di partenza.
 func DefaultConfig() Config {
 	// τ = la finestra di λ e ρ: le due misure del servizio guardano lo stesso
 	// passato.
-	return Config{ServiceTau: 10 * time.Second, Window: 10 * time.Second}
+	return Config{ServiceTau: 10 * time.Second, Window: 10 * time.Second, ProfileRuns: 5}
 }
 
 // key identifica un tipo di job: S dipende dal modello e da quanti layer
