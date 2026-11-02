@@ -125,7 +125,7 @@ func (d *Dispatcher) runProfile(ctx context.Context, job stream.Job) ([]float64,
 		d.mu.Unlock()
 		return nil, 0, fmt.Errorf("%w: no worker ready", stream.ErrWorkerUnavailable)
 	}
-	// S prevista: serve a predictWait, perché i frame che arrivano dietro al
+	// S prevista: serve a PredictWait, perché i frame che arrivano dietro al
 	// profilo vedano l'attesa giusta.
 	service, known := d.estimate(key{job.ModelKey, job.SplitPoint})
 	e := &entry{job: job, arrived: d.now(), service: service, known: known, granted: make(chan struct{})}

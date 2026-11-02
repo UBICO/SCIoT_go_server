@@ -21,6 +21,7 @@ type fakeNotifier struct {
 }
 
 func (f *fakeNotifier) Segments(modelKey string) ([]api.SegmentSize, bool) { return nil, false }
+func (f *fakeNotifier) MaxInflight(deviceID string) int                    { return 3 }
 
 func (f *fakeNotifier) Network(deviceID string) (netmeasure.State, bool) {
 	f.mu.Lock()

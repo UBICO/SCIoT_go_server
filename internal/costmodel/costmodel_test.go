@@ -68,74 +68,138 @@ func TestWaitGGc(t *testing.T) {
 	}
 }
 
-// inputs: modello con 3 segmenti (0..2), device che li ha misurati tutti,
-// rete 8 Mbit/s (1e6 B/s) con 2 ms di latenza, server con 2 slot vuoti.
+// inputs: modello con 3 segmenti (0..2), device che li ha misurati tutti con
+// A = 2 ms di ciclo, finestra di 3 frame, rete 8 Mbit/s (1e6 B/s) con 2 ms di
+// latenza, server con 2 slot vuoti.
 func inputs() Inputs {
 	bw, lat := 1e6, 2.0
 	return Inputs{
-		DeviceMS:   []*float64{f(10), f(20), f(30)},
-		Network:    &netmeasure.State{BandwidthBps: &bw, LatencyMS: &lat},
-		InputBytes: map[int]int{-1: 50_000, 0: 20_000, 1: 10_000},
-		ServiceMS:  map[int]float64{-1: 12, 0: 8, 1: 4},
-		Queue:      Queue{Slots: 2, CA: 1, CS: 1},
+		DeviceMS:    []*float64{f(10), f(20), f(30)},
+		Network:     &netmeasure.State{BandwidthBps: &bw, LatencyMS: &lat},
+		InputBytes:  map[int]int{-1: 50_000, 0: 20_000, 1: 10_000},
+		ServiceMS:   map[int]float64{-1: 12, 0: 8, 1: 4},
+		Queue:       Queue{Slots: 2, CA: 1, CS: 1},
+		MaxInflight: 3,
+		CycleMS:     f(2),
+	}
+}
+
+// localhost: invio istantaneo (rete non limitante, latenza 0).
+func localhost(in Inputs) Inputs {
+	zero := 0.0
+	in.Network = &netmeasure.State{LatencyMS: &zero, NotLimiting: true}
+	return in
+}
+
+func TestPercentile(t *testing.T) {
+	v := []float64{5, 1, 4, 2, 3}
+	if got := percentile(v, 0.95); got != 5 {
+		t.Errorf("p95 di 1..5 = %v, atteso 5", got)
+	}
+	if got := percentile(v, 0.5); got != 3 {
+		t.Errorf("p50 di 1..5 = %v, atteso 3", got)
+	}
+	if got := percentile(v, 0); got != 1 {
+		t.Errorf("p0 = %v, atteso il minimo", got)
+	}
+	if v[0] != 5 || percentile(nil, 0.95) != 0 {
+		t.Error("non deve ordinare l'originale; senza valori 0")
 	}
 }
 
 func TestPredictLocal(t *testing.T) {
 	p := Predict(inputs(), 2, 2)
-	if !p.Local || p.DeviceMS != 60 || p.TotalMS != 60 || p.UploadMS != 0 || p.WaitMS != 0 || len(p.Missing) != 0 {
+	if !p.Local || p.DeviceMS != 60 || p.TotalMS != 60 || p.LocalMS != 60 || p.UploadMS != 0 || p.WaitMS != 0 ||
+		p.ServerShare != 0 || len(p.Missing) != 0 {
 		t.Errorf("LOCAL = %+v", p)
 	}
-	if !near(p.FramesPerSec, 1000.0/60) {
-		t.Errorf("frame/s = %v, attesi %v", p.FramesPerSec, 1000.0/60)
+	// Ciclo: A + tutto il modello = 62 ms.
+	if !near(p.FramesPerSec, 1000.0/62) {
+		t.Errorf("frame/s = %v, attesi %v", p.FramesPerSec, 1000.0/62)
 	}
 }
 
-func TestPredictSplit(t *testing.T) {
+// within confronta a meno di una tolleranza relativa: la simulazione conta
+// frame interi in 5 s virtuali.
+func within(got, want, rel float64) bool { return math.Abs(got-want) <= rel*math.Abs(want) }
+
+func TestSimAllToServer(t *testing.T) {
 	in := inputs()
+	in.Queue.CS = 0 // servizio costante: risultato esatto
 	p := Predict(in, 1, 2)
-	// Device 0..1 = 30 ms; invio 2 + 10 KB a 1e6 B/s = 12 ms; servizio 4 ms.
-	if p.Local || p.DeviceMS != 30 || p.UploadMS != 12 || p.ServiceMS != 4 || len(p.Missing) != 0 {
-		t.Fatalf("split 1 = %+v", p)
+	// Ciclo A + prefisso + invio = 2 + 30 + 12 = 44 ms → 22.7 frame/s, tutti
+	// al server: 3 frame in volo bastano, S = 4 ms non si accoda.
+	if p.Bound != BoundDevice || p.ServerShare != 1 || !within(p.FramesPerSec, 1000.0/44, 0.02) ||
+		p.RejectedPerSec != 0 || p.WindowFullPerSec != 0 || p.WaitMS != 0 {
+		t.Errorf("split 1 = %+v: attesi tutti i frame al server", p)
 	}
-	// Ritmo: limitato dal prefisso (30 ms) → 33.3 frame/s; carico
-	// 33.3 × 4 ms = 0.133 erlang su 2 slot.
-	lambda := 1000.0 / 30
-	if !near(p.FramesPerSec, lambda) || !near(p.Rho, lambda*0.004/2) {
-		t.Errorf("frame/s %v, ρ %v", p.FramesPerSec, p.Rho)
-	}
-	wait, _ := WaitGGc(2, lambda, 0.004, 1, 1)
-	if !near(p.WaitMS, wait*1000) || !near(p.TotalMS, 30+12+4+wait*1000) {
-		t.Errorf("attesa %v, totale %v", p.WaitMS, p.TotalMS)
+	// Latenza: prefisso 30 + invio 12 + S 4 + ritorno 2 (latenza di rete).
+	if !within(p.ServerMS, 48, 1e-9) || p.TotalMS != p.ServerMS || !within(p.P95MS, 48, 1e-9) {
+		t.Errorf("latenza %v, totale %v, p95 %v; attesi 48 ms", p.ServerMS, p.TotalMS, p.P95MS)
 	}
 }
 
-func TestPredictCountsTheOthers(t *testing.T) {
+func TestSimSelfQueueing(t *testing.T) {
+	// Il caso misurato (docs/COSTMODEL.md): split −1 in localhost, S = 37 ms
+	// su 2 slot, finestra di 3. Il terzo frame in volo trova gli slot occupati
+	// dai frame dello stesso device: attesa prevista 37 + S 37 > scadenza 62,
+	// rifiutato; finirlo sul device blocca il device per 62 ms.
+	in := localhost(inputs())
+	in.ServiceMS[-1] = 37
+	in.DeviceMS = []*float64{f(20), f(20), f(22)} // suffisso 62 ms
+	in.Queue.CS = 0
+	p := Predict(in, -1, 2)
+	if p.Bound != BoundDeadline || p.RejectedPerSec == 0 || p.WaitMS != 0 || !(p.ServerShare > 0.3 && p.ServerShare < 0.7) {
+		t.Errorf("split −1 = %+v: attesi rifiuti sistematici e circa metà dei frame al server", p)
+	}
+	// Gli slot restano vuoti mentre il device finisce i rifiutati: il server
+	// lavora molto sotto la sua capacità (2 / 37 ms ≈ 54 frame/s).
+	if !(p.Rho < 0.5) || !(p.ServerFramesPerSec < 30) {
+		t.Errorf("ρ %v, frame/s al server %v: attesa una capacità poco usata", p.Rho, p.ServerFramesPerSec)
+	}
+}
+
+func TestSimWindowFull(t *testing.T) {
+	// Finestra di 1 frame con un servizio lungo e la scadenza larga: nessun
+	// rifiuto, ma il device trova spesso la finestra piena.
+	in := localhost(inputs())
+	in.MaxInflight = 1
+	in.ServiceMS[-1] = 30
+	in.Queue.CS = 0
+	p := Predict(in, -1, 2)
+	if p.Bound != BoundWindow || p.WindowFullPerSec == 0 || p.RejectedPerSec != 0 || !(p.ServerShare < 1) {
+		t.Errorf("finestra 1 = %+v: attesa la finestra piena come causa", p)
+	}
+}
+
+func TestSimCountsTheOthers(t *testing.T) {
 	in := inputs()
 	alone := Predict(in, 1, 2)
 	in.Queue.OthersLambda = 300          // frame/s degli altri device
 	in.Queue.OthersErlangs = 300 * 0.004 // con S = 4 ms: 1.2 erlang
 	busy := Predict(in, 1, 2)
-	if !(busy.WaitMS > alone.WaitMS) || !near(busy.Rho, (1.2+1000.0/30*0.004)/2) {
-		t.Errorf("con gli altri: attesa %v (da solo %v), ρ %v", busy.WaitMS, alone.WaitMS, busy.Rho)
+	if !(busy.WaitMS > alone.WaitMS) || !(busy.Rho > alone.Rho+0.5) || busy.Saturated {
+		t.Errorf("con gli altri: attesa %v (da solo %v), ρ %v (da solo %v)", busy.WaitMS, alone.WaitMS, busy.Rho, alone.Rho)
 	}
 }
 
-func TestPredictSaturated(t *testing.T) {
+func TestSimSaturated(t *testing.T) {
+	// Gli altri chiedono più dei 2 slot (2.4 erlang): la loro coda cresce, il
+	// server rifiuta i frame del device, che li finisce tutti da sé.
 	in := inputs()
-	// Split −1: il device non calcola niente; rete non limitante, latenza 0:
-	// il device produrrebbe frame senza limite, il server satura.
-	zero := 0.0
-	in.Network = &netmeasure.State{LatencyMS: &zero, NotLimiting: true}
-	p := Predict(in, -1, 2)
-	if !p.Saturated || !math.IsInf(p.WaitMS, 1) || !math.IsInf(p.TotalMS, 1) {
-		t.Errorf("split −1 senza limiti = %+v: attesa una coda satura", p)
+	in.Queue.OthersLambda, in.Queue.OthersErlangs = 600, 2.4
+	p := Predict(in, 1, 2)
+	if !p.Saturated || p.ServerShare != 0 || p.Bound != BoundDeadline || !math.IsNaN(p.ServerMS) || math.IsNaN(p.TotalMS) {
+		t.Errorf("altri a 2.4 erlang su 2 slot = %+v: attesi saturazione e tutto sul device", p)
 	}
-	// Carico oltre gli slot anche con un ritmo finito.
-	in = inputs()
-	in.Queue.OthersLambda, in.Queue.OthersErlangs = 500, 2
-	if p := Predict(in, 1, 2); !p.Saturated || p.Rho < 1 {
-		t.Errorf("altri già a 2 erlang su 2 slot = %+v: attesa saturazione", p)
+}
+
+func TestSimIsReproducible(t *testing.T) {
+	in := inputs()
+	in.Queue.OthersLambda, in.Queue.OthersErlangs = 200, 0.8
+	a, b := Predict(in, 0, 2), Predict(in, 0, 2)
+	if a.TotalMS != b.TotalMS || a.P95MS != b.P95MS || a.ServerFramesPerSec != b.ServerFramesPerSec {
+		t.Errorf("stessi ingressi, risultati diversi: %+v / %+v", a, b)
 	}
 }
 
@@ -144,11 +208,19 @@ func TestPredictMissingInputs(t *testing.T) {
 	in.DeviceMS[1] = nil
 	in.Network = nil
 	delete(in.ServiceMS, 1)
+	in.CycleMS = nil
+	in.MaxInflight = 0
 	p := Predict(in, 1, 2)
-	for _, want := range []string{"device segment 1", "network", "service"} {
+	for _, want := range []string{"device segment 1", "network", "service", "cycle", "max_inflight"} {
 		if !slices.Contains(p.Missing, want) {
 			t.Errorf("Missing = %v, manca %q", p.Missing, want)
 		}
+	}
+	// Il suffisso è un ingresso: un segmento dopo lo split mai misurato.
+	in = inputs()
+	in.DeviceMS[2] = nil
+	if p := Predict(in, 1, 2); !slices.Contains(p.Missing, "device segment 2") {
+		t.Errorf("suffisso: Missing = %v", p.Missing)
 	}
 	if p := Predict(Inputs{InputBytes: map[int]int{1: 1}}, 1, 2); !slices.Contains(p.Missing, "slots") {
 		t.Errorf("senza slot: Missing = %v", p.Missing)

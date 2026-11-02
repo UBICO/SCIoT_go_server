@@ -178,7 +178,7 @@ func (d *Dispatcher) admit(job stream.Job, now time.Time) (*entry, error) {
 
 	k := key{job.ModelKey, job.SplitPoint}
 	service, known := d.estimate(k)
-	wait := predictWait(slots, d.remainingLocked(now), d.queuedLocked())
+	wait := PredictWait(slots, d.remainingLocked(now), d.queuedLocked())
 
 	// Il messaggio va al device così com'è: contiene i numeri della previsione.
 	// I rifiuti sono avvolti in un *stream.JobError, così la registrazione
@@ -408,8 +408,10 @@ func (d *Dispatcher) queuedLocked() []time.Duration {
 	return out
 }
 
-// predictWait restituisce quanto aspetterebbe in coda un job che arriva
+// PredictWait restituisce quanto aspetterebbe in coda un job che arriva
 // adesso, con disciplina FIFO e slots esecutori.
+// È esportata perché la simulazione del modello di costo (internal/costmodel)
+// ammette i frame con la stessa regola.
 //
 // È una simulazione deterministica: ogni slot ha un istante in cui si libera
 // (il residuo di un job in esecuzione, 0 se è libero); ogni job in coda, in
@@ -418,7 +420,7 @@ func (d *Dispatcher) queuedLocked() []time.Duration {
 //
 //	slots 2, running [3ms 8ms], queued [5ms]
 //	slot liberi a: 3, 8 → il job in coda prende lo slot a 3 → 8, 8 → attesa 8ms
-func predictWait(slots int, running, queued []time.Duration) time.Duration {
+func PredictWait(slots int, running, queued []time.Duration) time.Duration {
 	// free[i] è l'istante (relativo ad adesso) in cui lo slot i si libera. Se i
 	// job in esecuzione sono più degli slot (diminuiti dopo un riavvio del
 	// worker) si tengono i primi slots.

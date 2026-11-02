@@ -5,8 +5,10 @@ split point, from the server's estimates (see [RECORDING.md](RECORDING.md),
 "Estimates"). Phase 3's offloading algorithm uses it to compare split points;
 `sciot-replay` checks it against recordings.
 
-    latency(k) = device(0..k) + upload(bytes_k) + wait + S(k)        (SPLIT at k)
-    latency    = device(0..last)                                     (LOCAL)
+    server(k) = device(0..k) + upload(bytes_k) + wait + S(k)    a frame the server serves
+    local(k)  = device(0..k) + device(k+1..last)                a frame the device finishes
+    latency(k) = share·server(k) + (1 − share)·local(k)          (SPLIT at k)
+    latency    = device(0..last)                                 (LOCAL)
 
 | Term | From |
 |---|---|
@@ -14,9 +16,80 @@ split point, from the server's estimates (see [RECORDING.md](RECORDING.md),
 | `upload(bytes_k)` | latency + bytes / bandwidth (`netmeasure`); latency only when the network is not limiting |
 | `wait` | queue model below, with the load **after** the move |
 | `S(k)` | the dispatcher's service time for split `k` |
+| `share` | the share of the device's frames the server serves, below |
 
 A prediction lists its missing inputs (a segment never run, no bandwidth, no
 `S`): unknown is not "expensive", and the caller must tell them apart.
+
+## Frames the device sends: simulation
+
+The client never waits for the server: with `max_inflight` frames in flight,
+or a frame refused, it finishes the frame itself and goes on. So at a split
+point only part of the frames may reach the server (`share`). Value-average
+formulas got this badly wrong (3× too many frames to the server at split −1),
+because two behaviours depend on the exact order of events:
+
+- **a device's frames queue behind each other**: with a window of 3 and 2
+  slots, the third frame in flight finds both slots taken by the same
+  device's frames; predicted wait + `S` exceeds its deadline and the server
+  refuses it, every time;
+- **the device stops sending while it finishes a frame**: the local
+  completion runs on the client's main loop (`drain`), so for
+  `device(k+1..last)` ms nothing is sent and the slots sit idle.
+
+For a SPLIT point `Predict` therefore runs a discrete-event simulation
+(`internal/costmodel/sim.go`) of the device and the dispatcher, with the
+rules of the real code, for 1 s of warm-up and 5 s of measure in virtual time
+(fixed seed: the same inputs give the same prediction):
+
+| Who | Rule |
+|---|---|
+| device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it (`upload` ms) |
+| answer | returns after the network latency (at least 0.1 ms) and frees the window when it arrives |
+| server | admission with `dispatch.PredictWait` (the dispatcher's own function) and the estimated `S`: refused when wait + `S` exceeds the deadline, the device's `device(k+1..last)`; FIFO queue, `c` slots; a frame that gets its slot after its deadline returns as an error |
+| other devices | a stream of frames, always admitted (their measured rate counts only admitted frames), with their rate, `ca`, `S` and `cs` (log-normal) |
+
+Results per split point: frames per second of the device and served by the
+server, `share`, refused and window-full frames per second, mean queue wait
+of the served frames, mean latency of a served frame (prefix to answer), of
+one finished on the device (for a refused one, including the wait for the
+next `drain`), overall mean and **p95**; `ρ` from the simulated slot busy
+time. `Bound` is `device` when no frame is finished on the device, otherwise
+the most frequent cause (`window` or `deadline`). LOCAL stays a formula
+(exact): `device(0..last)`, at `1000 / (A + device(0..last))` frames per
+second.
+
+`A` is the rest of a device cycle: reading the image (with a camera, also
+waiting for the next frame), handling answers. Not in the telemetry, it is
+derived from each heartbeat window (`offload.CycleMS`): window duration minus
+the device's compute (`segment_ms × segment_count`, which includes the
+frames finished on the device, unlike `inference_time_ms`) minus the upload
+of the frames sent, per frame. With an image from file it is ~2 ms.
+
+`Saturated` means the other devices alone already fill the server.
+
+**Coupling**: the simulation mirrors the client. A change of the client's
+window or fallback behaviour must change `sim.go` too.
+
+### Verification (2026-10-30)
+
+`sciot-replay algo` on one device, 40 s per split point, yolo-small, 2 slots
+× 2 threads, client and worker on the same MacBook. Predicted (mean over the
+heartbeats) against measured (server records and device telemetry):
+
+| Split | Device fps | Served by the server /s | Share | Refused /s |
+|---|---|---|---|---|
+| 6 | 52.3 / 51.9 | 52.3 / 51.9 | 1.00 / 1.00 | 0 / 0 |
+| 3 | 41.9 / 41.2 | 31.5 / 30.7 | 0.75 / 0.75 | 0 / 0.1 |
+| −1 | 30.6 / 30.3 | 15.3 / 15.2 | 0.50 / 0.50 | 14.4 / 7.6 |
+
+Frames per second and share are within 3%. At split −1 the frames finished
+on the device are right in total (15.3 against 15.1) but split differently
+between their causes: half of the real ones found the window full, almost
+none in the simulation. The order of a refusal and the next cycle decides
+which; it does not change share or rates, but it changes the latency of
+those frames (a refused one also waits for the next `drain`). Not verified
+yet: latencies against the client's own record, several devices.
 
 ## Queue
 
@@ -25,11 +98,9 @@ simulating its queue slot by slot: that is admission. The cost model answers
 another question: with this device moved to split `k`, what is the **mean**
 wait in steady state?
 
-- Load after the move: `ρ' = (Σ λ_i·S_i of the other devices + λ_k·S(k)) / c`,
-  with `c` the worker's slots. The device's rate `λ_k` is bounded by the
-  slower of its prefix and its upload (a conservative upper bound: the client
-  sends without waiting for results); unbounded (split −1 on localhost)
-  saturates the server.
+- Load after the move: `ρ' = (Σ λ_i·S_i of the other devices + λs·S(k)) / c`,
+  with `c` the worker's slots and `λs` the frames the server would serve
+  (above).
 - **M/M/c** (Erlang C): `Wq = C(c, a) · S / (c − a)`, `a = λ·S`.
 - **G/G/c** (Allen–Cunneen): `Wq ≈ Wq(M/M/c) · (ca² + cs²) / 2`, with `cs` the
   coefficient of variation of `S` (its std / mean) and `ca` that of the
