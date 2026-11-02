@@ -162,9 +162,9 @@ func TestPredictWait(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := predictWait(tc.slots, tc.running, tc.queued)
+			got := PredictWait(tc.slots, tc.running, tc.queued)
 			if want := time.Duration(tc.want) * time.Millisecond; got != want {
-				t.Errorf("predictWait = %v, want %v", got, want)
+				t.Errorf("PredictWait = %v, want %v", got, want)
 			}
 		})
 	}

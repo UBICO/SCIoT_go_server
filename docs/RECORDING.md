@@ -77,8 +77,8 @@ need for the `config.json` of the run.
   split points or by the [profile](#profile--the-server-profiled-a-model));
   `std_ms` and `samples` only for `measured`;
   `input_bytes` the bytes a device sends at each split point (`split_point`,
-  `input_bytes`), from the worker. With these a replay rebuilds the cost
-  model's inputs (`sciot-replay algo`).
+  `input_bytes`), from the worker; `max_inflight` the device's window. With
+  these a replay rebuilds the cost model's inputs (`sciot-replay algo`).
 
 ### `policy` — the server changed a device's policy
 
@@ -215,14 +215,22 @@ decoder: a frame's own measures replace it as they arrive.
 {"kind":"decision","ts":"…","t_ms":81234.5,"device_id":"web_96","algorithm":"static",
  "current":{"mode":"SPLIT","split_point":6,"policy_version":2},
  "mode":"SPLIT","split_point":6,"changed":false,"reason":"static",
- "predictions":[{"split_point":6,"local":false,"total_ms":59.6,"device_ms":31.2,"upload_ms":2.1,
-   "wait_ms":1.4,"service_ms":24.9,"rho":0.62,"saturated":false},"…"]}
+ "predictions":[{"split_point":6,"local":false,"total_ms":43.53,"device_ms":17.03,"upload_ms":0.04,
+   "wait_ms":0,"service_ms":26.42,"suffix_ms":45.27,"server_ms":43.53,"local_ms":62.3,
+   "frames_per_s":52.4,"server_frames_per_s":52.4,"server_share":1,"bound":"device",
+   "p95_ms":44.45,"rho":0.69,"saturated":false},"…"]}
 ```
 
 Written by `sciot-replay algo -out` today, by the server from phase 3.6, in
 the same format. `predictions` has one entry per split point (the last is
-LOCAL); `total_ms`, `wait_ms` and `rho` are `null` when infinite (saturated
-queue), and `missing` lists the inputs a prediction lacked.
+LOCAL), with the fields of [COSTMODEL.md](COSTMODEL.md): how many frames per
+second the device makes and the server serves, the share served, what bounds
+it, the latency of a served frame (`server_ms`) and of one the device
+finishes (`local_ms`), the overall mean (`total_ms`) and 95th percentile
+(`p95_ms`), the frames per second refused by the server or that found the
+window full (`rejected_per_s`, `window_full_per_s`, omitted when 0).
+Infinite or undefined values (no frame served) are `null`, and `missing`
+lists the inputs a prediction lacked.
 
 ### `end` — the last line, at shutdown
 

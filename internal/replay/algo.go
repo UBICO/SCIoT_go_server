@@ -27,7 +27,7 @@ type Step struct {
 	Decision  offload.Decision
 	// PredictedActualMS è la latenza prevista dal modello per la policy che
 	// il device applicava, PredictedChosenMS per quella scelta (NaN se il
-	// modello non la sa prevedere: ingressi mancanti o coda satura).
+	// modello non la sa prevedere: ingressi mancanti).
 	// MeasuredActualMS è quella misurata per la policy applicata nella
 	// finestra dell'heartbeat (NaN senza misure).
 	PredictedActualMS, PredictedChosenMS, MeasuredActualMS float64
@@ -92,6 +92,16 @@ func stateOf(hb record.Heartbeat, policyAgeMS float64) offload.State {
 	for _, s := range hb.InputBytes {
 		in.InputBytes[s.SplitPoint] = s.InputBytes
 	}
+	in.MaxInflight = hb.MaxInflight
+	split := hb.Applied.Mode == api.ModeSplit
+	var upload float64
+	uploadOK := false
+	if bytes, ok := in.InputBytes[st.Split()]; ok && hb.Network != nil {
+		upload, uploadOK = hb.Network.UploadMS(bytes)
+	}
+	if a, ok := offload.CycleMS(hb.Telemetry, hb.SinceLastSeenMS, split, st.Last, upload, uploadOK); ok {
+		in.CycleMS = &a
+	}
 	var cs, weight float64
 	for _, s := range hb.Service {
 		in.ServiceMS[s.SplitPoint] = s.MeanMS
@@ -133,7 +143,7 @@ func splitOf(d offload.Decision, last int) int {
 func predicted(ps []costmodel.Prediction, split int) float64 {
 	for _, p := range ps {
 		if p.Split == split {
-			if len(p.Missing) > 0 || p.Saturated || math.IsInf(p.TotalMS, 0) {
+			if len(p.Missing) > 0 || math.IsInf(p.TotalMS, 0) || math.IsNaN(p.TotalMS) {
 				return math.NaN()
 			}
 			return p.TotalMS

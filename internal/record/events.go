@@ -77,6 +77,9 @@ type Heartbeat struct {
 	NumSegments int               `json:"num_segments"`
 	Service     []SplitService    `json:"service,omitempty"`     // nil senza data plane
 	InputBytes  []api.SegmentSize `json:"input_bytes,omitempty"` // nil senza data plane
+	// MaxInflight è la finestra del device (frame in volo al massimo); 0
+	// senza data plane.
+	MaxInflight int `json:"max_inflight,omitempty"`
 }
 
 // SplitService è S stimato dal dispatcher per uno split point. Source è
@@ -149,9 +152,21 @@ type Prediction struct {
 	UploadMS   float64  `json:"upload_ms"`
 	WaitMS     *float64 `json:"wait_ms"`
 	ServiceMS  float64  `json:"service_ms"`
-	Rho        *float64 `json:"rho"`
-	Saturated  bool     `json:"saturated"`
-	Missing    []string `json:"missing,omitempty"`
+	SuffixMS   float64  `json:"suffix_ms"`
+	ServerMS   *float64 `json:"server_ms"`
+	LocalMS    float64  `json:"local_ms"`
+	// Frame al secondo del device e al server, quota al server e cosa la
+	// limita (costmodel.Prediction).
+	FramesPerSec       float64  `json:"frames_per_s"`
+	ServerFramesPerSec float64  `json:"server_frames_per_s"`
+	ServerShare        float64  `json:"server_share"`
+	Bound              string   `json:"bound,omitempty"`
+	P95MS              float64  `json:"p95_ms,omitempty"`
+	RejectedPerSec     float64  `json:"rejected_per_s,omitempty"`
+	WindowFullPerSec   float64  `json:"window_full_per_s,omitempty"`
+	Rho                *float64 `json:"rho"`
+	Saturated          bool     `json:"saturated"`
+	Missing            []string `json:"missing,omitempty"`
 }
 
 // Esiti di un frame.

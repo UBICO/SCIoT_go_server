@@ -126,6 +126,45 @@ func FramesPerSec(count int, gapMS float64) float64 {
 	return float64(count) / (gapMS / 1000)
 }
 
+// CycleMS è A, il tempo di un ciclo del device oltre al calcolo dei segmenti
+// e all'invio, dalla finestra di un heartbeat (gapMS ms, telemetria t):
+//
+//	A = (gapMS − Σ segment_ms·segment_count − inviati·uploadMS) / inference_count
+//
+// Il calcolo viene dai tempi per segmento e non da inference_time_ms, che
+// non contiene i suffissi dei frame finiti sul device. In SPLIT ogni frame
+// finito sul device esegue l'ultimo segmento: inviati = inference_count −
+// segment_count[last]; in LOCAL nessuno. uploadMS è l'invio allo split point
+// applicato (ok = false se serve e non è noto). Mai sotto zero: finestra e
+// tempi vengono da orologi diversi.
+//
+// shortcut: uploadMS è la stima della rete, non l'invio misurato di quei
+// frame; misurarlo nel client se su rete vera A risulta rumoroso.
+func CycleMS(t api.Telemetry, gapMS float64, split bool, last int, uploadMS float64, uploadOK bool) (float64, bool) {
+	n := t.InferenceCount
+	if n <= 0 || gapMS <= 0 || len(t.SegmentMS) != last+1 || len(t.SegmentCount) != last+1 {
+		return 0, false
+	}
+	var compute float64
+	for i, c := range t.SegmentCount {
+		if c == 0 {
+			continue
+		}
+		if t.SegmentMS[i] == nil {
+			return 0, false
+		}
+		compute += *t.SegmentMS[i] * float64(c)
+	}
+	sent := 0
+	if split {
+		sent = max(0, n-t.SegmentCount[last])
+	}
+	if sent > 0 && !uploadOK {
+		return 0, false
+	}
+	return max(0, (gapMS-compute-float64(sent)*uploadMS)/float64(n)), true
+}
+
 // RecordPredictions converte le previsioni per la registrazione: il JSON non
 // rappresenta +Inf, quindi un valore infinito diventa null (Saturated lo
 // dice).
@@ -141,7 +180,11 @@ func RecordPredictions(ps []costmodel.Prediction) []record.Prediction {
 		out[i] = record.Prediction{
 			SplitPoint: p.Split, Local: p.Local,
 			TotalMS: finite(p.TotalMS), DeviceMS: p.DeviceMS, UploadMS: p.UploadMS,
-			WaitMS: finite(p.WaitMS), ServiceMS: p.ServiceMS, Rho: finite(p.Rho),
+			WaitMS: finite(p.WaitMS), ServiceMS: p.ServiceMS, SuffixMS: p.SuffixMS,
+			ServerMS: finite(p.ServerMS), LocalMS: p.LocalMS,
+			FramesPerSec: p.FramesPerSec, ServerFramesPerSec: p.ServerFramesPerSec,
+			ServerShare: p.ServerShare, Bound: p.Bound, P95MS: p.P95MS,
+			RejectedPerSec: p.RejectedPerSec, WindowFullPerSec: p.WindowFullPerSec, Rho: finite(p.Rho),
 			Saturated: p.Saturated, Missing: p.Missing,
 		}
 	}

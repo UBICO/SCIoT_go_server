@@ -105,7 +105,7 @@ func (d *Dispatcher) Snapshot() Snapshot {
 	if slots > 0 {
 		rho := sum.busy.Seconds() / (float64(slots) * w)
 		snap.Utilization = &rho
-		snap.PredictedWaitMS = ms(predictWait(slots, d.remainingLocked(now), d.queuedLocked()))
+		snap.PredictedWaitMS = ms(PredictWait(slots, d.remainingLocked(now), d.queuedLocked()))
 	}
 	if d.interarrival.N() > 0 {
 		st := statsOf(d.interarrival, now)

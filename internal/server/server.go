@@ -374,6 +374,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		NumSegments:     res.Model.NumLayers,
 		Service:         s.splitService(res.Model.ModelKey, res.Model.NumLayers),
 		InputBytes:      s.inputBytes(res.Model.ModelKey),
+		MaxInflight:     s.maxInflight(req.DeviceID),
 	})
 
 	if s.cfg.Verbose {
@@ -524,6 +525,8 @@ type StreamNotifier interface {
 	// Segments sono i byte attesi a ogni split point del modello; false se il
 	// worker non lo serve (ancora).
 	Segments(modelKey string) ([]api.SegmentSize, bool)
+	// MaxInflight è la finestra del device: frame in volo al massimo.
+	MaxInflight(deviceID string) int
 }
 
 // network restituisce la rete del device, nil senza data plane o senza stream.
@@ -600,6 +603,15 @@ func (s *Server) inputBytes(model string) []api.SegmentSize {
 	}
 	sizes, _ := s.notifier.Segments(model)
 	return sizes
+}
+
+// maxInflight è la finestra del device per la registrazione; 0 senza data
+// plane.
+func (s *Server) maxInflight(deviceID string) int {
+	if s.notifier == nil || s.rec == nil {
+		return 0
+	}
+	return s.notifier.MaxInflight(deviceID)
 }
 
 // queueState è lo stato della coda per la registrazione; nil senza data plane.

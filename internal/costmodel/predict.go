@@ -22,6 +22,13 @@ type Inputs struct {
 	// sconosciuto.
 	ServiceMS map[int]float64
 	Queue     Queue
+	// MaxInflight è la finestra del device: frame in volo al massimo
+	// (max_inflight dell'hello); 0 = sconosciuta.
+	MaxInflight int
+	// CycleMS è A: quanto dura un ciclo del device oltre al calcolo dei
+	// segmenti e all'invio (acquisizione, gestione delle risposte; con una
+	// camera anche l'attesa del frame). nil = sconosciuto.
+	CycleMS *float64
 }
 
 // Queue è il carico del server SENZA il device di cui si prevede il costo.
@@ -36,7 +43,25 @@ type Queue struct {
 	CA, CS float64
 }
 
+// Perché i frame del device non arrivano tutti al server (Prediction.Bound).
+const (
+	// BoundDevice: nessun frame finisce sul device, vanno tutti al server.
+	BoundDevice = "device"
+	// BoundWindow: la causa più frequente dei frame finiti sul device è la
+	// finestra piena (max_inflight frame in volo): il client non aspetta.
+	BoundWindow = "window"
+	// BoundDeadline: la causa più frequente è il server, che rifiuta il frame
+	// (attesa più S oltre la sua scadenza, il tempo del device per finirlo da
+	// sé) o lo lascia scadere in coda.
+	BoundDeadline = "deadline"
+)
+
 // Prediction è il costo previsto di un frame a uno split point.
+//
+// Il client non aspetta mai il server: con la finestra piena o un frame
+// rifiutato, finisce il frame da sé. A uno split point una quota dei frame va
+// al server (ServerShare), il resto finisce sul device; TotalMS è la latenza
+// media di tutti. In SPLIT i valori vengono dalla simulazione (sim.go).
 type Prediction struct {
 	Split     int  // split point; == last per LOCAL
 	Local     bool // tutto sul device
@@ -44,14 +69,35 @@ type Prediction struct {
 	UploadMS  float64
 	WaitMS    float64
 	ServiceMS float64
-	TotalMS   float64
-	// FramesPerSec è il ritmo del device a questo split (stima prudente:
-	// limitato dal calcolo del prefisso o dall'invio); Rho è l'utilizzo del
-	// server con il device spostato qui.
-	FramesPerSec float64
-	Rho          float64
-	// Saturated: con il device qui la coda è instabile (Rho ≥ 1), l'attesa
-	// non è limitata: il server rifiuterebbe frame.
+	// SuffixMS è il tempo del device per i segmenti split+1..last: quanto
+	// costa un frame finito sul device, ed è la sua scadenza sul server.
+	SuffixMS float64
+	// ServerMS è la latenza media di un frame servito dal server (prefisso,
+	// invio, attesa, S, ritorno); LocalMS di uno finito sul device (in LOCAL
+	// tutto il modello; in SPLIT, per un rifiutato, anche l'attesa del drain).
+	// WaitMS è l'attesa in coda media dei frame serviti.
+	ServerMS float64
+	LocalMS  float64
+	TotalMS  float64
+	// FramesPerSec sono i frame al secondo del device, ServerFramesPerSec
+	// quelli serviti dal server, ServerShare il loro rapporto. Bound dice
+	// perché non vanno tutti al server.
+	FramesPerSec       float64
+	ServerFramesPerSec float64
+	ServerShare        float64
+	Bound              string
+	// P95MS è il 95° percentile della latenza dei frame del device;
+	// RejectedPerSec i frame al secondo rifiutati o scaduti sul server,
+	// WindowFullPerSec quelli trovati con la finestra piena (tutti finiti
+	// sul device). Solo SPLIT, dalla simulazione (sim.go).
+	P95MS            float64
+	RejectedPerSec   float64
+	WindowFullPerSec float64
+	// Rho è l'utilizzo del server con il device a questo split point
+	// (in SPLIT: slot occupati nella simulazione).
+	Rho float64
+	// Saturated: gli altri device saturano già il server (Rho ≥ 1 senza
+	// questo device): nessun suo frame sarebbe servito.
 	Saturated bool
 	// Missing elenca gli ingressi sconosciuti ("device segment 3",
 	// "bandwidth", "service", ...): con Missing non vuoto TotalMS non è una
@@ -66,9 +112,16 @@ func Predict(in Inputs, split, last int) Prediction {
 	q := in.Queue
 
 	if p.Local {
-		p.DeviceMS = deviceMS(in, last, &p)
-		p.TotalMS = p.DeviceMS
-		p.FramesPerSec = rate(p.DeviceMS)
+		p.DeviceMS = deviceMS(in, 0, last, &p)
+		p.LocalMS, p.TotalMS = p.DeviceMS, p.DeviceMS
+		// Senza A il ritmo è quello del solo calcolo: la latenza non ne
+		// dipende, quindi A non è un ingresso mancante.
+		a := 0.0
+		if in.CycleMS != nil {
+			a = *in.CycleMS
+		}
+		p.FramesPerSec = rate(a + p.DeviceMS)
+		p.Bound = BoundDevice
 		// Il server resta con il carico degli altri.
 		if q.Slots > 0 {
 			p.Rho = q.OthersErlangs / float64(q.Slots)
@@ -76,48 +129,69 @@ func Predict(in Inputs, split, last int) Prediction {
 		return p
 	}
 
-	p.DeviceMS = deviceMS(in, split, &p)
+	p.DeviceMS = deviceMS(in, 0, split, &p)
+	p.SuffixMS = deviceMS(in, split+1, last, &p)
 	p.UploadMS = uploadMS(in, split, &p)
 	svc, ok := in.ServiceMS[split]
 	if !ok {
 		p.Missing = append(p.Missing, "service")
 	}
 	p.ServiceMS = svc
-	// Il device produce frame al ritmo del più lento tra prefisso e invio.
-	p.FramesPerSec = rate(max(p.DeviceMS, p.UploadMS))
-
+	if in.CycleMS == nil {
+		p.Missing = append(p.Missing, "cycle")
+	}
+	if in.MaxInflight < 1 {
+		p.Missing = append(p.Missing, "max_inflight")
+	}
 	// Prima di ogni divisione per Slots.
 	if q.Slots < 1 {
 		p.Missing = append(p.Missing, "slots")
+	}
+	p.LocalMS = p.DeviceMS + p.SuffixMS
+	if len(p.Missing) > 0 {
 		p.TotalMS = p.DeviceMS + p.UploadMS + p.ServiceMS
 		return p
 	}
-
-	if math.IsInf(p.FramesPerSec, 1) {
-		// Inf*0 = NaN in erlangs e in WaitGGc: il device senza limite satura.
-		p.Rho = math.Inf(1)
-		p.Saturated, p.WaitMS = true, math.Inf(1)
-	} else {
-		lambda := q.OthersLambda + p.FramesPerSec
-		erlangs := q.OthersErlangs + p.FramesPerSec*p.ServiceMS/1000
-		p.Rho = erlangs / float64(q.Slots)
-		// S medio pesato sui frame/s, in secondi.
-		wait, ok := WaitGGc(q.Slots, lambda, erlangs/lambda, q.CA, q.CS)
-		if ok {
-			p.WaitMS = wait * 1000
-		} else {
-			p.Saturated, p.WaitMS = true, math.Inf(1)
-		}
+	down := 0.0
+	if in.Network != nil && in.Network.LatencyMS != nil {
+		down = *in.Network.LatencyMS
 	}
-	p.TotalMS = p.DeviceMS + p.UploadMS + p.WaitMS + p.ServiceMS
+	sp := simParams{
+		P: p.DeviceMS, X: p.SuffixMS, U: p.UploadMS, S: p.ServiceMS, A: *in.CycleMS, DownMS: down,
+		Window: in.MaxInflight, Slots: q.Slots, CS: q.CS, CA: q.CA,
+	}
+	if q.OthersLambda > 0 {
+		sp.OthersPerMS = q.OthersLambda / 1000
+		sp.OthersS = q.OthersErlangs / q.OthersLambda * 1000
+	}
+	r := simulate(sp)
+	p.FramesPerSec, p.ServerFramesPerSec, p.ServerShare = r.FramesPerSec, r.ServerFramesPerSec, r.ServerShare
+	p.RejectedPerSec, p.WindowFullPerSec = r.RejectedPerSec, r.WindowFullPerSec
+	p.WaitMS, p.ServerMS, p.TotalMS, p.P95MS = r.WaitMS, r.ServerMS, r.TotalMS, r.P95MS
+	if r.ServerFramesPerSec == 0 {
+		p.ServerMS = math.NaN() // nessun frame servito: nella registrazione è null
+	}
+	if r.LocalMS > 0 {
+		p.LocalMS = r.LocalMS // altrimenti resta prefisso + suffisso
+	}
+	p.Rho = r.Rho
+	p.Saturated = q.OthersErlangs >= float64(q.Slots)
+	switch {
+	case r.RejectedPerSec == 0 && r.WindowFullPerSec == 0:
+		p.Bound = BoundDevice
+	case r.WindowFullPerSec >= r.RejectedPerSec:
+		p.Bound = BoundWindow
+	default:
+		p.Bound = BoundDeadline
+	}
 	return p
 }
 
-// deviceMS è il tempo del device per i segmenti 0..upTo (0 per upTo < 0);
+// deviceMS è il tempo del device per i segmenti from..to (0 se from > to);
 // aggiunge a p.Missing i segmenti mai misurati.
-func deviceMS(in Inputs, upTo int, p *Prediction) float64 {
+func deviceMS(in Inputs, from, to int, p *Prediction) float64 {
 	var total float64
-	for i := 0; i <= upTo; i++ {
+	for i := max(from, 0); i <= to; i++ {
 		if i >= len(in.DeviceMS) || in.DeviceMS[i] == nil {
 			p.Missing = append(p.Missing, "device segment "+strconv.Itoa(i))
 			continue

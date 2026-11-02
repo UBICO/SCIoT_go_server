@@ -15,11 +15,11 @@ import (
 // un heartbeat di una registrazione vecchia (senza num_segments).
 const algoRecording = `{"kind":"start","t_ms":0}
 {"kind":"heartbeat","ts":"2026-10-28T10:00:00Z","t_ms":500,"device_id":"old","server_policy":{"mode":"LOCAL","split_point":null,"policy_version":1},"telemetry":{"inference_count":1}}
-{"kind":"heartbeat","ts":"2026-10-28T10:00:01Z","t_ms":1000,"device_id":"d","applied":{"mode":"SPLIT","policy_version":2},"server_policy":{"mode":"SPLIT","split_point":1,"policy_version":2},"telemetry":{"inference_count":20,"inference_time_ms":30,"inference_time_max_ms":35},"since_last_seen_ms":1000,"queue":{"slots":2,"running":0,"queued":0,"offered_per_s":100,"admitted_per_s":100,"utilization":0.6,"predicted_wait_ms":0,"interarrival_ms":10,"interarrival_std_ms":5},"network":{"bandwidth_bps":1000000,"latency_ms":2,"not_limiting":false,"valid_samples":5,"discarded_samples":0},"device_segments":[{"mean":10,"std":0,"n":3,"age_ms":0},{"mean":20,"std":0,"n":3,"age_ms":0},null],"model_key":"m","num_segments":3,"service":[{"split_point":1,"mean_ms":4,"std_ms":1,"samples":10},{"split_point":-1,"mean_ms":12,"std_ms":3,"samples":10}],"input_bytes":[{"split_point":-1,"input_bytes":50000},{"split_point":0,"input_bytes":20000},{"split_point":1,"input_bytes":10000}]}
+{"kind":"heartbeat","ts":"2026-10-28T10:00:01Z","t_ms":1000,"device_id":"d","applied":{"mode":"SPLIT","policy_version":2},"server_policy":{"mode":"SPLIT","split_point":1,"policy_version":2},"telemetry":{"inference_count":20,"inference_time_ms":30,"inference_time_max_ms":35,"segment_ms":[10,20,null],"segment_count":[20,20,0]},"since_last_seen_ms":1000,"queue":{"slots":2,"running":0,"queued":0,"offered_per_s":100,"admitted_per_s":100,"utilization":0.6,"predicted_wait_ms":0,"interarrival_ms":10,"interarrival_std_ms":5},"network":{"bandwidth_bps":1000000,"latency_ms":2,"not_limiting":false,"valid_samples":5,"discarded_samples":0},"device_segments":[{"mean":10,"std":0,"n":3,"age_ms":0},{"mean":20,"std":0,"n":3,"age_ms":0},{"mean":30,"std":0,"n":3,"age_ms":0}],"model_key":"m","num_segments":3,"service":[{"split_point":1,"mean_ms":4,"std_ms":1,"samples":10},{"split_point":-1,"mean_ms":12,"std_ms":3,"samples":10}],"input_bytes":[{"split_point":-1,"input_bytes":50000},{"split_point":0,"input_bytes":20000},{"split_point":1,"input_bytes":10000}],"max_inflight":3}
 {"kind":"frame","t_ms":1500,"device_id":"d","outcome":"result","receive_ms":10,"timing":{"server_ms":5}}
 {"kind":"frame","t_ms":1800,"device_id":"d","outcome":"result","receive_ms":14,"timing":{"server_ms":7}}
 {"kind":"frame","t_ms":1900,"device_id":"d","outcome":"server_busy","receive_ms":99}
-{"kind":"heartbeat","ts":"2026-10-28T10:00:02Z","t_ms":2000,"device_id":"d","applied":{"mode":"SPLIT","policy_version":2},"server_policy":{"mode":"SPLIT","split_point":1,"policy_version":2},"telemetry":{"inference_count":20,"inference_time_ms":30,"inference_time_max_ms":35},"since_last_seen_ms":1000,"queue":{"slots":2,"running":0,"queued":0,"offered_per_s":100,"admitted_per_s":100,"utilization":0.6,"predicted_wait_ms":0},"network":{"bandwidth_bps":1000000,"latency_ms":2,"not_limiting":false,"valid_samples":5,"discarded_samples":0},"device_segments":[{"mean":10,"std":0,"n":3,"age_ms":0},{"mean":20,"std":0,"n":3,"age_ms":0},null],"model_key":"m","num_segments":3,"service":[{"split_point":1,"mean_ms":4,"std_ms":1,"samples":10}],"input_bytes":[{"split_point":1,"input_bytes":10000}]}
+{"kind":"heartbeat","ts":"2026-10-28T10:00:02Z","t_ms":2000,"device_id":"d","applied":{"mode":"SPLIT","policy_version":2},"server_policy":{"mode":"SPLIT","split_point":1,"policy_version":2},"telemetry":{"inference_count":20,"inference_time_ms":30,"inference_time_max_ms":35,"segment_ms":[10,20,null],"segment_count":[20,20,0]},"since_last_seen_ms":1000,"queue":{"slots":2,"running":0,"queued":0,"offered_per_s":100,"admitted_per_s":100,"utilization":0.6,"predicted_wait_ms":0},"network":{"bandwidth_bps":1000000,"latency_ms":2,"not_limiting":false,"valid_samples":5,"discarded_samples":0},"device_segments":[{"mean":10,"std":0,"n":3,"age_ms":0},{"mean":20,"std":0,"n":3,"age_ms":0},{"mean":30,"std":0,"n":3,"age_ms":0}],"model_key":"m","num_segments":3,"service":[{"split_point":1,"mean_ms":4,"std_ms":1,"samples":10}],"input_bytes":[{"split_point":1,"input_bytes":10000}],"max_inflight":3}
 `
 
 func TestAlgoBuildsTheState(t *testing.T) {
@@ -34,8 +34,13 @@ func TestAlgoBuildsTheState(t *testing.T) {
 	if st.Last != 2 || st.Split() != 1 || st.FramesPerSec != 20 || st.Inputs.InputBytes[1] != 10000 || st.Inputs.ServiceMS[-1] != 12 {
 		t.Errorf("stato = %+v", st)
 	}
-	if st.Inputs.DeviceMS[2] != nil || *st.Inputs.DeviceMS[1] != 20 {
+	if *st.Inputs.DeviceMS[2] != 30 || *st.Inputs.DeviceMS[1] != 20 {
 		t.Errorf("tempi del device = %v", st.Inputs.DeviceMS)
+	}
+	// A: 1000 ms − 20×(10+20) di calcolo − 20 frame inviati × 12 ms di invio
+	// (latenza 2 + 10 KB a 1e6 B/s), su 20 frame = 8 ms.
+	if st.Inputs.MaxInflight != 3 || st.Inputs.CycleMS == nil || math.Abs(*st.Inputs.CycleMS-8) > 1e-9 {
+		t.Errorf("finestra %d, ciclo %v", st.Inputs.MaxInflight, st.Inputs.CycleMS)
 	}
 	q := st.Inputs.Queue
 	// Altri: 100 − 20 frame/s; 0.6×2 − 20×4 ms = 1.12 erlang. ca = 5/10. cs
