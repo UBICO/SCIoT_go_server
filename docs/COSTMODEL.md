@@ -5,7 +5,7 @@ split point, from the server's estimates (see [RECORDING.md](RECORDING.md),
 "Estimates"). Phase 3's offloading algorithm uses it to compare split points;
 `sciot-replay` checks it against recordings.
 
-    server(k) = device(0..k) + upload(bytes_k) + wait + S(k)    a frame the server serves
+    server(k) = device(0..k) + upload(bytes_k) + wait + S(k) + return    a frame the server serves
     local(k)  = device(0..k) + device(k+1..last)                a frame the device finishes
     latency(k) = share·server(k) + (1 − share)·local(k)          (SPLIT at k)
     latency    = device(0..last)                                 (LOCAL)
@@ -14,7 +14,8 @@ split point, from the server's estimates (see [RECORDING.md](RECORDING.md),
 |---|---|
 | `device(0..k)` | the device's time per segment (`segment_ms` in the heartbeats) |
 | `upload(bytes_k)` | latency + bytes / bandwidth (`netmeasure`); latency only when the network is not limiting |
-| `wait` | queue model below, with the load **after** the move |
+| `wait` | queue wait with the device moved to `k`, from the simulation below |
+| `return` | the result's way back: the network latency |
 | `S(k)` | the dispatcher's service time for split `k` |
 | `share` | the share of the device's frames the server serves, below |
 
@@ -91,16 +92,21 @@ which; it does not change share or rates, but it changes the latency of
 those frames (a refused one also waits for the next `drain`). Not verified
 yet: latencies against the client's own record, several devices.
 
-## Queue
+## Queue formulas (verification 1, superseded)
+
+These closed-form formulas were the cost model's queue until phase 3.5c; the
+simulation above replaced them in `Predict`. They remain in
+`internal/costmodel/queue.go` for `sciot-replay queue` and the verification
+below.
 
 The dispatcher already predicts the wait of the frame arriving **now**, by
 simulating its queue slot by slot: that is admission. The cost model answers
 another question: with this device moved to split `k`, what is the **mean**
 wait in steady state?
 
-- Load after the move: `ρ' = (Σ λ_i·S_i of the other devices + λs·S(k)) / c`,
-  with `c` the worker's slots and `λs` the frames the server would serve
-  (above).
+- Load after the move: `ρ' = (Σ λ_i·S_i of the other devices + λ_k·S(k)) / c`,
+  with `c` the worker's slots and `λ_k` the device's frames per second at
+  `k`.
 - **M/M/c** (Erlang C): `Wq = C(c, a) · S / (c − a)`, `a = λ·S`.
 - **G/G/c** (Allen–Cunneen): `Wq ≈ Wq(M/M/c) · (ca² + cs²) / 2`, with `cs` the
   coefficient of variation of `S` (its std / mean) and `ca` that of the
@@ -121,11 +127,13 @@ wait in steady state?
 | `cs` | `Queue.CS` | — | std / mean of `S`: 0 constant, 1 exponential | std of the `S` estimates |
 | `C(c, a)` | `ErlangC` | probability | an arriving frame has to wait (all slots busy), M/M/c | Erlang B recursion `B(k)` |
 | `Wq` | `WaitMMc`, `WaitGGc` | s (ms in `Prediction`) | mean wait in queue, M/M/c or G/G/c | formulas above |
-| `λ_k` | `Prediction.FramesPerSec` | frames/s | the device's rate at split `k`: `1000 / max(prefix, upload)`, an upper bound | computed |
 | `λ_others`, `a_others` | `Queue.OthersLambda`, `Queue.OthersErlangs` | frames/s, erlang | load of the other devices, without the one moved | caller |
-| `ρ'` | `Prediction.Rho` | — | utilization after the move: `(a_others + λ_k·S(k)) / c` | computed |
-| — | `erlangs / lambda` | s | mean `S` weighted by rate, when devices use different split points | computed |
-| — | `Prediction.Saturated` | — | `ρ' ≥ 1` or unbounded `λ_k`: wait is `+Inf` | computed |
+| `λs` | `Prediction.ServerFramesPerSec` | frames/s | the device's frames the server serves at split `k` | simulation |
+| — | `Prediction.FramesPerSec`, `ServerShare` | frames/s, — | all the device's frames per second, and the share served | simulation |
+| `ρ'` | `Prediction.Rho` | — | utilization with the device at `k`: simulated slot busy time / (`c` × time) | simulation |
+| `A` | `Inputs.CycleMS` | ms | the rest of a device cycle (acquisition, answers) | `offload.CycleMS`, telemetry |
+| — | `Inputs.MaxInflight` | frames | the device's window | stream, heartbeat |
+| — | `Prediction.Saturated` | — | the other devices alone fill the server (`a_others ≥ c`): none of this device's frames would be served | computed |
 | — | `Prediction.Missing` | — | unknown inputs (segment, network, `S`, slots) | computed |
 
 In `sciot-replay queue`, per window: arrival = `t_ms − timing.server_ms`,
@@ -167,9 +175,10 @@ in brackets):
   upper bound.
 - **G/G/c is close below ρ ≈ 0.8 and 2–4× above it**, the more the closer to
   1 (1 slot: 2.4× at 0.8–0.95, 3.7× at 0.95–1), on the prudent side, for
-  every split point and worker size tried. The algorithm uses it,
-  **without** a correction factor fitted on these data: it would depend on
-  the machine, the slots and the load.
+  every split point and worker size tried. It was the cost model's queue
+  until the simulation replaced it (3.5c), **without** a correction factor
+  fitted on these data: it would depend on the machine, the slots and the
+  load.
 - The few single windows where the measured wait is higher than both
   predictions are at the start of a stage (a device just arrived, queue
   not yet in steady state): a steady-state model does not describe them.
@@ -180,9 +189,8 @@ in brackets):
   frames that would not finish in time (split 6 with 2 slots: ρ stays below
   ~0.9 with the third device). The real queue is shorter than the
   unconstrained one the formula describes: the likely main cause of the
-  overestimate, which indeed grows as ρ approaches 1. A queue model with limited capacity
-  is the next step only if the replay shows the overestimate leads to wrong
-  decisions (verification 2, phase 3.8).
+  overestimate, which indeed grows as ρ approaches 1. The simulation
+  (3.5c) applies the admission rule itself, so it does not have this bias.
 - With one device the queue never forms (regular arrivals, window of 3
   frames): verifying the model needs several devices.
 

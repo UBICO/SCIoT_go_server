@@ -39,7 +39,8 @@ type Queue struct {
 	OthersLambda  float64
 	OthersErlangs float64
 	// CA e CS sono i coefficienti di variazione degli intervalli tra arrivi e
-	// dei tempi di servizio (WaitGGc).
+	// dei tempi di servizio: la simulazione (sim.go) ne estrae arrivi e
+	// servizi.
 	CA, CS float64
 }
 
