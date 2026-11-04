@@ -37,6 +37,28 @@ func TestProbeDue(t *testing.T) {
 	}
 }
 
+func TestProbeInterval(t *testing.T) {
+	const interval, unknown = 30 * time.Second, 5 * time.Second
+	bw := 1e6
+	if got := probeInterval(netmeasure.State{}, interval, unknown); got != unknown {
+		t.Errorf("banda sconosciuta: %v, atteso %v", got, unknown)
+	}
+	// Anche "non limitante" senza banda: su un link che non aspetta mai, i
+	// probe tengono viva la regola dei 3 campioni.
+	if got := probeInterval(netmeasure.State{NotLimiting: true}, interval, unknown); got != unknown {
+		t.Errorf("non limitante senza banda: %v, atteso %v", got, unknown)
+	}
+	if got := probeInterval(netmeasure.State{BandwidthBps: &bw}, interval, unknown); got != interval {
+		t.Errorf("banda nota: %v, atteso %v", got, interval)
+	}
+	if got := probeInterval(netmeasure.State{}, interval, 0); got != interval {
+		t.Errorf("unknown = 0: %v, atteso %v", got, interval)
+	}
+	if got := probeInterval(netmeasure.State{}, 2*time.Second, unknown); got != 2*time.Second {
+		t.Errorf("mai più lungo di interval: %v", got)
+	}
+}
+
 // probeHarness: device con la capability probe, probe rapidi e piccoli, niente
 // ping (il client dei test non legge in background), registrazione accesa.
 func probeHarness(t *testing.T) (*harness, *record.Recorder) {

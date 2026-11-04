@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
+	"github.com/UBICO/SCIoT_go_server/internal/offload"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
@@ -54,6 +56,7 @@ type File struct {
 	Worker   *Worker  `json:"worker,omitempty"`
 	Stream   Stream   `json:"stream"`
 	Dispatch Dispatch `json:"dispatch"`
+	Offload  Offload  `json:"offload"`
 
 	// Record è opzionale: senza la sezione il server non registra nulla.
 	Record *Record `json:"record,omitempty"`
@@ -66,6 +69,24 @@ type Dispatch struct {
 	// ProfileRuns: esecuzioni misurate del profilo di ogni modello quando il
 	// worker diventa pronto; 0 = nessun profilo.
 	ProfileRuns *int `json:"profile_runs,omitempty"`
+	// ReprofileAgeMS: un modello con la stima di un segmento più vecchia di
+	// così viene profilato di nuovo; 0 = mai.
+	ReprofileAgeMS *int `json:"reprofile_age_ms,omitempty"`
+}
+
+// Offload è la sezione "offload": l'algoritmo che decide la policy dei
+// device (internal/offload, docs/OFFLOAD.md). Opzionale: senza, "static".
+type Offload struct {
+	Algorithm      string   `json:"algorithm,omitempty"`
+	Objective      string   `json:"objective,omitempty"`
+	MinFPSRatio    *float64 `json:"min_fps_ratio,omitempty"`
+	MaxRejectShare *float64 `json:"max_reject_share,omitempty"`
+	MinHoldMS      *int     `json:"min_hold_ms,omitempty"`
+	MarginMinMS    *float64 `json:"margin_min_ms,omitempty"`
+	MarginRel      *float64 `json:"margin_rel,omitempty"`
+	KQueue         *float64 `json:"k_queue,omitempty"`
+	KNoise         *float64 `json:"k_noise,omitempty"`
+	QueueRhoFrom   *float64 `json:"queue_rho_from,omitempty"`
 }
 
 // Record è la sezione "record": dove scrivere la registrazione degli eventi
@@ -103,7 +124,10 @@ type Stream struct {
 	// ProbeIntervalMS: dopo quanto senza misure di banda il server chiede un
 	// probe al device; 0 = mai. ProbeBytes: la sua dimensione.
 	ProbeIntervalMS *int `json:"probe_interval_ms,omitempty"`
-	ProbeBytes      *int `json:"probe_bytes,omitempty"`
+	// ProbeUnknownIntervalMS: lo stesso, finché la banda del device non ha
+	// una stima; 0 = sempre probe_interval_ms.
+	ProbeUnknownIntervalMS *int `json:"probe_unknown_interval_ms,omitempty"`
+	ProbeBytes             *int `json:"probe_bytes,omitempty"`
 	// BandwidthTauMS: costante di tempo della stima della banda.
 	BandwidthTauMS *int `json:"bandwidth_tau_ms,omitempty"`
 }
@@ -296,6 +320,12 @@ func (f File) StreamConfig() (stream.Config, error) {
 		}
 		cfg.ProbeInterval = time.Duration(*s.ProbeIntervalMS) * time.Millisecond
 	}
+	if s.ProbeUnknownIntervalMS != nil {
+		if v := *s.ProbeUnknownIntervalMS; v != 0 && (v < 1000 || v > 3600000) {
+			return stream.Config{}, fmt.Errorf("stream.probe_unknown_interval_ms must be 0 or in [1000, 3600000], got %d", v)
+		}
+		cfg.ProbeUnknownInterval = time.Duration(*s.ProbeUnknownIntervalMS) * time.Millisecond
+	}
 	// Dopo max_message_bytes: il probe è un messaggio e deve starci.
 	maxProbe := cfg.MaxMessageBytes - probeHeaderRoom
 	if s.ProbeBytes != nil {
@@ -332,10 +362,68 @@ func (f File) DispatchConfig() (dispatch.Config, error) {
 		}
 		cfg.ProfileRuns = *r
 	}
+	if a := f.Dispatch.ReprofileAgeMS; a != nil {
+		if *a != 0 {
+			if cfg.ReprofileAge, err = tau("dispatch.reprofile_age_ms", a, 0); err != nil {
+				return cfg, err
+			}
+		} else {
+			cfg.ReprofileAge = 0
+		}
+	}
 	return cfg, nil
 }
 
 const maxProfileRuns = 100
+
+// OffloadConfig restituisce l'algoritmo di offloading: nome e parametri,
+// offload.DefaultLatencyConfig() con sopra i valori presenti nel file.
+func (f File) OffloadConfig() (string, offload.LatencyConfig, error) {
+	o, cfg := f.Offload, offload.DefaultLatencyConfig()
+	name := o.Algorithm
+	if name == "" {
+		name = offload.Static{}.Name()
+	}
+	if !slices.Contains(offload.Names(), name) {
+		return "", cfg, fmt.Errorf("offload.algorithm must be one of %v, got %q", offload.Names(), name)
+	}
+	switch o.Objective {
+	case "":
+	case offload.ObjectiveP95, offload.ObjectiveMean:
+		cfg.Objective = o.Objective
+	default:
+		return "", cfg, fmt.Errorf("offload.objective must be %q or %q, got %q", offload.ObjectiveP95, offload.ObjectiveMean, o.Objective)
+	}
+	for _, v := range []struct {
+		name   string
+		in     *float64
+		out    *float64
+		lo, hi float64
+	}{
+		{"offload.min_fps_ratio", o.MinFPSRatio, &cfg.MinFPSRatio, 0, 10},
+		{"offload.max_reject_share", o.MaxRejectShare, &cfg.MaxRejectShare, 0, 1},
+		{"offload.margin_min_ms", o.MarginMinMS, &cfg.MarginMinMS, 0, 1000},
+		{"offload.margin_rel", o.MarginRel, &cfg.MarginRel, 0, 1},
+		{"offload.k_queue", o.KQueue, &cfg.KQueue, 0, 100},
+		{"offload.k_noise", o.KNoise, &cfg.KNoise, 0, 100},
+		{"offload.queue_rho_from", o.QueueRhoFrom, &cfg.QueueRhoFrom, 0, 0.99},
+	} {
+		if v.in == nil {
+			continue
+		}
+		if *v.in < v.lo || *v.in > v.hi {
+			return "", cfg, fmt.Errorf("%s must be in [%g, %g], got %g", v.name, v.lo, v.hi, *v.in)
+		}
+		*v.out = *v.in
+	}
+	if h := o.MinHoldMS; h != nil {
+		if *h < 0 || time.Duration(*h)*time.Millisecond > maxTau {
+			return "", cfg, fmt.Errorf("offload.min_hold_ms must be in [0, %d], got %d", maxTau.Milliseconds(), *h)
+		}
+		cfg.MinHold = time.Duration(*h) * time.Millisecond
+	}
+	return name, cfg, nil
+}
 
 // DeviceSegmentTau è la costante di tempo delle stime dei tempi del device
 // per segmento (device.Store.SetSegmentTau).

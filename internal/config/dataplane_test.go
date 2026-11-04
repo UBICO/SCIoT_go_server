@@ -9,6 +9,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/device"
+	"github.com/UBICO/SCIoT_go_server/internal/offload"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
 )
 
@@ -109,6 +110,13 @@ func TestStreamConfig(t *testing.T) {
 	if err != nil || cfg.ProbeInterval != 0 || cfg.ProbeBytes != 131072 {
 		t.Errorf("cfg = %+v, err %v", cfg, err)
 	}
+	if cfg.ProbeUnknownInterval != 5*time.Second {
+		t.Errorf("probe_unknown_interval default = %v", cfg.ProbeUnknownInterval)
+	}
+	cfg, err = loadSections(t, `"stream": {"probe_unknown_interval_ms": 2000},`).StreamConfig()
+	if err != nil || cfg.ProbeUnknownInterval != 2*time.Second {
+		t.Errorf("probe_unknown_interval = %v, %v", cfg.ProbeUnknownInterval, err)
+	}
 }
 
 func TestStreamConfigErrors(t *testing.T) {
@@ -118,6 +126,7 @@ func TestStreamConfigErrors(t *testing.T) {
 		{"messaggio troppo piccolo", `{"max_message_bytes": 100}`, "max_message_bytes"},
 		{"ping troppo frequente", `{"ping_interval_ms": 10}`, "ping_interval_ms"},
 		{"probe troppo frequente", `{"probe_interval_ms": 10}`, "probe_interval_ms"},
+		{"probe a banda sconosciuta troppo frequente", `{"probe_unknown_interval_ms": 10}`, "probe_unknown_interval_ms"},
 		{"tau della banda troppo corto", `{"bandwidth_tau_ms": 10}`, "bandwidth_tau_ms"},
 		{"probe troppo piccolo", `{"probe_bytes": 1000}`, "probe_bytes"},
 		{"probe oltre il messaggio", `{"max_message_bytes": 1048576, "probe_bytes": 1048576}`, "probe_bytes"},
@@ -192,5 +201,36 @@ func TestProfileRuns(t *testing.T) {
 		if _, err := loadSections(t, `"dispatch": {"profile_runs": `+bad+`},`).DispatchConfig(); err == nil {
 			t.Errorf("profile_runs %s: atteso un errore", bad)
 		}
+	}
+}
+
+func TestOffloadConfig(t *testing.T) {
+	name, cfg, err := loadSections(t, "").OffloadConfig()
+	if err != nil || name != "static" || cfg != offload.DefaultLatencyConfig() {
+		t.Errorf("default = %q %+v, %v", name, cfg, err)
+	}
+	name, cfg, err = loadSections(t, `"offload": {"algorithm": "latency", "objective": "mean", "k_noise": 0, "min_hold_ms": 5000},`).OffloadConfig()
+	if err != nil || name != "latency" || cfg.Objective != offload.ObjectiveMean || cfg.KNoise != 0 || cfg.MinHold != 5*time.Second || cfg.KQueue != 1 {
+		t.Errorf("latency = %q %+v, %v", name, cfg, err)
+	}
+	for _, bad := range []string{
+		`"algorithm": "random"`, `"objective": "p99"`, `"max_reject_share": 2`,
+		`"margin_rel": -0.1`, `"min_hold_ms": -1`, `"queue_rho_from": 1`,
+	} {
+		if _, _, err := loadSections(t, `"offload": {`+bad+`},`).OffloadConfig(); err == nil {
+			t.Errorf("%s: atteso un errore", bad)
+		}
+	}
+}
+
+func TestReprofileAge(t *testing.T) {
+	if d, err := loadSections(t, "").DispatchConfig(); err != nil || d.ReprofileAge != 30*time.Second {
+		t.Errorf("default = %v, %v", d.ReprofileAge, err)
+	}
+	if d, err := loadSections(t, `"dispatch": {"reprofile_age_ms": 0},`).DispatchConfig(); err != nil || d.ReprofileAge != 0 {
+		t.Errorf("0 = %v, %v (0 spegne il nuovo profilo)", d.ReprofileAge, err)
+	}
+	if _, err := loadSections(t, `"dispatch": {"reprofile_age_ms": 50},`).DispatchConfig(); err == nil {
+		t.Error("50 ms: atteso un errore")
 	}
 }

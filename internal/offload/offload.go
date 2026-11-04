@@ -8,6 +8,7 @@
 package offload
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -80,6 +81,26 @@ func PredictAll(s State) []costmodel.Prediction {
 		out = append(out, costmodel.Predict(s.Inputs, k, s.Last))
 	}
 	return out
+}
+
+// Names sono gli algoritmi disponibili (offload.algorithm in config.json).
+func Names() []string { return []string{Static{}.Name(), "latency"} }
+
+// New crea l'algoritmo name; cfg vale per "latency".
+func New(name string, cfg LatencyConfig) (Algorithm, error) {
+	switch name {
+	case Static{}.Name():
+		return Static{}, nil
+	case "latency":
+		return NewLatency(cfg), nil
+	}
+	return nil, fmt.Errorf("unknown algorithm %q (known: %v)", name, Names())
+}
+
+// Forgetter è un algoritmo che ricorda qualcosa dei device: il server lo
+// avvisa quando una sessione finisce.
+type Forgetter interface {
+	Forget(deviceID string)
 }
 
 // Static è l'algoritmo di riferimento: non cambia mai la policy. Le
@@ -163,6 +184,18 @@ func CycleMS(t api.Telemetry, gapMS float64, split bool, last int, uploadMS floa
 		return 0, false
 	}
 	return max(0, (gapMS-compute-float64(sent)*uploadMS)/float64(n)), true
+}
+
+// DecisionRecord è la decisione d sullo stato s come evento della
+// registrazione (senza intestazione: la mette il Recorder, o il replay con
+// l'istante dell'heartbeat).
+func DecisionRecord(s State, d Decision, algorithm string) *record.Decision {
+	return &record.Decision{
+		DeviceID: s.DeviceID, Algorithm: algorithm, Current: s.Policy,
+		Mode: d.Mode, SplitPoint: d.SplitPoint,
+		Changed: d.Changes(s.Policy), Reason: d.Reason,
+		Predictions: RecordPredictions(d.Predictions),
+	}
 }
 
 // RecordPredictions converte le previsioni per la registrazione: il JSON non

@@ -51,7 +51,7 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 			version[hb.DeviceID] = hb.ServerPolicy.PolicyVersion
 			since[hb.DeviceID] = hb.TMS
 		}
-		st := stateOf(hb, hb.TMS-since[hb.DeviceID])
+		st := offload.StateFrom(hb, time.Duration((hb.TMS-since[hb.DeviceID])*float64(time.Millisecond)))
 		d := alg.Decide(hb.TS, st)
 		preds := d.Predictions
 		if preds == nil {
@@ -65,70 +65,6 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 		out = append(out, step)
 	}
 	return out, nil
-}
-
-// stateOf costruisce lo stato di un device da un suo heartbeat registrato.
-func stateOf(hb record.Heartbeat, policyAgeMS float64) offload.State {
-	st := offload.State{
-		DeviceID:     hb.DeviceID,
-		ModelKey:     hb.ModelKey,
-		Last:         hb.NumSegments - 1,
-		Policy:       hb.ServerPolicy,
-		PolicyAge:    time.Duration(policyAgeMS * float64(time.Millisecond)),
-		FramesPerSec: offload.FramesPerSec(hb.Telemetry.InferenceCount, hb.SinceLastSeenMS),
-	}
-	in := costmodel.Inputs{
-		DeviceMS:   make([]*float64, len(hb.DeviceSegments)),
-		Network:    hb.Network,
-		InputBytes: map[int]int{},
-		ServiceMS:  map[int]float64{},
-	}
-	for i, e := range hb.DeviceSegments {
-		if e != nil {
-			m := e.Mean
-			in.DeviceMS[i] = &m
-		}
-	}
-	for _, s := range hb.InputBytes {
-		in.InputBytes[s.SplitPoint] = s.InputBytes
-	}
-	in.MaxInflight = hb.MaxInflight
-	split := hb.Applied.Mode == api.ModeSplit
-	var upload float64
-	uploadOK := false
-	if bytes, ok := in.InputBytes[st.Split()]; ok && hb.Network != nil {
-		upload, uploadOK = hb.Network.UploadMS(bytes)
-	}
-	if a, ok := offload.CycleMS(hb.Telemetry, hb.SinceLastSeenMS, split, st.Last, upload, uploadOK); ok {
-		in.CycleMS = &a
-	}
-	var cs, weight float64
-	for _, s := range hb.Service {
-		in.ServiceMS[s.SplitPoint] = s.MeanMS
-		if s.MeanMS > 0 {
-			cs += s.StdMS / s.MeanMS * float64(s.Samples)
-			weight += float64(s.Samples)
-		}
-	}
-	if q := hb.Queue; q != nil {
-		in.Queue.Slots = q.Slots
-		if weight > 0 {
-			in.Queue.CS = cs / weight // cs medio, pesato sui campioni
-		}
-		if q.InterarrivalMS != nil && q.InterarrivalStdMS != nil && *q.InterarrivalMS > 0 {
-			in.Queue.CA = *q.InterarrivalStdMS / *q.InterarrivalMS
-		}
-		rho := 0.0
-		if q.Utilization != nil {
-			rho = *q.Utilization
-		}
-		split := st.Split()
-		inSplit := split < st.Last
-		in.Queue.OthersLambda, in.Queue.OthersErlangs = offload.Others(
-			q.AdmittedPerSec, rho, q.Slots, st.FramesPerSec, in.ServiceMS[split], inSplit)
-	}
-	st.Inputs = in
-	return st
 }
 
 func splitOf(d offload.Decision, last int) int {
@@ -287,14 +223,9 @@ func div(sum *float64, n int) {
 }
 
 // DecisionEvent è la decisione come riga della registrazione (stesso
-// formato che il server scriverà dal vivo).
+// formato che scrive il server dal vivo), con l'istante dell'heartbeat.
 func DecisionEvent(s Step, algorithm string) *record.Decision {
-	d := &record.Decision{
-		DeviceID: s.Heartbeat.DeviceID, Algorithm: algorithm, Current: s.State.Policy,
-		Mode: s.Decision.Mode, SplitPoint: s.Decision.SplitPoint,
-		Changed: s.Decision.Changes(s.State.Policy), Reason: s.Decision.Reason,
-		Predictions: offload.RecordPredictions(s.Decision.Predictions),
-	}
+	d := offload.DecisionRecord(s.State, s.Decision, algorithm)
 	d.Kind, d.TS, d.TMS = "decision", s.Heartbeat.TS, s.Heartbeat.TMS
 	return d
 }

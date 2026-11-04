@@ -2,7 +2,7 @@
 // verificare offline i modelli e gli algoritmi della Fase 3.
 //
 //	sciot-replay queue [-window 5s] [-min-frames 20] record.jsonl
-//	sciot-replay algo [-algorithm static] [-out decisions.jsonl] record.jsonl
+//	sciot-replay algo [-algorithm static|latency] [-config config.json] [-out decisions.jsonl] record.jsonl
 //
 // queue: per ogni finestra, attesa in coda misurata contro quella prevista da
 // M/M/c (Erlang C) e G/G/c (Allen–Cunneen), con λ, S, c, ca e cs misurati
@@ -21,18 +21,13 @@ import (
 	"io"
 	"math"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
+	"github.com/UBICO/SCIoT_go_server/internal/config"
 	"github.com/UBICO/SCIoT_go_server/internal/offload"
 	"github.com/UBICO/SCIoT_go_server/internal/replay"
 )
-
-// algorithms sono gli algoritmi disponibili per algo, per nome.
-var algorithms = map[string]offload.Algorithm{
-	offload.Static{}.Name(): offload.Static{},
-}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -48,12 +43,24 @@ func main() {
 		err = queue(os.Stdout, oneFile(fs), window.Seconds(), *minFrames)
 	case "algo":
 		fs := flag.NewFlagSet("algo", flag.ExitOnError)
-		name := fs.String("algorithm", "static", "algorithm: "+strings.Join(names(), ", "))
+		name := fs.String("algorithm", "static", "algorithm: "+strings.Join(offload.Names(), ", "))
+		cfgPath := fs.String("config", "", "config.json whose \"offload\" section sets the algorithm's parameters (default: the defaults)")
 		out := fs.String("out", "", "also write every decision as a JSON line (decision events)")
 		fs.Parse(os.Args[2:])
-		alg, ok := algorithms[*name]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "algo: unknown algorithm %q (known: %s)\n", *name, strings.Join(names(), ", "))
+		cfg := offload.DefaultLatencyConfig()
+		if *cfgPath != "" {
+			f, err := config.Load(*cfgPath)
+			if err == nil {
+				_, cfg, err = f.OffloadConfig()
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "algo: %v\n", err)
+				os.Exit(2)
+			}
+		}
+		alg, newErr := offload.New(*name, cfg)
+		if newErr != nil {
+			fmt.Fprintf(os.Stderr, "algo: %v\n", newErr)
 			os.Exit(2)
 		}
 		err = algo(os.Stdout, oneFile(fs), alg, *out)
@@ -67,7 +74,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage:\n  sciot-replay queue [-window 5s] [-min-frames 20] record.jsonl\n  sciot-replay algo [-algorithm static] [-out decisions.jsonl] record.jsonl")
+	fmt.Fprintln(os.Stderr, "usage:\n  sciot-replay queue [-window 5s] [-min-frames 20] record.jsonl\n  sciot-replay algo [-algorithm static|latency] [-config config.json] [-out decisions.jsonl] record.jsonl")
 	os.Exit(2)
 }
 
@@ -77,15 +84,6 @@ func oneFile(fs *flag.FlagSet) string {
 		os.Exit(2)
 	}
 	return fs.Arg(0)
-}
-
-func names() []string {
-	var out []string
-	for n := range algorithms {
-		out = append(out, n)
-	}
-	slices.Sort(out)
-	return out
 }
 
 func queue(out io.Writer, path string, windowS float64, minFrames int) error {

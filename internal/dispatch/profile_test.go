@@ -115,3 +115,29 @@ func TestProfileWithoutWorker(t *testing.T) {
 		t.Errorf("err = %v, atteso ErrWorkerUnavailable", err)
 	}
 }
+
+func TestStaleModels(t *testing.T) {
+	b := newBackend(1, false)
+	b.layers = []float64{1, 2, 3}
+	d := New(b, DefaultConfig())
+	now := time.Unix(1000, 0)
+	d.now = func() time.Time { return now }
+	if got := d.StaleModels(time.Second); len(got) != 0 {
+		t.Errorf("mai eseguito: %v", got)
+	}
+	if _, err := d.ProfileModel(context.Background(), "m", 16, 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.StaleModels(30 * time.Second); len(got) != 0 {
+		t.Errorf("appena profilato: %v", got)
+	}
+	// Un frame a split 1 aggiorna solo il segmento 2: dopo 31 s i segmenti 0
+	// e 1 sono vecchi, anche se il modello è in uso.
+	now = now.Add(31 * time.Second)
+	d.mu.Lock()
+	d.observeSegmentsLocked(now, "m", 1, []float64{3}, 4*time.Millisecond)
+	d.mu.Unlock()
+	if got := d.StaleModels(30 * time.Second); len(got) != 1 || got[0] != "m" {
+		t.Errorf("segmenti 0..1 vecchi: %v", got)
+	}
+}

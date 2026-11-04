@@ -27,6 +27,12 @@ type Device struct {
 	Model        api.ModelInfo
 	Capabilities api.Capabilities
 	Policy       api.Policy
+	// PolicySince è quando la policy attuale è entrata in vigore (per la
+	// durata minima dell'algoritmo di offloading).
+	PolicySince time.Time
+	// Pinned: la policy l'ha decisa l'admin; l'algoritmo non la cambia finché
+	// l'admin non la rilascia (Unpin). Vale per la sessione.
+	Pinned       bool
 	RegisteredAt time.Time
 	LastSeen     time.Time
 
@@ -122,6 +128,7 @@ func (s *Store) Register(id, deviceType string, model api.ModelInfo, caps api.Ca
 			SplitPoint:    nil,
 			PolicyVersion: 1,
 		},
+		PolicySince:  now,
 		RegisteredAt: now,
 		LastSeen:     now,
 	}
@@ -160,6 +167,9 @@ type HeartbeatResult struct {
 	Segments []ewma.Stat
 	// Model è il modello della sessione.
 	Model api.ModelInfo
+	// PolicySince e Pinned: vedi Device.
+	PolicySince time.Time
+	Pinned      bool
 }
 
 // Heartbeat registra un heartbeat e restituisce la policy corrente.
@@ -193,7 +203,8 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 		d.Segments = updateSegments(d.Segments, t.SegmentMS, now, s.segmentTau)
 	}
 	s.devices[id] = d
-	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Model: d.Model}, nil
+	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Model: d.Model,
+		PolicySince: d.PolicySince, Pinned: d.Pinned}, nil
 }
 
 // newSessionID genera un identificatore casuale e non indovinabile.
@@ -206,7 +217,8 @@ func newSessionID() string {
 }
 
 // SetPolicy sostituisce la policy del device con req, incrementandone la
-// versione. Il device la riceverà nella risposta al prossimo heartbeat.
+// versione, e la blocca (Pinned): è la policy dell'admin. Il device la
+// riceverà nella risposta al prossimo heartbeat.
 //
 // La validazione avviene sotto lo stesso lock della scrittura: se il device
 // si ri-registra con un altro modello tra un controllo esterno e la
@@ -223,6 +235,62 @@ func (s *Store) SetPolicy(id string, req api.SetPolicyRequest) (Device, error) {
 	if !ok {
 		return Device{}, ErrDeviceNotFound
 	}
+	d, err := s.setPolicyLocked(d, req)
+	if err != nil {
+		return Device{}, err
+	}
+	d.Pinned = true
+	s.devices[id] = d
+	return d, nil
+}
+
+// ErrPinned: l'algoritmo prova a cambiare la policy di un device bloccato
+// dall'admin.
+var ErrPinned = errors.New("policy pinned by the admin")
+
+// SetAutoPolicy è il cambio di policy dell'algoritmo di offloading: come
+// SetPolicy, ma solo per la sessione sessionID (una ri-registrazione nel
+// frattempo l'ha resa vecchia: ErrSessionExpired) e mai su un device
+// bloccato (ErrPinned). La decisione e la scrittura non sono sotto lo stesso
+// lock: questi controlli impediscono che una decisione presa sullo stato
+// vecchio sovrascriva quello nuovo.
+func (s *Store) SetAutoPolicy(id, sessionID string, req api.SetPolicyRequest) (Device, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	d, ok := s.devices[id]
+	if !ok || d.SessionID != sessionID {
+		return Device{}, ErrSessionExpired
+	}
+	if d.Pinned {
+		return Device{}, ErrPinned
+	}
+	d, err := s.setPolicyLocked(d, req)
+	if err != nil {
+		return Device{}, err
+	}
+	s.devices[id] = d
+	return d, nil
+}
+
+// Unpin restituisce il device all'algoritmo: la policy resta quella
+// dell'admin finché l'algoritmo non decide altrimenti.
+func (s *Store) Unpin(id string) (Device, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	d, ok := s.devices[id]
+	if !ok {
+		return Device{}, ErrDeviceNotFound
+	}
+	d.Pinned = false
+	s.devices[id] = d
+	return d, nil
+}
+
+// setPolicyLocked valida req per il modello di d e ne fa la nuova policy, con
+// la versione successiva. Va chiamata con s.mu acquisito; non scrive d.
+func (s *Store) setPolicyLocked(d Device, req api.SetPolicyRequest) (Device, error) {
 	if err := req.Validate(d.Model); err != nil {
 		return Device{}, fmt.Errorf("%w: %v", ErrInvalidPolicy, err)
 	}
@@ -239,7 +307,7 @@ func (s *Store) SetPolicy(id string, req api.SetPolicyRequest) (Device, error) {
 		SplitPoint:    splitPoint,
 		PolicyVersion: d.Policy.PolicyVersion + 1,
 	}
-	s.devices[id] = d
+	d.PolicySince = s.now()
 	return d, nil
 }
 

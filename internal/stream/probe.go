@@ -20,6 +20,13 @@ import (
 // La regola è della metrica, non dell'algoritmo: si chiede un probe solo se
 // la misura è vecchia (nessun campione, valido o no, da ProbeInterval). In
 // SPLIT i frame bastano e il probe non parte.
+//
+// Finché la banda non ha una stima l'intervallo è ProbeUnknownInterval. Su un
+// link che non fa mai aspettare le letture (localhost, LAN veloce) nessun
+// probe è un campione valido di banda: l'invio si conosce solo con "rete non
+// limitante", che chiede 3 campioni in 60 s. Con un probe ogni 30 s non ci
+// arriverebbe mai, e un device in LOCAL non saprebbe mai quanto costa
+// inviare.
 
 // probeCheckEvery è ogni quanto probeLoop guarda se serve un probe: la
 // precisione della regola, non la frequenza dei probe.
@@ -36,8 +43,9 @@ func (h *Handler) probeLoop(ctx context.Context, c *conn) {
 		case <-t.C:
 		}
 		now := h.now()
+		interval := probeInterval(c.net.Snapshot(now), h.cfg.ProbeInterval, h.cfg.ProbeUnknownInterval)
 		c.mu.Lock()
-		due := probeDue(now, c.net.LastSample(), c.probeSentAt, h.cfg.ProbeInterval)
+		due := probeDue(now, c.net.LastSample(), c.probeSentAt, interval)
 		var id uint64
 		if due {
 			c.lastProbeID++
@@ -56,6 +64,16 @@ func (h *Handler) probeLoop(ctx context.Context, c *conn) {
 			return // lo stream si sta chiudendo
 		}
 	}
+}
+
+// probeInterval è l'intervallo dei probe di un device con la rete st:
+// unknown finché la banda non ha una stima (st.BandwidthBps nil), interval
+// dopo. Mai più lungo di interval; unknown = 0 vuol dire sempre interval.
+func probeInterval(st netmeasure.State, interval, unknown time.Duration) time.Duration {
+	if unknown > 0 && st.BandwidthBps == nil {
+		return min(unknown, interval)
+	}
+	return interval
 }
 
 // probeDue dice se chiedere un probe adesso.

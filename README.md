@@ -26,8 +26,9 @@ Status:
 - [x] phase 2, data plane: stream, admission by deadline with a FIFO queue,
   worker supervisor, decoders, model build from Edge Impulse exports,
   recording of events for offline evaluation
-- [ ] phase 3, offloading algorithm (until then the policy changes only
-  from the admin endpoint)
+- [ ] phase 3, offloading algorithm: cost model with a simulation of device
+  and queue, `latency` algorithm (opt-in, `offload.algorithm`; by default
+  the policy changes only from the admin endpoint), verification in progress
 
 The reference client is `client/python/http_go_client.py` in
 [SCIoT_python_client](https://github.com/UBICO/SCIoT_python_client); its
@@ -40,6 +41,7 @@ documentation, with the SPLIT benchmark, is `docs/GO_CONTROL_PLANE.md` there.
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | the v1 protocol: control plane and data plane, the contract for every client |
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
+| [docs/OFFLOAD.md](docs/OFFLOAD.md) | the offloading algorithm: constraints, objective, hysteresis, admin pin, configuration |
 | [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`) |
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
 | [worker/README.md](worker/README.md) | the Python worker and the model build tool |
@@ -133,10 +135,13 @@ paths):
 | `stream.max_message_bytes` | 8388608 | largest WebSocket message, 1024–67108864 |
 | `stream.ping_interval_ms` | 1000 | ping on the stream to measure each device's latency, 100–60000; 0 = never ([docs/RECORDING.md](docs/RECORDING.md#network)) |
 | `stream.probe_interval_ms` | 30000 | ask a probe of a device (with the `probe` capability) whose network has not been measured for this long, 1000–3600000; 0 = never ([docs/PROTOCOL.md](docs/PROTOCOL.md#probe)) |
+| `stream.probe_unknown_interval_ms` | 5000 | the same, while the device's bandwidth has no estimate (a link where reads never wait needs 3 probes in 60 s to be known as not limiting), 1000–3600000; 0 = always `probe_interval_ms` |
 | `stream.probe_bytes` | 524288 | size of a probe, 65536 to `max_message_bytes` − 64 (by default capped to fit `max_message_bytes`) |
 | `stream.bandwidth_tau_ms` | 60000 | time constant of the bandwidth estimate, 100–3600000 ([docs/RECORDING.md](docs/RECORDING.md#estimates)) |
 | `dispatch.service_tau_ms` | 10000 | time constant of the service time estimates `S` (per split point, segment, overhead), 100–3600000 |
 | `dispatch.profile_runs` | 5 | when the worker becomes ready, run each whole model this many times (plus one warm-up) on a zero input, so `S` is known for every split point before any device uses it, 0–100; 0 = no profile ([docs/RECORDING.md](docs/RECORDING.md#profile--the-server-profiled-a-model)) |
+| `dispatch.reprofile_age_ms` | 30000 | profile a model again when the estimate of one of its segments is older than this (segments no frame runs), 100–3600000; 0 = never ([docs/OFFLOAD.md](docs/OFFLOAD.md#reactivity)) |
+| `offload.*` | `static` | the offloading algorithm and its parameters ([docs/OFFLOAD.md](docs/OFFLOAD.md#configuration)) |
 | `server.device_segment_tau_ms` | 10000 | time constant of the estimates of the device's time per segment, 100–3600000 |
 | `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)) |
 | `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
@@ -163,6 +168,13 @@ the server) to the second-to-last segment:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/admin/devices/web_96/policy -d '{"mode":"SPLIT","split_point":5}'
+```
+
+A forced policy pins the device: with `offload.algorithm` `latency` the
+algorithm leaves it alone until it is released:
+
+```bash
+curl -X DELETE http://127.0.0.1:8080/api/v1/admin/devices/web_96/policy
 ```
 
 State of the server (load, dispatcher queue: slots, λ, ρ, service time per
