@@ -121,7 +121,10 @@ type Config struct {
 	// ProbeInterval: si chiede un probe a un device (con la capability) che
 	// non invia byte misurabili da più di così; 0 = mai.
 	ProbeInterval time.Duration
-	ProbeBytes    int // dimensione del probe
+	// ProbeUnknownInterval: lo stesso, finché la banda del device non ha una
+	// stima (vedi probeInterval); 0 = sempre ProbeInterval.
+	ProbeUnknownInterval time.Duration
+	ProbeBytes           int // dimensione del probe
 	// BandwidthTau è la costante di tempo della stima della banda.
 	BandwidthTau time.Duration
 }
@@ -135,6 +138,9 @@ func DefaultConfig() Config {
 		WriteTimeout:    5 * time.Second,
 		PingInterval:    time.Second,
 		ProbeInterval:   30 * time.Second,
+		// 3 probe in 15 s: i campioni che "non limitante" chiede nella sua
+		// finestra (netmeasure.NotLimitingMinSamples in NotLimitingWindow).
+		ProbeUnknownInterval: 5 * time.Second,
 		// 8 letture da 64 KiB (netmeasure.ReadChunk): abbastanza per misurare,
 		// ~0,4 s di link a 10 Mbit/s ogni ProbeInterval.
 		ProbeBytes:   8 * netmeasure.ReadChunk,

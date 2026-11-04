@@ -92,6 +92,43 @@ which; it does not change share or rates, but it changes the latency of
 those frames (a refused one also waits for the next `drain`). Not verified
 yet: latencies against the client's own record, several devices.
 
+## Mean or p95
+
+Every SPLIT prediction has both the mean latency of the device's frames
+(`total_ms`) and their 95th percentile (`p95_ms`). They describe two
+different experiences of the same system:
+
+- **mean**: what a typical frame costs, the work done on average;
+- **p95**: how slow the slowest 5% are, how regular the latency is.
+
+They choose differently when only part of the frames reaches the server:
+the mean may prefer a split point where some frames are finished on the
+device (fast and slow frames averaging out), the p95 prefers split points
+where every frame takes the same path. From the recordings of the
+verification above:
+
+| Split | Mean | p95 | Why |
+|---|---|---|---|
+| 6 | 43.6 ms | 44.6 ms | every frame served by the server: latencies all alike |
+| 3 | 50.0 ms | 65.5 ms | 25% of the frames finished on the device |
+| −1 | 65.9 ms | 124.7 ms | half served (37 ms), half refused and finished after the next `drain` (94 ms) |
+
+The offloading algorithm (phase 3.6) compares one of the two
+(`offload.objective`), and both are kept, for three reasons:
+
+1. **Experiments**: replaying the same recording with both shows how much
+   the choice matters (how many decisions change, by how much), instead of
+   assuming it.
+2. **Applications**: real-time control (a camera driving an action) cares
+   about the slow frames, p95; analysis that only counts frames processed
+   can use the mean.
+3. **Reactivity**: the mean comes from all the simulated frames, so it is
+   less noisy than the p95 (from ~150–260 frames per split point); with a
+   smaller noise the algorithm's margin is smaller and it reacts sooner. The
+   p95 is steadier but slower.
+
+The default is p95: the goal is a stable latency.
+
 ## Queue formulas (verification 1, superseded)
 
 These closed-form formulas were the cost model's queue until phase 3.5c; the

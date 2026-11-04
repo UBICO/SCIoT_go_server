@@ -90,7 +90,8 @@ type Prediction struct {
 	// P95MS è il 95° percentile della latenza dei frame del device;
 	// RejectedPerSec i frame al secondo rifiutati o scaduti sul server,
 	// WindowFullPerSec quelli trovati con la finestra piena (tutti finiti
-	// sul device). Solo SPLIT, dalla simulazione (sim.go).
+	// sul device). In SPLIT dalla simulazione (sim.go); in LOCAL P95MS è il
+	// tempo del device.
 	P95MS            float64
 	RejectedPerSec   float64
 	WindowFullPerSec float64
@@ -114,7 +115,9 @@ func Predict(in Inputs, split, last int) Prediction {
 
 	if p.Local {
 		p.DeviceMS = deviceMS(in, 0, last, &p)
-		p.LocalMS, p.TotalMS = p.DeviceMS, p.DeviceMS
+		// In LOCAL ogni frame costa lo stesso: anche il p95 è il tempo del
+		// device (la sua variabilità non entra nelle stime).
+		p.LocalMS, p.TotalMS, p.P95MS = p.DeviceMS, p.DeviceMS, p.DeviceMS
 		// Senza A il ritmo è quello del solo calcolo: la latenza non ne
 		// dipende, quindi A non è un ingresso mancante.
 		a := 0.0

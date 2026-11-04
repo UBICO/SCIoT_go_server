@@ -82,8 +82,9 @@ need for the `config.json` of the run.
 
 ### `policy` — the server changed a device's policy
 
-`device_id`, `session_id`, `policy` (the new one), `reason` (`admin`; phase 3
-will add the algorithm's reasons).
+`device_id`, `session_id`, `policy` (the new one), `reason`: `admin`, or
+the algorithm's `latency` (better beyond the margin) or `infeasible` (the
+current split point broke the constraints); see [OFFLOAD.md](OFFLOAD.md).
 
 ### `frame` — the outcome of a SPLIT frame, admitted or not
 
@@ -141,7 +142,9 @@ the device and one clock per duration:
   60 s of continuous saturation the latency includes the queue.
 - **Probe.** In `LOCAL` no frames flow. To a device that declared the
   capability `probe` the server sends a `probe_request` when no message has
-  been measured for `stream.probe_interval_ms` (default 30 s); the device's
+  been measured for `stream.probe_interval_ms` (default 30 s; 5 s,
+  `stream.probe_unknown_interval_ms`, while its bandwidth has no estimate,
+  so that "not limiting" can be reached on a link that never waits); the device's
   answer (`stream.probe_bytes`, default 512 KiB) is measured like a frame
   (docs/PROTOCOL.md, "Probe"). The stream stays open in `LOCAL`, so pings
   also run on a free link there.
@@ -221,8 +224,11 @@ decoder: a frame's own measures replace it as they arrive.
    "p95_ms":44.45,"rho":0.69,"saturated":false},"…"]}
 ```
 
-Written by `sciot-replay algo -out` today, by the server from phase 3.6, in
-the same format. `predictions` has one entry per split point (the last is
+Written by the server at every heartbeat when an algorithm is enabled
+(`offload.algorithm`), and by `sciot-replay algo -out`, in the same format.
+`reason` says why the decision is what it is (`latency`, `infeasible`,
+`best`, `hysteresis`, `min_hold`, `current_unknown`, `no_candidate`,
+`few_samples`, `static`; see [OFFLOAD.md](OFFLOAD.md)). `predictions` has one entry per split point (the last is
 LOCAL), with the fields of [COSTMODEL.md](COSTMODEL.md): how many frames per
 second the device makes and the server serves, the share served, what bounds
 it, the latency of a served frame (`server_ms`) and of one the device

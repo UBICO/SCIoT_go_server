@@ -19,6 +19,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/ewma"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
 	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
+	"github.com/UBICO/SCIoT_go_server/internal/offload"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
@@ -90,6 +91,10 @@ type Server struct {
 
 	rec *record.Recorder // nil = registrazione spenta
 
+	// alg decide la policy dei device a ogni heartbeat; nil = nessuna
+	// decisione (la policy cambia solo con l'admin). Vedi SetAlgorithm.
+	alg offload.Algorithm
+
 	table *heartbeatTable  // usata solo se cfg.Verbose
 	now   func() time.Time // orario delle righe; sostituibile nei test
 }
@@ -132,6 +137,7 @@ func (s *Server) Routes() http.Handler {
 	}
 	if s.cfg.Admin {
 		mux.HandleFunc("POST /api/v1/admin/devices/{id}/policy", s.handleSetPolicy)
+		mux.HandleFunc("DELETE /api/v1/admin/devices/{id}/policy", s.handleUnpin)
 	}
 	return mux
 }
@@ -273,6 +279,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if s.notifier != nil {
 		s.notifier.EndSession(req.DeviceID)
 	}
+	if f, ok := s.alg.(offload.Forgetter); ok {
+		f.Forget(req.DeviceID) // la memoria della sessione precedente non vale più
+	}
 	log.Printf("registered device=%s type=%s model=%s session=%s",
 		req.DeviceID, d.Type, d.Model.ModelKey, d.SessionID)
 	s.rec.Record(&record.Session{DeviceID: d.ID, SessionID: d.SessionID, DeviceType: d.Type,
@@ -359,7 +368,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	serverLoad := s.load.Snapshot()
 	network := s.network(req.DeviceID)
-	s.rec.Record(&record.Heartbeat{
+	hb := &record.Heartbeat{
 		DeviceID:        req.DeviceID,
 		SessionID:       req.SessionID,
 		Applied:         record.Applied{Mode: req.Mode, PolicyVersion: req.PolicyVersion},
@@ -375,7 +384,9 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Service:         s.splitService(res.Model.ModelKey, res.Model.NumLayers),
 		InputBytes:      s.inputBytes(res.Model.ModelKey),
 		MaxInflight:     s.maxInflight(req.DeviceID),
-	})
+	}
+	s.rec.Record(hb)
+	res.Policy = s.decide(req.DeviceID, req.SessionID, hb, res)
 
 	if s.cfg.Verbose {
 		s.table.print(heartbeatRow{
@@ -463,6 +474,26 @@ func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
 		SessionID: d.SessionID,
 		Policy:    d.Policy,
 	})
+}
+
+// handleUnpin restituisce il device all'algoritmo di offloading (solo con
+// cfg.Admin): la policy resta quella dell'admin finché l'algoritmo non decide
+// altrimenti.
+//
+// Esiti:
+//
+//	200 → api.SetPolicyResponse (la policy attuale)
+//	404 device_not_found → device non registrato
+func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	d, err := s.devices.Unpin(id)
+	if errors.Is(err, device.ErrDeviceNotFound) {
+		writeError(w, http.StatusNotFound, api.ErrCodeDeviceNotFound,
+			fmt.Sprintf("device %q is not registered", id))
+		return
+	}
+	log.Printf("admin unpin: device=%s session=%s", id, d.SessionID)
+	writeJSON(w, http.StatusOK, api.SetPolicyResponse{DeviceID: id, SessionID: d.SessionID, Policy: d.Policy})
 }
 
 // ---------------------------------------------------------------------------
@@ -579,11 +610,54 @@ func (s *Server) SetQueue(q QueueSource) { s.queue = q }
 // policy (internal/record).
 func (s *Server) SetRecorder(r *record.Recorder) { s.rec = r }
 
+// wantState dice se serve lo stato completo di un heartbeat: per la
+// registrazione o per l'algoritmo.
+func (s *Server) wantState() bool { return s.rec != nil || s.alg != nil }
+
+// SetAlgorithm attiva l'algoritmo di offloading: a ogni heartbeat decide la
+// policy del device (internal/offload). Va chiamata prima di servire
+// richieste.
+func (s *Server) SetAlgorithm(a offload.Algorithm) { s.alg = a }
+
+// decide esegue l'algoritmo sull'heartbeat hb e, se cambia la policy, la
+// applica: nuova versione nello store, notifica sullo stream, evento policy.
+// Restituisce la policy da mandare al device. Un device bloccato dall'admin
+// non viene toccato.
+//
+// Gira nel gestore dell'heartbeat (meno di 1 ms per yolo-small).
+// shortcut: sincrono; con molti device spostarlo in una goroutine e
+// applicare la decisione all'heartbeat successivo.
+func (s *Server) decide(deviceID, sessionID string, hb *record.Heartbeat, res device.HeartbeatResult) api.Policy {
+	if s.alg == nil || res.Pinned {
+		return res.Policy
+	}
+	now := s.now()
+	st := offload.StateFrom(*hb, now.Sub(res.PolicySince))
+	d := s.alg.Decide(now, st)
+	s.rec.Record(offload.DecisionRecord(st, d, s.alg.Name()))
+	if !d.Changes(res.Policy) {
+		return res.Policy
+	}
+	dev, err := s.devices.SetAutoPolicy(deviceID, sessionID, api.SetPolicyRequest{Mode: d.Mode, SplitPoint: d.SplitPoint})
+	if err != nil {
+		// Bloccato o ri-registrato nel frattempo: la decisione è vecchia.
+		if !errors.Is(err, device.ErrPinned) && !errors.Is(err, device.ErrSessionExpired) {
+			log.Printf("offload: device=%s: %v", deviceID, err)
+		}
+		return res.Policy
+	}
+	if s.notifier != nil {
+		s.notifier.NotifyPolicy(deviceID, dev.Policy)
+	}
+	s.rec.Record(&record.Policy{DeviceID: deviceID, SessionID: sessionID, Policy: dev.Policy, Reason: d.Reason})
+	return dev.Policy
+}
+
 // splitService è S per ogni split point −1..numSegments−2 del modello che il
 // dispatcher sa stimare (misurata o dai segmenti), per la registrazione; nil
 // senza data plane o senza registrazione.
 func (s *Server) splitService(model string, numSegments int) []record.SplitService {
-	if s.queue == nil || s.rec == nil {
+	if s.queue == nil || !s.wantState() {
 		return nil
 	}
 	var out []record.SplitService
@@ -598,7 +672,7 @@ func (s *Server) splitService(model string, numSegments int) []record.SplitServi
 
 // inputBytes sono i byte per split point del modello; nil senza data plane.
 func (s *Server) inputBytes(model string) []api.SegmentSize {
-	if s.notifier == nil || s.rec == nil {
+	if s.notifier == nil || !s.wantState() {
 		return nil
 	}
 	sizes, _ := s.notifier.Segments(model)
@@ -608,7 +682,7 @@ func (s *Server) inputBytes(model string) []api.SegmentSize {
 // maxInflight è la finestra del device per la registrazione; 0 senza data
 // plane.
 func (s *Server) maxInflight(deviceID string) int {
-	if s.notifier == nil || s.rec == nil {
+	if s.notifier == nil || !s.wantState() {
 		return 0
 	}
 	return s.notifier.MaxInflight(deviceID)
@@ -616,7 +690,7 @@ func (s *Server) maxInflight(deviceID string) int {
 
 // queueState è lo stato della coda per la registrazione; nil senza data plane.
 func (s *Server) queueState() *record.Queue {
-	if s.queue == nil || s.rec == nil {
+	if s.queue == nil || !s.wantState() {
 		return nil
 	}
 	q := s.queue.Snapshot()

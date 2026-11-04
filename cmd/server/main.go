@@ -17,6 +17,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
+	"github.com/UBICO/SCIoT_go_server/internal/offload"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
 	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
@@ -97,6 +98,21 @@ func main() {
 	go monitor.Run(ctx)
 
 	srv := server.New(reg, devices, srvCfg, monitor)
+
+	// Algoritmo di offloading: "static" (default) lascia la policy all'admin,
+	// senza calcolare previsioni a ogni heartbeat.
+	algName, algCfg, err := f.OffloadConfig()
+	if err != nil {
+		log.Fatalf("offload config: %v", err)
+	}
+	if algName != (offload.Static{}).Name() {
+		alg, err := offload.New(algName, algCfg)
+		if err != nil {
+			log.Fatalf("offload: %v", err)
+		}
+		srv.SetAlgorithm(alg)
+		log.Printf("offloading algorithm: %s (objective %s)", algName, algCfg.Objective)
+	}
 
 	// --- 3b. Data plane (solo se config.json ha la sezione "worker") ---------
 
@@ -187,7 +203,7 @@ func main() {
 	// Il profilo parte dopo la registrazione, così ne registra gli eventi: un
 	// worker già pronto ha lasciato il segnale nel buffer di profileReady.
 	if dataPlane && dispatchCfg.ProfileRuns > 0 {
-		go profileLoop(ctx, dispatcher, catalog, profileReady, dispatchCfg.ProfileRuns, rec)
+		go profileLoop(ctx, dispatcher, catalog, profileReady, dispatchCfg.ProfileRuns, dispatchCfg.ReprofileAge, rec)
 	}
 
 	// --- 4. Server HTTP con timeout ------------------------------------------

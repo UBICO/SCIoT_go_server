@@ -249,6 +249,15 @@ against the device's model (`-1..last_offloading_layer - 1`). `200`:
 
 Errors: `400 invalid_request`, `404 device_not_found`.
 
+The policy **pins** the device: the offloading algorithm (when enabled,
+[OFFLOAD.md](OFFLOAD.md)) does not change it.
+
+### `DELETE /api/v1/admin/devices/{device_id}/policy` (opt-in)
+
+Releases the pin: the algorithm decides the device's policy again from its
+next heartbeat. The policy itself does not change. `200` with the same body
+as above (the current policy); `404 device_not_found`.
+
 ### `GET /api/v1/server/status`
 
 Load of the server machine (sampled every `load_sample_interval_ms`), plus
@@ -517,9 +526,14 @@ measures it like a frame and does not run it.
 
 - Only to devices that declared the capability `probe`.
 - When the measurement is old: no message measured for
-  `stream.probe_interval_ms` (default 30 s). A device that keeps sending
-  frames is never asked. One probe at a time; one unanswered for that long
-  is replaced by a new one.
+  `stream.probe_interval_ms` (default 30 s), or for
+  `stream.probe_unknown_interval_ms` (default 5 s) while the device's
+  bandwidth has no estimate. On a link where reads never wait (localhost, a
+  fast LAN) no probe is a valid bandwidth sample, and the upload is known
+  only as "not limiting", which needs 3 samples in 60 s: one probe every
+  30 s would never get there. A device that keeps sending frames is never
+  asked. One probe at a time; one unanswered for that long is replaced by a
+  new one.
 - A `probe` with an unknown `probe_id` or the wrong size is answered with an
   `error` (`invalid_frame`, `sequence_id` 0); the probe it should have
   answered stays open.

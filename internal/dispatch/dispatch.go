@@ -45,13 +45,16 @@ type Config struct {
 	// ProfileRuns sono le esecuzioni misurate del profilo di ogni modello,
 	// quando il worker diventa pronto (profile.go); 0 = nessun profilo.
 	ProfileRuns int
+	// ReprofileAge: un modello con la stima di un segmento più vecchia di
+	// così viene profilato di nuovo (StaleModels); 0 = mai.
+	ReprofileAge time.Duration
 }
 
 // DefaultConfig restituisce i valori di partenza.
 func DefaultConfig() Config {
 	// τ = la finestra di λ e ρ: le due misure del servizio guardano lo stesso
 	// passato.
-	return Config{ServiceTau: 10 * time.Second, Window: 10 * time.Second, ProfileRuns: 5}
+	return Config{ServiceTau: 10 * time.Second, Window: 10 * time.Second, ProfileRuns: 5, ReprofileAge: 30 * time.Second}
 }
 
 // key identifica un tipo di job: S dipende dal modello e da quanti layer

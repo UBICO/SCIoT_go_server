@@ -59,6 +59,29 @@ func (d *Dispatcher) Estimate(model string, split int) (st Stats, src Source, ok
 	return Stats{}, "", false
 }
 
+// StaleModels restituisce, in ordine, i modelli già eseguiti almeno una volta
+// che hanno un segmento senza stima o con l'ultima misura più vecchia di
+// maxAge: i segmenti che nessun frame esegue (per esempio 0..k con un device
+// a split k) restano altrimenti al valore del profilo all'avvio, e le
+// previsioni non vedono un server tornato più veloce o più lento.
+func (d *Dispatcher) StaleModels(maxAge time.Duration) []string {
+	now := d.now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []string
+	for model, last := range d.last {
+		for i := 0; i <= last; i++ {
+			s, ok := d.segments[segKey{model, i}]
+			if !ok || now.Sub(s.Last()) > maxAge {
+				out = append(out, model)
+				break
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // ProfileResult è il risultato del profilo di un modello: media delle
 // esecuzioni misurate (riscaldamento escluso).
 type ProfileResult struct {

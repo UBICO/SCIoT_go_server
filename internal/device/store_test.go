@@ -350,3 +350,66 @@ func TestReRegisterResetsAdminPolicy(t *testing.T) {
 		t.Errorf("la nuova sessione deve ripartire da LOCAL v1: %+v", d.Policy)
 	}
 }
+
+func TestAdminPinsThePolicy(t *testing.T) {
+	s := NewStore()
+	reg := s.Register("web_96", "python", fomo, api.Capabilities{})
+	sp := 3
+	split := api.SetPolicyRequest{Mode: api.ModeSplit, SplitPoint: &sp}
+
+	// L'algoritmo cambia la policy di un device libero.
+	d, err := s.SetAutoPolicy("web_96", reg.SessionID, split)
+	if err != nil || d.Pinned || d.Policy.PolicyVersion != 2 {
+		t.Fatalf("SetAutoPolicy: %+v, %v", d, err)
+	}
+	// L'admin la blocca: l'algoritmo non la tocca più.
+	if d, _ := s.SetPolicy("web_96", api.SetPolicyRequest{Mode: api.ModeLocal}); !d.Pinned {
+		t.Fatal("la policy dell'admin deve bloccare il device")
+	}
+	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, split); !errors.Is(err, ErrPinned) {
+		t.Errorf("su un device bloccato: err = %v, atteso ErrPinned", err)
+	}
+	res, _ := s.Heartbeat("web_96", reg.SessionID, 3, api.Telemetry{})
+	if !res.Pinned || res.Policy.Mode != api.ModeLocal {
+		t.Errorf("heartbeat: %+v", res)
+	}
+	// Rilasciato, l'algoritmo può di nuovo cambiarla; la policy resta.
+	if d, err := s.Unpin("web_96"); err != nil || d.Pinned || d.Policy.Mode != api.ModeLocal {
+		t.Errorf("Unpin: %+v, %v", d, err)
+	}
+	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, split); err != nil {
+		t.Errorf("dopo Unpin: %v", err)
+	}
+	if _, err := s.Unpin("mai-visto"); !errors.Is(err, ErrDeviceNotFound) {
+		t.Errorf("Unpin di un device sconosciuto: %v", err)
+	}
+}
+
+func TestAutoPolicyNeedsTheCurrentSession(t *testing.T) {
+	s := NewStore()
+	old := s.Register("web_96", "python", fomo, api.Capabilities{})
+	s.Register("web_96", "python", fomo, api.Capabilities{}) // nuova sessione
+	if _, err := s.SetAutoPolicy("web_96", old.SessionID, api.SetPolicyRequest{Mode: api.ModeLocal}); !errors.Is(err, ErrSessionExpired) {
+		t.Errorf("decisione sulla sessione vecchia: err = %v, atteso ErrSessionExpired", err)
+	}
+}
+
+func TestPolicySince(t *testing.T) {
+	s := NewStore()
+	now := time.Unix(1000, 0)
+	s.now = func() time.Time { return now }
+	reg := s.Register("web_96", "python", fomo, api.Capabilities{})
+	if !reg.PolicySince.Equal(now) {
+		t.Errorf("alla registrazione: %v", reg.PolicySince)
+	}
+	now = now.Add(5 * time.Second)
+	d, _ := s.SetAutoPolicy("web_96", reg.SessionID, api.SetPolicyRequest{Mode: api.ModeLocal})
+	if !d.PolicySince.Equal(now) {
+		t.Errorf("dopo un cambio: %v, atteso %v", d.PolicySince, now)
+	}
+	// Rilasciare non cambia la policy, quindi neanche PolicySince.
+	now = now.Add(5 * time.Second)
+	if d, _ := s.Unpin("web_96"); !d.PolicySince.Equal(now.Add(-5 * time.Second)) {
+		t.Errorf("Unpin ha cambiato PolicySince: %v", d.PolicySince)
+	}
+}
