@@ -274,3 +274,20 @@ func TestPostprocessOverrideErrors(t *testing.T) {
 		t.Errorf("override nil: %+v, %v", got, err)
 	}
 }
+
+// testdata/model_hash è la specifica eseguibile dell'hash, condivisa con il
+// worker e con il client Python: tutti devono dare expected_hash.
+func TestHashMatchesTestdata(t *testing.T) {
+	dir := filepath.Join("..", "..", "testdata", "model_hash")
+	want, err := os.ReadFile(filepath.Join(dir, "expected_hash"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := hashTFLiteDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != strings.TrimSpace(string(want)) {
+		t.Errorf("hash %s, expected_hash %s", got, want)
+	}
+}

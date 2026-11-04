@@ -1,0 +1,23 @@
+# Configuration of the client for the Go server (http_go_client).
+# Command-line options override these values (--server, --device-id,
+# --model-dir, --image, --no-probe); --config or $SCIOT_GO_CLIENT_CONFIG use
+# another file.
+# Relative paths are relative to this file. Unknown keys are an error.
+
+# Go server address.
+server: http://127.0.0.1:8080
+
+# Unique per device: the server keeps one session per device_id.
+device_id: mac1
+
+# Directory built by sciot-model build (Go server repo, docs/MODELS.md): the
+# SAME files the server serves, or the model_hash will not match. Required.
+# model_dir: ~/sciot-models/yolo_small_320
+model_dir: ~/Documents/Ricerca/sciot-models/yolo_small_320
+
+# Static input image, resized to the model input.
+image: stop.png
+
+# Answer the server's bandwidth probes (a few hundred KB every ~30 s while the
+# network is not measured, e.g. in LOCAL). false: e.g. a metered link.
+probe: true

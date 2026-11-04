@@ -1,0 +1,43 @@
+[project]
+name = "sciot-client"
+description = "Python device client for the SCIoT Go server (v1 protocol)"
+version = "0.1.0"
+# TensorFlow 2.20 and 2.21 have no wheels for Python 3.14.
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # The runtime the legacy client ran on the Raspberry Pi; same version as the worker.
+    "tensorflow==2.20.0",
+    "numpy>=1.26",
+    "pillow>=10",
+    "pyyaml>=6",
+    "requests>=2.31",
+    "websockets>=13,<18",  # 17 deprecates connect() without a context manager
+    "psutil>=5.9",
+]
+
+[project.scripts]
+sciot-client = "sciot_client.http_go_client:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "matplotlib>=3.8"]  # matplotlib: plots of scripts/bench_split.py
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sciot_client*"]
+
+[tool.setuptools.package-data]
+sciot_client = ["go_client.yaml", "stop.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]  # tests import scripts/ (not a package)
+markers = [
+    "external_server: needs a running Go server (SCIOT_GO_SERVER_URL, SCIOT_MODEL_DIR)",
+]
+addopts = "-m 'not external_server'"
+
+[tool.ruff]
+line-length = 100

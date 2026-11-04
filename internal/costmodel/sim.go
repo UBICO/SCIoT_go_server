@@ -19,7 +19,7 @@ import (
 // slot restano vuoti. La simulazione esegue le stesse regole del codice vero
 // per qualche secondo virtuale e conta.
 //
-// Regole del client (SCIoT_python_client, http_go_client.py e
+// Regole del client (client/sciot_client, http_go_client.py e
 // split_pipeline.py), in ordine in ogni ciclo:
 //
 //  1. drain: ogni errore ricevuto (rifiuto, scadenza) viene finito sul
