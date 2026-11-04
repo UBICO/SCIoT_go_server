@@ -143,6 +143,9 @@ class Policy:
     mode: str
     split_point: int | None
     policy_version: int
+    # SPLIT window: frames in flight at most. None = the stream's maximum
+    # (max_inflight of the hello); always None in LOCAL.
+    max_inflight: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> Policy:
@@ -153,17 +156,24 @@ class Policy:
         # would hide a contract violation.
         split_point = data["split_point"]
         policy_version = int(data["policy_version"])
+        window = data.get("max_inflight")
 
         if mode == MODE_LOCAL:
             if split_point is not None:
                 raise ValueError(f"LOCAL policy must have split_point None, got {split_point!r}")
+            if window is not None:
+                raise ValueError(f"LOCAL policy must have no max_inflight, got {window!r}")
             return cls(mode, None, policy_version)
 
         if mode == MODE_SPLIT:
             # bool is a subclass of int: JSON true must not pass as layer 1.
             if not isinstance(split_point, int) or isinstance(split_point, bool):
                 raise ValueError(f"SPLIT policy requires an int split_point, got {split_point!r}")
-            return cls(mode, split_point, policy_version)
+            if window is not None and (
+                not isinstance(window, int) or isinstance(window, bool) or window < 1
+            ):
+                raise ValueError(f"max_inflight must be an int >= 1, got {window!r}")
+            return cls(mode, split_point, policy_version, window)
 
         raise ValueError(f"unknown policy mode {mode!r}")
 

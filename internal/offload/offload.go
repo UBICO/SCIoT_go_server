@@ -32,6 +32,10 @@ type State struct {
 	// finestra dell'heartbeat (telemetria).
 	FramesPerSec float64
 
+	// MaxWindow è il massimo della finestra del device (max_inflight
+	// dell'hello, stream.max_inflight); 0 = sconosciuto (senza stream).
+	MaxWindow int
+
 	// Inputs sono gli ingressi del modello di costo, con Queue che descrive
 	// il server SENZA questo device (Others).
 	Inputs costmodel.Inputs
@@ -45,27 +49,70 @@ func (s State) Split() int {
 	return s.Last
 }
 
-// Decision è la scelta di un algoritmo.
-type Decision struct {
-	// Mode e SplitPoint della policy scelta; la versione la assegna il
-	// server quando la applica.
-	Mode       api.ExecutionMode
-	SplitPoint *int
-	Reason     string
-	// Predictions sono le previsioni con cui ha scelto, una per split point
-	// (−1..Last, Last = LOCAL), se l'algoritmo ne usa.
-	Predictions []costmodel.Prediction
+// Window è la finestra della policy: 0 in LOCAL, MaxWindow se la policy non
+// ne ha una.
+func (s State) Window() int {
+	if s.Policy.Mode != api.ModeSplit {
+		return 0
+	}
+	return window(s.Policy.MaxInflight, s.MaxWindow)
 }
 
-// Changes dice se la decisione cambia la policy attuale.
-func (d Decision) Changes(current api.Policy) bool {
+// window è la finestra effettiva: w, o max se w è nil.
+func window(w *int, max int) int {
+	if w == nil {
+		return max
+	}
+	return *w
+}
+
+// Decision è la scelta di un algoritmo.
+type Decision struct {
+	// Mode, SplitPoint e MaxInflight (la finestra, nil = il massimo) della
+	// policy scelta; la versione la assegna il server quando la applica.
+	Mode        api.ExecutionMode
+	SplitPoint  *int
+	MaxInflight *int
+	Reason      string
+	// Predictions sono le previsioni con cui ha scelto, una per coppia
+	// (split point, finestra) e una per LOCAL (PredictAll), se l'algoritmo ne
+	// usa.
+	Predictions []costmodel.Prediction
+	// Pending è il carico prenotato da altri device e non ancora visibile
+	// nella misura, aggiunto agli altri prima di prevedere (reserve.go).
+	Pending Load
+}
+
+// Split è lo split point della decisione: last per LOCAL.
+func (d Decision) Split(last int) int {
+	if d.Mode == api.ModeSplit && d.SplitPoint != nil {
+		return *d.SplitPoint
+	}
+	return last
+}
+
+// Window è la finestra della decisione: 0 in LOCAL, maxWindow se nil.
+func (d Decision) Window(maxWindow int) int {
+	if d.Mode != api.ModeSplit {
+		return 0
+	}
+	return window(d.MaxInflight, maxWindow)
+}
+
+// Changes dice se la decisione cambia la policy attuale: modo, split point o
+// finestra. maxWindow è il massimo della finestra: una finestra nil vale
+// maxWindow, quindi nil e maxWindow sono la stessa finestra.
+func (d Decision) Changes(current api.Policy, maxWindow int) bool {
 	if d.Mode != current.Mode {
 		return true
 	}
 	if d.Mode != api.ModeSplit {
 		return false
 	}
-	return d.SplitPoint == nil || current.SplitPoint == nil || *d.SplitPoint != *current.SplitPoint
+	if d.SplitPoint == nil || current.SplitPoint == nil || *d.SplitPoint != *current.SplitPoint {
+		return true
+	}
+	return window(d.MaxInflight, maxWindow) != window(current.MaxInflight, maxWindow)
 }
 
 // Algorithm decide la policy di un device.
@@ -74,13 +121,39 @@ type Algorithm interface {
 	Decide(now time.Time, s State) Decision
 }
 
-// PredictAll prevede il costo di ogni split point −1..Last (Last = LOCAL).
+// PredictAll prevede il costo di ogni coppia (split point, finestra): split
+// −1..Last−1, finestra MaxWindow..1, e per ultimo LOCAL (Window 0).
+//
+// L'ordine conta: a parità di valore l'algoritmo sceglie la previsione che
+// viene dopo (latency.go, best), cioè lo split più alto e, a pari split, la
+// finestra più piccola: meno carico sul server.
+//
+// Con MaxWindow sconosciuto (0) una sola previsione per split, con finestra
+// 0: il modello di costo la segna come mancante ("max_inflight").
 func PredictAll(s State) []costmodel.Prediction {
-	out := make([]costmodel.Prediction, 0, s.Last+2)
-	for k := -1; k <= s.Last; k++ {
-		out = append(out, costmodel.Predict(s.Inputs, k, s.Last))
+	var out []costmodel.Prediction
+	lowest := min(s.MaxWindow, 1) // 0 solo con MaxWindow sconosciuto: una sola finestra, la 0
+	for k := -1; k < s.Last; k++ {
+		for w := s.MaxWindow; w >= lowest; w-- {
+			in := s.Inputs
+			in.MaxInflight = w
+			p := costmodel.Predict(in, k, s.Last)
+			p.Window = w
+			out = append(out, p)
+		}
 	}
-	return out
+	return append(out, costmodel.Predict(s.Inputs, s.Last, s.Last))
+}
+
+// IndexOf è l'indice della previsione per lo split point split e la
+// finestra window (ignorata per LOCAL); −1 se non c'è.
+func IndexOf(preds []costmodel.Prediction, split, window int) int {
+	for i, p := range preds {
+		if p.Split == split && (p.Local || p.Window == window) {
+			return i
+		}
+	}
+	return -1
 }
 
 // Names sono gli algoritmi disponibili (offload.algorithm in config.json).
@@ -113,6 +186,7 @@ func (Static) Decide(now time.Time, s State) Decision {
 	return Decision{
 		Mode:        s.Policy.Mode,
 		SplitPoint:  s.Policy.SplitPoint,
+		MaxInflight: s.Policy.MaxInflight,
 		Reason:      "static",
 		Predictions: PredictAll(s),
 	}
@@ -192,8 +266,9 @@ func CycleMS(t api.Telemetry, gapMS float64, split bool, last int, uploadMS floa
 func DecisionRecord(s State, d Decision, algorithm string) *record.Decision {
 	return &record.Decision{
 		DeviceID: s.DeviceID, Algorithm: algorithm, Current: s.Policy,
-		Mode: d.Mode, SplitPoint: d.SplitPoint,
-		Changed: d.Changes(s.Policy), Reason: d.Reason,
+		Mode: d.Mode, SplitPoint: d.SplitPoint, MaxInflight: d.MaxInflight,
+		Changed: d.Changes(s.Policy, s.MaxWindow), Reason: d.Reason,
+		PendingPerSec: d.Pending.PerSec, PendingErlangs: d.Pending.Erlangs,
 		Predictions: RecordPredictions(d.Predictions),
 	}
 }
@@ -211,7 +286,7 @@ func RecordPredictions(ps []costmodel.Prediction) []record.Prediction {
 	out := make([]record.Prediction, len(ps))
 	for i, p := range ps {
 		out[i] = record.Prediction{
-			SplitPoint: p.Split, Local: p.Local,
+			SplitPoint: p.Split, Window: p.Window, Local: p.Local,
 			TotalMS: finite(p.TotalMS), DeviceMS: p.DeviceMS, UploadMS: p.UploadMS,
 			WaitMS: finite(p.WaitMS), ServiceMS: p.ServiceMS, SuffixMS: p.SuffixMS,
 			ServerMS: finite(p.ServerMS), LocalMS: p.LocalMS,

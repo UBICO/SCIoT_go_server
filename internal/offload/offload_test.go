@@ -3,6 +3,7 @@ package offload
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestStaticKeepsThePolicy(t *testing.T) {
 	} {
 		s := state(p)
 		d := Static{}.Decide(time.Unix(0, 0), s)
-		if d.Changes(p) || d.Mode != p.Mode || d.Reason != "static" {
+		if d.Changes(p, 0) || d.Mode != p.Mode || d.Reason != "static" {
 			t.Errorf("policy %+v: decisione %+v", p, d)
 		}
 		if len(d.Predictions) != s.Last+2 || d.Predictions[0].Split != -1 || !d.Predictions[s.Last+1].Local {
@@ -57,11 +58,55 @@ func TestChanges(t *testing.T) {
 		{Decision{Mode: api.ModeSplit, SplitPoint: ip(1)}, split1, false},
 		{Decision{Mode: api.ModeSplit, SplitPoint: ip(0)}, split1, true},
 		{Decision{Mode: api.ModeLocal}, split1, true},
+		// Finestra, con massimo 3: nil vale 3.
+		{Decision{Mode: api.ModeSplit, SplitPoint: ip(1), MaxInflight: ip(3)}, split1, false},
+		{Decision{Mode: api.ModeSplit, SplitPoint: ip(1), MaxInflight: ip(2)}, split1, true},
+		{Decision{Mode: api.ModeSplit, SplitPoint: ip(1)}, api.Policy{Mode: api.ModeSplit, SplitPoint: ip(1), MaxInflight: ip(2)}, true},
+		{Decision{Mode: api.ModeSplit, SplitPoint: ip(1), MaxInflight: ip(2)}, api.Policy{Mode: api.ModeSplit, SplitPoint: ip(1), MaxInflight: ip(2)}, false},
 	}
 	for _, c := range cases {
-		if got := c.d.Changes(c.p); got != c.want {
+		if got := c.d.Changes(c.p, 3); got != c.want {
 			t.Errorf("%+v su %+v: Changes = %v, atteso %v", c.d, c.p, got, c.want)
 		}
+	}
+}
+
+func TestPredictAllWindows(t *testing.T) {
+	s := state(api.Policy{Mode: api.ModeLocal})
+	s.MaxWindow = 3
+	s.Inputs.CycleMS = f(1)
+	ps := PredictAll(s)
+	// Split −1..1 × finestre 3, 2, 1, poi LOCAL.
+	var got []candidate
+	for _, p := range ps {
+		got = append(got, candidate{p.Split, p.Window})
+	}
+	want := []candidate{{-1, 3}, {-1, 2}, {-1, 1}, {0, 3}, {0, 2}, {0, 1}, {1, 3}, {1, 2}, {1, 1}, {2, 0}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("candidati %v, attesi %v", got, want)
+	}
+	if !ps[len(ps)-1].Local {
+		t.Error("l'ultima previsione deve essere LOCAL")
+	}
+	// La finestra entra nella simulazione: allo split −1 con 2 slot, una
+	// finestra 3 accoda il device dietro ai propri frame più di una 1.
+	if !(ps[0].WaitMS >= ps[2].WaitMS) {
+		t.Errorf("attesa con finestra 3 = %v, con 1 = %v", ps[0].WaitMS, ps[2].WaitMS)
+	}
+	if i := IndexOf(ps, 0, 2); i != 4 {
+		t.Errorf("IndexOf(0, 2) = %d, atteso 4", i)
+	}
+	if i := IndexOf(ps, 2, 7); i != 9 {
+		t.Errorf("IndexOf(LOCAL) = %d, atteso 9: la finestra non conta", i)
+	}
+	if i := IndexOf(ps, 0, 4); i != -1 {
+		t.Errorf("IndexOf(finestra oltre il massimo) = %d", i)
+	}
+	// Senza massimo noto: una previsione per split, che lo segna mancante.
+	s.MaxWindow = 0
+	ps = PredictAll(s)
+	if len(ps) != s.Last+2 || !slices.Contains(ps[0].Missing, "max_inflight") {
+		t.Errorf("senza massimo: %d previsioni, mancanti %v", len(ps), ps[0].Missing)
 	}
 }
 

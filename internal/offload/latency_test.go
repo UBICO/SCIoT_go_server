@@ -36,7 +36,7 @@ func TestLatencyMovesToTheBest(t *testing.T) {
 	// margine di max(2, 4.5) = 4.5 ms, ma con σ = 1 su entrambi (√2 ≈ 1.4)
 	// il margine diventa 5.9: resta.
 	sigma[1], sigma[2] = 1, 1
-	if d := l.choose(onSplit(1, time.Minute), preds(), sigma, n); d.Changes(onSplit(1, 0).Policy) || d.Reason != ReasonHysteresis {
+	if d := l.choose(onSplit(1, time.Minute), preds(), sigma, n); d.Changes(onSplit(1, 0).Policy, 0) || d.Reason != ReasonHysteresis {
 		t.Errorf("guadagno sotto il margine: %+v", d)
 	}
 	// Da split −1 (50 ms): 10 ms di guadagno, margine ≈ 6.4 ms: cambia.
@@ -45,7 +45,7 @@ func TestLatencyMovesToTheBest(t *testing.T) {
 		t.Errorf("guadagno oltre il margine: %+v", d)
 	}
 	// Già sul migliore.
-	if d := l.choose(onSplit(0, time.Minute), preds(), sigma, n); d.Reason != ReasonBest || d.Changes(onSplit(0, 0).Policy) {
+	if d := l.choose(onSplit(0, time.Minute), preds(), sigma, n); d.Reason != ReasonBest || d.Changes(onSplit(0, 0).Policy, 0) {
 		t.Errorf("sul migliore: %+v", d)
 	}
 }
@@ -53,7 +53,7 @@ func TestLatencyMovesToTheBest(t *testing.T) {
 func TestLatencyMinHold(t *testing.T) {
 	l := NewLatency(DefaultLatencyConfig())
 	sigma, n := calm()
-	if d := l.choose(onSplit(-1, 5*time.Second), preds(), sigma, n); d.Reason != ReasonMinHold || d.Changes(onSplit(-1, 0).Policy) {
+	if d := l.choose(onSplit(-1, 5*time.Second), preds(), sigma, n); d.Reason != ReasonMinHold || d.Changes(onSplit(-1, 0).Policy, 0) {
 		t.Errorf("policy di 5 s: %+v; attesa la durata minima", d)
 	}
 }
@@ -111,7 +111,7 @@ func TestLatencyUnknownCurrent(t *testing.T) {
 	sigma, n := calm()
 	ps := preds()
 	ps[0].Missing = []string{"cycle"}
-	if d := l.choose(onSplit(-1, time.Minute), ps, sigma, n); d.Reason != ReasonUnknown || d.Changes(onSplit(-1, 0).Policy) {
+	if d := l.choose(onSplit(-1, time.Minute), ps, sigma, n); d.Reason != ReasonUnknown || d.Changes(onSplit(-1, 0).Policy, 0) {
 		t.Errorf("attuale sconosciuto: %+v", d)
 	}
 }

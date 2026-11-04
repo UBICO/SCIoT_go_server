@@ -272,7 +272,7 @@ class SplitPipeline:
             deadline = self.segment_times.remaining_ms(layer, self.last_layer)
         pending = Pending(self._seq, layer, policy.policy_version, output, captured_at, deadline)
         payload = np.ascontiguousarray(output, dtype=np.float32).tobytes()
-        if not client.send(pending, payload):
+        if not client.send(pending, payload, window=policy.max_inflight):
             self.counts["window_full"] += 1
             self._finish_locally(layer, output, captured_at, version, frame, "window_full")
             return

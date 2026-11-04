@@ -656,8 +656,9 @@ func (h *Handler) Segments(modelKey string) ([]api.SegmentSize, bool) {
 	return h.catalog.Segments(modelKey)
 }
 
-// MaxInflight è la finestra del device: oggi uguale per tutti (config),
-// per device dalla Fase 3.7.
+// MaxInflight è il massimo della finestra del device (stream.max_inflight,
+// uguale per tutti): quello dell'hello. La finestra di ogni device la sceglie
+// l'algoritmo, nella policy (docs/OFFLOAD.md, "Window").
 func (h *Handler) MaxInflight(deviceID string) int { return h.cfg.MaxInflight }
 
 // lookup restituisce lo stream aperto del device, o nil.

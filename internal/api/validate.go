@@ -71,6 +71,9 @@ func (r SetPolicyRequest) Validate(m ModelInfo) error {
 		if r.SplitPoint != nil {
 			return fmt.Errorf("LOCAL policy must not have a split_point, got %d", *r.SplitPoint)
 		}
+		if r.MaxInflight != nil {
+			return fmt.Errorf("LOCAL policy must not have a max_inflight, got %d", *r.MaxInflight)
+		}
 	case ModeSplit:
 		if r.SplitPoint == nil {
 			return errors.New("SPLIT policy requires a split_point")
@@ -78,6 +81,10 @@ func (r SetPolicyRequest) Validate(m ModelInfo) error {
 		if sp := *r.SplitPoint; sp < -1 || sp > m.LastOffloadingLayer-1 {
 			return fmt.Errorf("split_point %d out of range [-1, %d] for model %q (%d would leave nothing to the server: use LOCAL)",
 				sp, m.LastOffloadingLayer-1, m.ModelKey, m.LastOffloadingLayer)
+		}
+		// Il massimo è dello stream: lo controlla chi lo conosce (il server).
+		if r.MaxInflight != nil && *r.MaxInflight < 1 {
+			return fmt.Errorf("max_inflight must be >= 1, got %d", *r.MaxInflight)
 		}
 	default:
 		return fmt.Errorf("invalid mode %q", r.Mode)

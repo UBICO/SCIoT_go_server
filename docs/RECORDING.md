@@ -77,14 +77,16 @@ need for the `config.json` of the run.
   split points or by the [profile](#profile--the-server-profiled-a-model));
   `std_ms` and `samples` only for `measured`;
   `input_bytes` the bytes a device sends at each split point (`split_point`,
-  `input_bytes`), from the worker; `max_inflight` the device's window. With
+  `input_bytes`), from the worker; `max_inflight` the maximum of the
+  device's window (the hello's). With
   these a replay rebuilds the cost model's inputs (`sciot-replay algo`).
 
 ### `policy` — the server changed a device's policy
 
-`device_id`, `session_id`, `policy` (the new one), `reason`: `admin`, or
-the algorithm's `latency` (better beyond the margin) or `infeasible` (the
-current split point broke the constraints); see [OFFLOAD.md](OFFLOAD.md).
+`device_id`, `session_id`, `policy` (the new one, with its window
+`max_inflight` when it has one), `reason`: `admin`, or the algorithm's
+`latency` (better beyond the margin) or `infeasible` (the current candidate
+broke the constraints); see [OFFLOAD.md](OFFLOAD.md).
 
 ### `frame` — the outcome of a SPLIT frame, admitted or not
 
@@ -218,7 +220,7 @@ decoder: a frame's own measures replace it as they arrive.
 {"kind":"decision","ts":"…","t_ms":81234.5,"device_id":"web_96","algorithm":"static",
  "current":{"mode":"SPLIT","split_point":6,"policy_version":2},
  "mode":"SPLIT","split_point":6,"changed":false,"reason":"static",
- "predictions":[{"split_point":6,"local":false,"total_ms":43.53,"device_ms":17.03,"upload_ms":0.04,
+ "predictions":[{"split_point":6,"window":3,"local":false,"total_ms":43.53,"device_ms":17.03,"upload_ms":0.04,
    "wait_ms":0,"service_ms":26.42,"suffix_ms":45.27,"server_ms":43.53,"local_ms":62.3,
    "frames_per_s":52.4,"server_frames_per_s":52.4,"server_share":1,"bound":"device",
    "p95_ms":44.45,"rho":0.69,"saturated":false},"…"]}
@@ -228,8 +230,14 @@ Written by the server at every heartbeat when an algorithm is enabled
 (`offload.algorithm`), and by `sciot-replay algo -out`, in the same format.
 `reason` says why the decision is what it is (`latency`, `infeasible`,
 `best`, `hysteresis`, `min_hold`, `current_unknown`, `no_candidate`,
-`few_samples`, `static`; see [OFFLOAD.md](OFFLOAD.md)). `predictions` has one entry per split point (the last is
-LOCAL), with the fields of [COSTMODEL.md](COSTMODEL.md): how many frames per
+`few_samples`, `static`; see [OFFLOAD.md](OFFLOAD.md)). `max_inflight` is
+the chosen window, absent for `LOCAL` and for a policy without one.
+`pending_per_s` and `pending_erlangs` are the load other devices reserved
+and the dispatcher does not measure yet, added to the others' before
+predicting ([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
+`predictions` has one entry per candidate, a pair split point and `window`
+(split −1..last−1, window from the maximum down to 1), and LOCAL last
+(no `window`), with the fields of [COSTMODEL.md](COSTMODEL.md): how many frames per
 second the device makes and the server serves, the share served, what bounds
 it, the latency of a served frame (`server_ms`) and of one the device
 finishes (`local_ms`), the overall mean (`total_ms`) and 95th percentile

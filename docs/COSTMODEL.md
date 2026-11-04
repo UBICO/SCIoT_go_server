@@ -24,8 +24,10 @@ A prediction lists its missing inputs (a segment never run, no bandwidth, no
 
 ## Frames the device sends: simulation
 
-The client never waits for the server: with `max_inflight` frames in flight,
-or a frame refused, it finishes the frame itself and goes on. So at a split
+The client never waits for the server: with its window full (`max_inflight`
+frames in flight; the algorithm chooses the window with the split point,
+[OFFLOAD.md](OFFLOAD.md#window)), or a frame refused, it finishes the frame
+itself and goes on. So at a split
 point only part of the frames may reach the server (`share`). Value-average
 formulas got this badly wrong (3× too many frames to the server at split −1),
 because two behaviours depend on the exact order of events:

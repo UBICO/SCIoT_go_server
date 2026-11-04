@@ -209,8 +209,20 @@ class DataPlaneClient:
 
     # --- sending ---------------------------------------------------------
 
-    def send(self, pending: Pending, payload: bytes, *, want_raw: bool = False) -> bool:
+    def send(
+        self,
+        pending: Pending,
+        payload: bytes,
+        *,
+        window: int | None = None,
+        want_raw: bool = False,
+    ) -> bool:
         """Send a frame without waiting for its answer.
+
+        ``window`` is the policy's window (frames in flight at most), capped
+        by the hello's ``max_inflight``; None = the hello's. A smaller window
+        does not touch the frames already in flight: new ones wait until
+        fewer are.
 
         Returns False, without sending, when the window is full or the stream
         is closed: the caller then runs the frame LOCAL. Raises ValueError
@@ -225,7 +237,10 @@ class DataPlaneClient:
                 f"split point {pending.split_point}: {len(payload)} bytes, server expects {expected}"
             )
         with self._lock:
-            if self._closed or len(self._inflight) >= self.hello.max_inflight:
+            limit = (
+                self.hello.max_inflight if window is None else min(window, self.hello.max_inflight)
+            )
+            if self._closed or len(self._inflight) >= limit:
                 return False
             # In the window BEFORE sending: the answer can arrive before
             # send() returns, and the receiver must find the frame.

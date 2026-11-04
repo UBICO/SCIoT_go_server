@@ -83,6 +83,9 @@ func TestSetPolicyRequestValidate(t *testing.T) {
 		{"split sotto -1", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(-2)}, true},
 		{"split oltre il modello", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(59)}, true},
 		{"mode sconosciuto", SetPolicyRequest{Mode: "REMOTE"}, true},
+		{"split con finestra", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(3), MaxInflight: intp(2)}, false},
+		{"finestra zero", SetPolicyRequest{Mode: ModeSplit, SplitPoint: intp(3), MaxInflight: intp(0)}, true},
+		{"local con finestra", SetPolicyRequest{Mode: ModeLocal, MaxInflight: intp(2)}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

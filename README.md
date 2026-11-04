@@ -28,7 +28,9 @@ Status:
   recording of events for offline evaluation
 - [ ] phase 3, offloading algorithm: cost model with a simulation of device
   and queue, `latency` algorithm (opt-in, `offload.algorithm`; by default
-  the policy changes only from the admin endpoint), verification in progress
+  the policy changes only from the admin endpoint) choosing split point and
+  window per device, with reservations for devices that decide together;
+  verification in progress
 
 The reference device client is in `client/`, in Python
 ([docs/CLIENT.md](docs/CLIENT.md), with the SPLIT and network benchmarks).
@@ -130,7 +132,7 @@ paths):
 | `worker.address` | — | worker gRPC address, `host:port` on the same machine |
 | `worker.slots`, `worker.threads` | — | parallel inferences × TFLite threads each; required when `command` is set |
 | `worker.startup_timeout_ms` | 120000 | time for the worker to load TensorFlow and the models before a restart |
-| `stream.max_inflight` | 3 | frames per device in flight at the same time |
+| `stream.max_inflight` | 3 | maximum frames per device in flight at the same time; with `offload.algorithm` `latency` each device's window is chosen in 1..this ([docs/OFFLOAD.md](docs/OFFLOAD.md#window)) |
 | `stream.default_deadline_ms` | 1000 | frame deadline when the client sends none |
 | `stream.max_message_bytes` | 8388608 | largest WebSocket message, 1024–67108864 |
 | `stream.ping_interval_ms` | 1000 | ping on the stream to measure each device's latency, 100–60000; 0 = never ([docs/RECORDING.md](docs/RECORDING.md#network)) |

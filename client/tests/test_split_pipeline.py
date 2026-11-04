@@ -65,6 +65,7 @@ class FakeClient:
         self.on_result, self.on_error, self.on_closed = on_result, on_error, on_closed
         self.accept, self.fail_open = accept, fail_open
         self.sent: list[tuple[dpc.Pending, bytes]] = []
+        self.windows: list[int | None] = []  # the window passed to each send
         self.closed = False
         self.close_calls = 0
         FakeClient.instances.append(self)
@@ -74,10 +75,11 @@ class FakeClient:
             raise OSError("connection refused")
         return dpc.Hello(3, 1 << 20, cpc.Policy("SPLIT", 4, 5), {4: 16})
 
-    def send(self, pending, payload):
+    def send(self, pending, payload, window=None):
         if not self.accept:
             return False
         self.sent.append((pending, payload))
+        self.windows.append(window)
         return True
 
     @property
@@ -421,3 +423,11 @@ def test_split_minus_one_sends_the_model_input():
     pending, payload = FakeClient.instances[0].sent[0]
     assert pending.split_point == -1 and len(payload) == 16
     assert pending.deadline_ms == pytest.approx(8.0), "tutti gli 8 segmenti restano da fare"
+
+
+def test_the_policy_window_reaches_send():
+    p, _runs, _ = make()
+    x = np.zeros((1, 4), dtype=np.float32)
+    p.handle_output(cpc.Policy("SPLIT", 4, 3, 2), 4, x, "T", 1.0, 0.0)
+    p.handle_output(cpc.Policy("SPLIT", 4, 4), 4, x, "T", 1.0, 0.0)
+    assert FakeClient.instances[0].windows == [2, None], "None: the hello's maximum"

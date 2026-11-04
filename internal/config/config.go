@@ -380,6 +380,10 @@ const maxProfileRuns = 100
 // offload.DefaultLatencyConfig() con sopra i valori presenti nel file.
 func (f File) OffloadConfig() (string, offload.LatencyConfig, error) {
 	o, cfg := f.Offload, offload.DefaultLatencyConfig()
+	// Le prenotazioni si spengono con la finestra su cui il dispatcher misura λ.
+	if d, err := f.DispatchConfig(); err == nil {
+		cfg.ReserveWindow = d.Window
+	}
 	name := o.Algorithm
 	if name == "" {
 		name = offload.Static{}.Name()

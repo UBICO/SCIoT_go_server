@@ -302,10 +302,16 @@ func (s *Store) setPolicyLocked(d Device, req api.SetPolicyRequest) (Device, err
 		sp := *req.SplitPoint
 		splitPoint = &sp
 	}
+	var window *int
+	if req.MaxInflight != nil {
+		w := *req.MaxInflight
+		window = &w
+	}
 	d.Policy = api.Policy{
 		Mode:          req.Mode,
 		SplitPoint:    splitPoint,
 		PolicyVersion: d.Policy.PolicyVersion + 1,
+		MaxInflight:   window,
 	}
 	d.PolicySince = s.now()
 	return d, nil

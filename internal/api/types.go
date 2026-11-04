@@ -126,6 +126,10 @@ type Policy struct {
 	// "split_point": null esplicito.
 	SplitPoint    *int   `json:"split_point"`
 	PolicyVersion uint64 `json:"policy_version"`
+	// MaxInflight è la finestra del device in SPLIT: frame in volo al
+	// massimo (Fase 3.7). Assente = il massimo dell'hello (stream.max_inflight);
+	// sempre assente in LOCAL.
+	MaxInflight *int `json:"max_inflight,omitempty"`
 }
 
 // RegisterResponse è il corpo della risposta 200 a /api/v1/register.
@@ -279,10 +283,14 @@ type ModelsResponse struct {
 // la assegna il server (versione corrente + 1).
 //
 //	{"mode": "SPLIT", "split_point": 5}
+//	{"mode": "SPLIT", "split_point": 5, "max_inflight": 2}
 //	{"mode": "LOCAL", "split_point": null}
 type SetPolicyRequest struct {
 	Mode       ExecutionMode `json:"mode"`
 	SplitPoint *int          `json:"split_point"`
+	// MaxInflight è la finestra in SPLIT (Policy.MaxInflight); assente = il
+	// massimo dello stream.
+	MaxInflight *int `json:"max_inflight,omitempty"`
 }
 
 // SetPolicyResponse restituisce la policy che il device riceverà al
