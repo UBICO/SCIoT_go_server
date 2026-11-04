@@ -135,8 +135,8 @@ the device and one clock per duration:
   of the pings of the last 60 s. Not an average: the device's pong travels
   on the same link as its frames, and with the link saturated it waits
   behind the bytes already in the device's TCP send buffer (bufferbloat:
-  ~170 ms at 50 Mbit/s, measured with the client repo's
-  `scripts/bench_network.py`), so those pings measure the queue, not the
+  ~170 ms at 50 Mbit/s, measured with
+  `client/scripts/bench_network.py`), so those pings measure the queue, not the
   latency. The long window keeps a value measured while the link was free
   (LOCAL, startup, pauses) through a period of saturation; after more than
   60 s of continuous saturation the latency includes the queue.

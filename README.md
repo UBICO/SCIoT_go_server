@@ -30,9 +30,8 @@ Status:
   and queue, `latency` algorithm (opt-in, `offload.algorithm`; by default
   the policy changes only from the admin endpoint), verification in progress
 
-The reference client is `client/python/http_go_client.py` in
-[SCIoT_python_client](https://github.com/UBICO/SCIoT_python_client); its
-documentation, with the SPLIT benchmark, is `docs/GO_CONTROL_PLANE.md` there.
+The reference device client is in `client/`, in Python
+([docs/CLIENT.md](docs/CLIENT.md), with the SPLIT and network benchmarks).
 
 ## Documentation
 
@@ -45,12 +44,13 @@ documentation, with the SPLIT benchmark, is `docs/GO_CONTROL_PLANE.md` there.
 | [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`) |
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
 | [worker/README.md](worker/README.md) | the Python worker and the model build tool |
+| [docs/CLIENT.md](docs/CLIENT.md) | the Python device client (`client/`): install, configuration, benchmarks |
 
 ## Requirements
 
 - Go 1.27 or newer (one external dependency: gopsutil, for the load metrics);
-- [uv](https://docs.astral.sh/uv/) and Python 3.11–3.13 for the worker
-  (TensorFlow 2.20, installed by uv on first run).
+- [uv](https://docs.astral.sh/uv/) and Python 3.11–3.13 for the worker and
+  the client (TensorFlow 2.20, installed by uv on first run).
 
 ## Quick start
 
@@ -70,11 +70,11 @@ documentation, with the SPLIT benchmark, is `docs/GO_CONTROL_PLANE.md` there.
    go run ./cmd/server -config config.json -addr 127.0.0.1:8080 -admin
    ```
 
-3. **Start a device**: the Python client, from SCIoT_python_client, with the
-   same model directory.
+3. **Start a device**: the Python client (`client/`), with the same model
+   directory.
 
    ```bash
-   uv run python -m client.python.http_go_client --server http://127.0.0.1:8080 --model-dir ~/sciot-models/yolo_small_320
+   uv run --project client sciot-client --server http://127.0.0.1:8080 --model-dir ~/sciot-models/yolo_small_320
    ```
 
 ## Configuration
@@ -197,8 +197,13 @@ gofmt -l . && go vet ./... && go test -race ./...
 cd worker && uv run pytest
 ```
 
-The worker tests build tiny TFLite models at run time and check the decoders
-against the golden files in `testdata/`: no model artifacts needed.
+```bash
+cd client && uv run pytest
+```
+
+The worker and client tests build tiny TFLite models at run time and check
+the decoders and the model hash against the files in `testdata/`: no model
+artifacts needed.
 
 Layout:
 
@@ -217,7 +222,8 @@ internal/worker/     gRPC client, catalog and supervisor of the Python worker
 internal/workerpb/   generated gRPC code (from proto/)
 proto/               the server ↔ worker contract
 worker/              Python worker (TFLite segments over gRPC), sciot-model build, decoders
-testdata/decoders/   golden files: the executable specification of the decoders
+client/              Python device client (docs/CLIENT.md) and its benchmarks
+testdata/            golden files: the executable specification of the decoders and the model hash
 ```
 
 Dependencies point one way (`cmd/server` wires everything):

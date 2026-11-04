@@ -16,7 +16,7 @@ const (
 	// LatencyWindow, non una media. Il pong del device viaggia sullo stesso
 	// link dei frame: con il link saturo aspetta dietro i byte già nel buffer
 	// TCP di invio del device (bufferbloat: ~170 ms a 50 Mbit/s, misurato con
-	// scripts/bench_network.py del client) e misura la coda, non la latenza.
+	// client/scripts/bench_network.py) e misura la coda, non la latenza.
 	// La finestra è lunga perché la latenza di base cambia di rado: il valore
 	// misurato a link libero (LOCAL, avvio, pause) sopravvive a un periodo di
 	// saturazione. Oltre LatencyWindow di saturazione continua la latenza

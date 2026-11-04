@@ -30,6 +30,14 @@ def test_model_hash_uses_name_order(model_dir):
     assert model_hash(model_dir) != numeric
 
 
+def test_model_hash_matches_testdata():
+    # testdata/model_hash: the same expected hash as the Go registry and the client.
+    from pathlib import Path
+
+    testdata = Path(__file__).resolve().parents[2] / "testdata" / "model_hash"
+    assert model_hash(testdata) == (testdata / "expected_hash").read_text().strip()
+
+
 def test_model_hash_empty_dir(tmp_path):
     with pytest.raises(FileNotFoundError):
         model_hash(tmp_path)

@@ -29,7 +29,7 @@ overlapping candidates.
 
 | File | Image | Checks |
 |---|---|---|
-| `real_stop` | `stop.png` (Python repo) | 19 rows above the threshold reduced by NMS to one stop sign |
+| `real_stop` | `client/sciot_client/stop.png` | 19 rows above the threshold reduced by NMS to one stop sign |
 | `real_stop_and_bicycle` | COCO 000000004355 | two classes in one image |
 | `real_empty` | COCO 000000000531 | no object |
 
