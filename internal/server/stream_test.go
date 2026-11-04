@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -105,6 +106,24 @@ func TestAdminPolicyIsNotified(t *testing.T) {
 	defer n.mu.Unlock()
 	if len(n.policies) != 1 || n.policies[0].Mode != api.ModeSplit || n.policies[0].PolicyVersion != 2 {
 		t.Errorf("policy notificate = %+v", n.policies)
+	}
+}
+
+func TestAdminWindowAboveTheMaximum(t *testing.T) {
+	s, modelHash := adminServer(t)
+	n := &fakeNotifier{}
+	s.SetStream(http.NotFoundHandler(), n)
+	registerSession(t, s, modelHash)
+	max := n.MaxInflight("web_192")
+
+	body := fmt.Sprintf(`{"mode":"SPLIT","split_point":5,"max_inflight":%d}`, max+1)
+	if rec := do(t, s, http.MethodPost, "/api/v1/admin/devices/web_192/policy", body); rec.Code != http.StatusBadRequest {
+		t.Errorf("finestra oltre il massimo: status %d: %s", rec.Code, rec.Body)
+	}
+	body = fmt.Sprintf(`{"mode":"SPLIT","split_point":5,"max_inflight":%d}`, max)
+	rec := do(t, s, http.MethodPost, "/api/v1/admin/devices/web_192/policy", body)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), fmt.Sprintf(`"max_inflight":%d`, max)) {
+		t.Errorf("finestra al massimo: status %d: %s", rec.Code, rec.Body)
 	}
 }
 

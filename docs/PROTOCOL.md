@@ -50,6 +50,7 @@ hashes guarantee that both sides split the same network at the same layers.
 ```json
 {"mode": "LOCAL", "split_point": null, "policy_version": 1}
 {"mode": "SPLIT", "split_point": 5,    "policy_version": 2}
+{"mode": "SPLIT", "split_point": 5,    "policy_version": 3, "max_inflight": 2}
 ```
 
 - `mode`: `LOCAL` (whole model on the device) or `SPLIT` (layers
@@ -60,6 +61,10 @@ hashes guarantee that both sides split the same network at the same layers.
   input (everything on the server); `last_offloading_layer - 1` leaves only
   the last segment to the server. `last_offloading_layer` is not a `SPLIT`
   (nothing would be left to the server): that is `LOCAL`.
+- `max_inflight`: optional, only in `SPLIT`: the device's window, frames in
+  flight at most, `1..` the hello's `max_inflight`. Absent = the hello's
+  value. A change of window is a new policy version, like a change of split
+  point.
 - `policy_version`: increases every time the server changes the policy.
   It is **per session**: a new registration starts again from `LOCAL` v1.
 
@@ -237,10 +242,12 @@ using it.
 
 ```json
 {"mode": "SPLIT", "split_point": 5}
+{"mode": "SPLIT", "split_point": 5, "max_inflight": 2}
 ```
 
 The server assigns the version (current + 1) and validates `split_point`
-against the device's model (`-1..last_offloading_layer - 1`). `200`:
+against the device's model (`-1..last_offloading_layer - 1`) and
+`max_inflight` against the stream's maximum (`1..stream.max_inflight`). `200`:
 
 ```json
 {"device_id": "web_96", "session_id": "YVOF...",
@@ -315,9 +322,13 @@ control plane.
 - **Asynchronous.** A device may send frame `N+1` before the result of `N`
   arrives. Results can come back **out of order**; the device matches them by
   `sequence_id`.
-- **Bounded.** Each device has at most `max_inflight` frames in flight (told by
-  the server on connect). The server queue has **no fixed length**: a frame is
-  admitted only if it can be served within its deadline (see
+- **Bounded.** Each device has at most `max_inflight` frames in flight: the
+  policy's window, or the hello's `max_inflight` (the maximum) when the
+  policy has none. A smaller window leaves the frames already in flight
+  alone: the device sends no more until fewer are. The server refuses only
+  frames beyond the maximum (`inflight_limit`). The server queue has **no
+  fixed length**: a frame is admitted only if it can be served within its
+  deadline (see
   [Admission](#admission)); otherwise it is rejected with `server_busy` and the
   device runs **that frame** `LOCAL`. A frame is never retried: by the time it
   could be retried, it is old.
@@ -439,7 +450,7 @@ heartbeat).
 |---|---|---|
 | `server_busy` | not admitted: the predicted completion exceeds the deadline | run this frame `LOCAL` |
 | `deadline_exceeded` | admitted, but the deadline expired while waiting: dropped without running | run this frame `LOCAL` (it is usually already done) |
-| `inflight_limit` | the device exceeded `max_inflight` | run this frame `LOCAL`, respect the window |
+| `inflight_limit` | the device exceeded the hello's `max_inflight` | run this frame `LOCAL`, respect the window |
 | `invalid_frame` | bad header, unknown `split_point` or `encoding`, wrong payload size, duplicate `sequence_id` | bug: log it, run `LOCAL` |
 | `worker_unavailable` | the worker failed or timed out | run this frame `LOCAL` |
 

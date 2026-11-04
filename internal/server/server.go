@@ -445,6 +445,12 @@ func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeJSON(w, r, &req) {
 		return
 	}
+	// Il massimo è dello stream; il resto lo valida lo Store, con il modello.
+	if req.MaxInflight != nil && s.notifier != nil && *req.MaxInflight > s.notifier.MaxInflight(id) {
+		writeError(w, http.StatusBadRequest, api.ErrCodeInvalidRequest,
+			fmt.Sprintf("max_inflight %d is above the stream's maximum %d", *req.MaxInflight, s.notifier.MaxInflight(id)))
+		return
+	}
 
 	d, err := s.devices.SetPolicy(id, req)
 	switch {
@@ -635,10 +641,11 @@ func (s *Server) decide(deviceID, sessionID string, hb *record.Heartbeat, res de
 	st := offload.StateFrom(*hb, now.Sub(res.PolicySince))
 	d := s.alg.Decide(now, st)
 	s.rec.Record(offload.DecisionRecord(st, d, s.alg.Name()))
-	if !d.Changes(res.Policy) {
+	if !d.Changes(res.Policy, st.MaxWindow) {
 		return res.Policy
 	}
-	dev, err := s.devices.SetAutoPolicy(deviceID, sessionID, api.SetPolicyRequest{Mode: d.Mode, SplitPoint: d.SplitPoint})
+	dev, err := s.devices.SetAutoPolicy(deviceID, sessionID,
+		api.SetPolicyRequest{Mode: d.Mode, SplitPoint: d.SplitPoint, MaxInflight: d.MaxInflight})
 	if err != nil {
 		// Bloccato o ri-registrato nel frattempo: la decisione è vecchia.
 		if !errors.Is(err, device.ErrPinned) && !errors.Is(err, device.ErrSessionExpired) {

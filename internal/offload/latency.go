@@ -16,14 +16,27 @@ import (
 // guadagno oltre un margine che cresce vicino alla saturazione e con il
 // rumore delle previsioni (docs/OFFLOAD.md).
 //
-// Ricorda, per device e per split point, il rumore delle previsioni: va
+// Sceglie la coppia (split point, finestra) e prenota il carico che concede
+// (reserve.go): i device che decidono subito dopo lo vedono prima che il
+// dispatcher lo misuri.
+//
+// Ricorda, per device e per candidato, il rumore delle previsioni: va
 // creato una volta e usato per tutti i device (è sicuro da più goroutine).
 type Latency struct {
 	cfg LatencyConfig
 
 	mu    sync.Mutex
-	noise map[string]map[int]*noise // device → split point → rumore
+	noise map[string]map[candidate]*noise // device → candidato → rumore
+
+	// decideMu tiene insieme lettura delle prenotazioni, decisione e nuova
+	// prenotazione: due heartbeat simultanei non vedono lo stesso carico
+	// libero.
+	decideMu sync.Mutex
+	res      reservations
 }
+
+// candidate è una coppia (split point, finestra); finestra 0 per LOCAL.
+type candidate struct{ split, window int }
 
 // LatencyConfig sono i parametri di Latency (sezione "offload" di
 // config.json).
@@ -46,6 +59,9 @@ type LatencyConfig struct {
 	QueueRhoFrom float64
 	// NoiseTau è la costante di tempo della stima del rumore σ.
 	NoiseTau time.Duration
+	// ReserveWindow è la finestra su cui il dispatcher misura λ e ρ
+	// (dispatch.Config.Window): una prenotazione si spegne in questo tempo.
+	ReserveWindow time.Duration
 }
 
 // Obiettivi di LatencyConfig.Objective.
@@ -62,6 +78,8 @@ func DefaultLatencyConfig() LatencyConfig {
 		MinHold:     10 * time.Second,
 		MarginMinMS: 2, MarginRel: 0.1, KQueue: 1, KNoise: 1, QueueRhoFrom: 0.8,
 		NoiseTau: 10 * time.Second,
+		// = dispatch.DefaultConfig().Window; cmd/server passa quella vera.
+		ReserveWindow: 10 * time.Second,
 	}
 }
 
@@ -87,7 +105,7 @@ const (
 
 // NewLatency crea l'algoritmo.
 func NewLatency(cfg LatencyConfig) *Latency {
-	return &Latency{cfg: cfg, noise: map[string]map[int]*noise{}}
+	return &Latency{cfg: cfg, noise: map[string]map[candidate]*noise{}, res: newReservations(cfg.ReserveWindow)}
 }
 
 func (l *Latency) Name() string { return "latency" }
@@ -95,24 +113,51 @@ func (l *Latency) Name() string { return "latency" }
 // Forget dimentica un device (fine della sessione).
 func (l *Latency) Forget(deviceID string) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	delete(l.noise, deviceID)
+	l.mu.Unlock()
+	l.decideMu.Lock()
+	l.res.forget(deviceID)
+	l.decideMu.Unlock()
 }
 
-// Decide implementa Algorithm.
+// Decide implementa Algorithm. Il carico prenotato dagli altri device si
+// aggiunge a quello misurato prima di prevedere; un cambio prenota la
+// differenza tra il carico della coppia scelta e quello dell'attuale.
 func (l *Latency) Decide(now time.Time, s State) Decision {
+	l.decideMu.Lock()
+	defer l.decideMu.Unlock()
+	pend := l.res.pending(now, s.DeviceID)
+	s.Inputs.Queue.OthersLambda += pend.PerSec
+	s.Inputs.Queue.OthersErlangs += pend.Erlangs
+
 	preds := PredictAll(s)
 	sigma, samples := l.observe(now, s.DeviceID, preds)
-	return l.choose(s, preds, sigma, samples)
+	d := l.choose(s, preds, sigma, samples)
+	d.Pending = pend
+	if d.Changes(s.Policy, s.MaxWindow) {
+		chosen := IndexOf(preds, d.Split(s.Last), d.Window(s.MaxWindow))
+		cur := IndexOf(preds, s.Split(), s.Window())
+		if chosen >= 0 && cur >= 0 {
+			a, b := serverLoad(preds[chosen]), serverLoad(preds[cur])
+			// shortcut: prenota anche se il server poi non applica il cambio
+			// (device bloccato o ri-registrato nel frattempo, rari): si spegne
+			// in ReserveWindow; se diventa frequente, prenotare dopo SetAutoPolicy.
+			l.res.reserve(now, s.DeviceID, Load{PerSec: a.PerSec - b.PerSec, Erlangs: a.Erlangs - b.Erlangs})
+		}
+	}
+	return d
 }
 
-// choose è la decisione sulle previsioni preds (una per split point −1..Last,
-// indice = split + 1), con σ e il numero di campioni di ogni split point.
+// choose è la decisione sulle previsioni preds (PredictAll: una per coppia
+// split point e finestra, LOCAL per ultima), con σ e il numero di campioni
+// di ogni previsione.
 func (l *Latency) choose(s State, preds []costmodel.Prediction, sigma []float64, samples []uint64) Decision {
-	keep := Decision{Mode: s.Policy.Mode, SplitPoint: s.Policy.SplitPoint, Predictions: preds}
-	cur := s.Split() + 1
+	keep := Decision{Mode: s.Policy.Mode, SplitPoint: s.Policy.SplitPoint, MaxInflight: s.Policy.MaxInflight, Predictions: preds}
+	cur := IndexOf(preds, s.Split(), s.Window())
 	local := preds[len(preds)-1]
-	if len(preds[cur].Missing) > 0 {
+	// Senza previsione per l'attuale (una finestra oltre il massimo, dopo un
+	// cambio di config) è come una previsione con ingressi mancanti.
+	if cur < 0 || len(preds[cur].Missing) > 0 {
 		keep.Reason = ReasonUnknown
 		return keep
 	}
@@ -147,12 +192,12 @@ func (l *Latency) choose(s State, preds []costmodel.Prediction, sigma []float64,
 	return l.move(preds, best, ReasonChange)
 }
 
-// move è il cambio allo split point di indice i (l'ultimo = LOCAL).
+// move è il cambio alla previsione di indice i (l'ultima = LOCAL).
 func (l *Latency) move(preds []costmodel.Prediction, i int, reason string) Decision {
 	d := Decision{Mode: api.ModeLocal, Reason: reason, Predictions: preds}
 	if p := preds[i]; !p.Local {
-		split := p.Split
-		d.Mode, d.SplitPoint = api.ModeSplit, &split
+		split, window := p.Split, p.Window
+		d.Mode, d.SplitPoint, d.MaxInflight = api.ModeSplit, &split, &window
 	}
 	return d
 }
@@ -227,16 +272,17 @@ func (l *Latency) observe(now time.Time, deviceID string, preds []costmodel.Pred
 	defer l.mu.Unlock()
 	byDevice := l.noise[deviceID]
 	if byDevice == nil {
-		byDevice = map[int]*noise{}
+		byDevice = map[candidate]*noise{}
 		l.noise[deviceID] = byDevice
 	}
 	sigma := make([]float64, len(preds))
 	samples := make([]uint64, len(preds))
 	for i, p := range preds {
-		n := byDevice[p.Split]
+		key := candidate{p.Split, p.Window}
+		n := byDevice[key]
 		if n == nil {
 			n = &noise{last: math.NaN()}
-			byDevice[p.Split] = n
+			byDevice[key] = n
 		}
 		v := l.value(p)
 		if len(p.Missing) > 0 || math.IsNaN(v) || math.IsInf(v, 0) {

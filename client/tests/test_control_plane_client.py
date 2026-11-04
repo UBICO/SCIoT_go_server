@@ -81,6 +81,10 @@ def test_session_from_dict():
 def test_policy_split_ok():
     p = cpc.Policy.from_dict({"mode": "SPLIT", "split_point": 5, "policy_version": 2})
     assert p == cpc.Policy("SPLIT", 5, 2)
+    p = cpc.Policy.from_dict(
+        {"mode": "SPLIT", "split_point": 5, "policy_version": 3, "max_inflight": 2}
+    )
+    assert p == cpc.Policy("SPLIT", 5, 3, 2)
 
 
 @pytest.mark.parametrize(
@@ -92,6 +96,10 @@ def test_policy_split_ok():
         {"mode": "SPLIT", "split_point": "5", "policy_version": 1},
         {"mode": "SPLIT", "split_point": 5.0, "policy_version": 1},
         {"mode": "SPLIT", "split_point": True, "policy_version": 1},
+        {"mode": "SPLIT", "split_point": 5, "policy_version": 1, "max_inflight": 0},
+        {"mode": "SPLIT", "split_point": 5, "policy_version": 1, "max_inflight": True},
+        {"mode": "SPLIT", "split_point": 5, "policy_version": 1, "max_inflight": 2.0},
+        {"mode": "LOCAL", "split_point": None, "policy_version": 1, "max_inflight": 2},
     ],
 )
 def test_policy_invalid(policy):

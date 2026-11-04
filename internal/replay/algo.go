@@ -58,8 +58,8 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 			preds = offload.PredictAll(st)
 		}
 		step := Step{Heartbeat: hb, State: st, Decision: d,
-			PredictedActualMS: predicted(preds, st.Split()),
-			PredictedChosenMS: predicted(preds, splitOf(d, st.Last)),
+			PredictedActualMS: predicted(preds, st.Split(), st.Window()),
+			PredictedChosenMS: predicted(preds, d.Split(st.Last), d.Window(st.MaxWindow)),
 			MeasuredActualMS:  measured(hb, frames[hb.DeviceID]),
 		}
 		out = append(out, step)
@@ -67,23 +67,15 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 	return out, nil
 }
 
-func splitOf(d offload.Decision, last int) int {
-	if d.Mode == api.ModeSplit && d.SplitPoint != nil {
-		return *d.SplitPoint
+// predicted è la latenza prevista per lo split point split con la finestra
+// window (NaN se non prevedibile).
+func predicted(ps []costmodel.Prediction, split, window int) float64 {
+	i := offload.IndexOf(ps, split, window)
+	if i < 0 {
+		return math.NaN()
 	}
-	return last
-}
-
-// predicted è la latenza prevista allo split point split (NaN se non
-// prevedibile).
-func predicted(ps []costmodel.Prediction, split int) float64 {
-	for _, p := range ps {
-		if p.Split == split {
-			if len(p.Missing) > 0 || math.IsInf(p.TotalMS, 0) || math.IsNaN(p.TotalMS) {
-				return math.NaN()
-			}
-			return p.TotalMS
-		}
+	if p := ps[i]; len(p.Missing) == 0 && !math.IsInf(p.TotalMS, 0) && !math.IsNaN(p.TotalMS) {
+		return p.TotalMS
 	}
 	return math.NaN()
 }
@@ -182,10 +174,13 @@ func Summarize(steps []Step) []AlgoSummary {
 			ids = append(ids, id)
 		}
 		a.Heartbeats++
-		if s.Decision.Changes(s.State.Policy) {
+		if s.Decision.Changes(s.State.Policy, s.State.MaxWindow) {
 			a.Differ++
 		}
-		if prev, ok := last[id]; ok && (prev.Mode != s.Decision.Mode || !sameSplit(prev.SplitPoint, s.Decision.SplitPoint)) {
+		prevPolicy := func(d offload.Decision) api.Policy {
+			return api.Policy{Mode: d.Mode, SplitPoint: d.SplitPoint, MaxInflight: d.MaxInflight}
+		}
+		if prev, ok := last[id]; ok && s.Decision.Changes(prevPolicy(prev), s.State.MaxWindow) {
 			a.Changes++
 		}
 		last[id] = s.Decision
@@ -204,8 +199,6 @@ func Summarize(steps []Step) []AlgoSummary {
 	}
 	return out
 }
-
-func sameSplit(a, b *int) bool { return (a == nil && b == nil) || (a != nil && b != nil && *a == *b) }
 
 func addIfFinite(sum *float64, n *int, v float64) {
 	if !math.IsNaN(v) && !math.IsInf(v, 0) {

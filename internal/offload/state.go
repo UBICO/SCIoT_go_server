@@ -20,6 +20,7 @@ func StateFrom(hb record.Heartbeat, policyAge time.Duration) State {
 		Policy:       hb.ServerPolicy,
 		PolicyAge:    policyAge,
 		FramesPerSec: FramesPerSec(hb.Telemetry.InferenceCount, hb.SinceLastSeenMS),
+		MaxWindow:    hb.MaxInflight,
 	}
 	in := costmodel.Inputs{
 		DeviceMS:   make([]*float64, len(hb.DeviceSegments)),
@@ -36,7 +37,9 @@ func StateFrom(hb record.Heartbeat, policyAge time.Duration) State {
 	for _, s := range hb.InputBytes {
 		in.InputBytes[s.SplitPoint] = s.InputBytes
 	}
-	in.MaxInflight = hb.MaxInflight
+	// La finestra della policy attuale: PredictAll la cambia per ogni
+	// candidato.
+	in.MaxInflight = st.Window()
 	split := hb.Applied.Mode == api.ModeSplit
 	var upload float64
 	uploadOK := false

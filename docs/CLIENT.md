@@ -102,7 +102,7 @@ take is finished by the device itself, from the activation it kept (segments
 
 | Situation | What the device does |
 |---|---|
-| window full (`max_inflight` frames in flight) | runs that frame `LOCAL` at once: the device keeps its pace, a slow server does not stop the acquisition |
+| window full (the policy's `max_inflight` frames in flight, or the hello's when the policy has none) | runs that frame `LOCAL` at once: the device keeps its pace, a slow server does not stop the acquisition |
 | `server_busy`, `deadline_exceeded`, `worker_unavailable` | finishes the frame locally |
 | stream closed with frames in flight | finishes each of them locally |
 | no stream (refused, unreachable) | finishes frames locally; retries the stream after 1, 2, 4… up to 30 s |
@@ -332,6 +332,39 @@ Limits `0,10,50` (the link free first):
   In the first table the stream was never free: it opens in SPLIT and the
   limit is set at the first frame.
 - `receive_ms` is bytes / bandwidth (1.2 MB at 10 Mbit/s = 983 ms).
+
+## Multi-device benchmark
+
+`scripts/bench_multi.py` runs `--devices` clients on one server with an
+offloading algorithm (`--algorithm`, default `latency`), started `--stagger`
+seconds apart (default 0: together, the case the algorithm's reservations
+are for, [OFFLOAD.md](OFFLOAD.md#reservations)), for `--duration` seconds.
+
+```bash
+uv run --project client python client/scripts/bench_multi.py --model-dir ~/sciot-models/yolo_small_320 --devices 2
+```
+
+Per device: frames/s, latency p50/p95 after `--warmup` seconds (default
+20), share answered by the server, policy changes and the last policy
+(`SPLIT k/w`: split point and window); then every change with its reason,
+and the largest load reserved and not yet measured. Clients and server
+share the machine: the numbers show the algorithm's behaviour, not the
+capacity.
+
+First run (yolo-small, MacBook, worker 2 × 2, 2 devices started together,
+60 s, 2026-11-04):
+
+| Device | Frames/s | Latency p50 (ms) | Latency p95 (ms) | Server results | Last policy |
+|---|---|---|---|---|---|
+| multi_0 | 50.5 | 45.8 | 49.5 | 100% | SPLIT 6/2 (at 23 s) |
+| multi_1 | 14.5 | 67.2 | 71.3 | 0% | LOCAL |
+
+At 21 s both devices predicted split 6 as the best (p95 45 against 66 ms);
+multi_0 moved at 23 s, and at 25 s multi_1 saw 1.23 erlang reserved and
+stayed `LOCAL`: two devices at split 6 would need about 2.7 erlang of the 2
+slots. Its best `SPLIT` candidates then had window 1, twice the frames per
+second of `LOCAL` at the same p95: the tie goes to `LOCAL`, the objective
+being the latency ([OFFLOAD.md](OFFLOAD.md#ties)).
 
 ## Tests
 

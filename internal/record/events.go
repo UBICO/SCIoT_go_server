@@ -133,12 +133,18 @@ type Decision struct {
 	DeviceID  string     `json:"device_id"`
 	Algorithm string     `json:"algorithm"`
 	Current   api.Policy `json:"current"` // la policy prima della decisione
-	// Mode e SplitPoint della policy scelta.
+	// Mode, SplitPoint e MaxInflight (la finestra) della policy scelta.
 	Mode        api.ExecutionMode `json:"mode"`
 	SplitPoint  *int              `json:"split_point"`
+	MaxInflight *int              `json:"max_inflight,omitempty"`
 	Changed     bool              `json:"changed"`
 	Reason      string            `json:"reason"`
-	Predictions []Prediction      `json:"predictions,omitempty"`
+	// PendingPerSec e PendingErlangs sono il carico prenotato da altri
+	// device e non ancora nella misura, aggiunto agli altri prima di
+	// prevedere (docs/OFFLOAD.md, "Reservations").
+	PendingPerSec  float64      `json:"pending_per_s,omitempty"`
+	PendingErlangs float64      `json:"pending_erlangs,omitempty"`
+	Predictions    []Prediction `json:"predictions,omitempty"`
 }
 
 // Prediction è una previsione del modello di costo (internal/costmodel) per
@@ -146,6 +152,7 @@ type Decision struct {
 // rappresenta, Saturated lo dice.
 type Prediction struct {
 	SplitPoint int      `json:"split_point"`
+	Window     int      `json:"window,omitempty"` // la finestra; assente per LOCAL
 	Local      bool     `json:"local"`
 	TotalMS    *float64 `json:"total_ms"`
 	DeviceMS   float64  `json:"device_ms"`

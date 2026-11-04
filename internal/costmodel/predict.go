@@ -22,8 +22,8 @@ type Inputs struct {
 	// sconosciuto.
 	ServiceMS map[int]float64
 	Queue     Queue
-	// MaxInflight è la finestra del device: frame in volo al massimo
-	// (max_inflight dell'hello); 0 = sconosciuta.
+	// MaxInflight è la finestra del device con cui si prevede: frame in volo
+	// al massimo; 0 = sconosciuta.
 	MaxInflight int
 	// CycleMS è A: quanto dura un ciclo del device oltre al calcolo dei
 	// segmenti e all'invio (acquisizione, gestione delle risposte; con una
@@ -65,6 +65,7 @@ const (
 // media di tutti. In SPLIT i valori vengono dalla simulazione (sim.go).
 type Prediction struct {
 	Split     int  // split point; == last per LOCAL
+	Window    int  // finestra (Inputs.MaxInflight); 0 per LOCAL
 	Local     bool // tutto sul device
 	DeviceMS  float64
 	UploadMS  float64

@@ -204,6 +204,24 @@ def test_window_full_returns_false(fake):
     client.close()
 
 
+def test_policy_window_below_and_above_the_hello(fake):
+    def script(ws, srv):
+        ws.send(hello(max_inflight=2))
+        srv.next_frame(ws)
+        srv.next_frame(ws)
+        ws.recv()
+
+    rec = Recorder()
+    client = rec.client(fake(script))
+    client.open()
+    assert client.send(pending(1), b"\0" * 8, window=1)
+    assert not client.send(pending(2), b"\0" * 8, window=1), "window 1 of the policy"
+    # A window above the hello's maximum is capped by it.
+    assert client.send(pending(3), b"\0" * 8, window=5)
+    assert not client.send(pending(4), b"\0" * 8, window=5)
+    client.close()
+
+
 def test_error_frees_the_window(fake):
     def script(ws, srv):
         ws.send(hello(max_inflight=1))
