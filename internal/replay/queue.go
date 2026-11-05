@@ -164,6 +164,23 @@ func cmpFloat(a, b float64) int {
 	return 0
 }
 
+// Le fasce di utilizzo ρ dei riassunti (Buckets, CheckBuckets): rhoEdges[k]
+// è il limite inferiore della fascia k; l'ultima è ρ ≥ 1.
+var (
+	rhoEdges  = []float64{0, 0.5, 0.8, 0.95, 1}
+	rhoLabels = []string{"0–0.5", "0.5–0.8", "0.8–0.95", "0.95–1", "≥ 1 (unstable)"}
+)
+
+// rhoBucket è l'indice della fascia di ρ.
+func rhoBucket(rho float64) int {
+	for k := 1; k < len(rhoEdges); k++ {
+		if rho < rhoEdges[k] {
+			return k - 1
+		}
+	}
+	return len(rhoEdges) - 1 // instabile
+}
+
 // Bucket riassume le finestre di una fascia di utilizzo.
 type Bucket struct {
 	Label                    string
@@ -174,21 +191,12 @@ type Bucket struct {
 // Buckets raggruppa le finestre per ρ: [0, 0.5), [0.5, 0.8), [0.8, 0.95),
 // [0.95, 1) e instabili (ρ ≥ 1, previsione infinita: solo la misurata).
 func Buckets(ws []QueueWindow) []Bucket {
-	edges := []float64{0, 0.5, 0.8, 0.95, 1}
-	labels := []string{"0–0.5", "0.5–0.8", "0.8–0.95", "0.95–1", "≥ 1 (unstable)"}
-	out := make([]Bucket, len(labels))
+	out := make([]Bucket, len(rhoLabels))
 	for i := range out {
-		out[i].Label = labels[i]
+		out[i].Label = rhoLabels[i]
 	}
 	for _, w := range ws {
-		i := len(edges) - 1 // instabile
-		for k := 0; k < len(edges)-1; k++ {
-			if w.Rho < edges[k+1] {
-				i = k
-				break
-			}
-		}
-		b := &out[i]
+		b := &out[rhoBucket(w.Rho)]
 		b.Windows++
 		b.MeasuredMS += w.MeasuredMS
 		b.MMcMS += w.MMcMS

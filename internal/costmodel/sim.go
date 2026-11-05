@@ -347,7 +347,7 @@ func (s *sim) summary() simResult {
 	if n > 0 {
 		r.ServerShare = float64(served) / float64(n)
 		r.TotalMS = (serverSum + localSum) / float64(n)
-		r.P95MS = percentile(lat, 0.95)
+		r.P95MS = Percentile(lat, 0.95)
 	}
 	if served > 0 {
 		r.WaitMS, r.ServerMS = waitSum/float64(served), serverSum/float64(served)
@@ -359,10 +359,10 @@ func (s *sim) summary() simResult {
 	return r
 }
 
-// percentile restituisce il quantile q (0..1) dei valori, con il metodo del
+// Percentile restituisce il quantile q (0..1) dei valori, con il metodo del
 // rango più vicino: il valore più piccolo che ha almeno q·n valori ≤ di sé.
 // 0 senza valori. Non modifica values.
-func percentile(values []float64, q float64) float64 {
+func Percentile(values []float64, q float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}

@@ -43,7 +43,7 @@ The reference device client is in `client/`, in Python
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
 | [docs/OFFLOAD.md](docs/OFFLOAD.md) | the offloading algorithm: constraints, objective, hysteresis, admin pin, configuration |
-| [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`) |
+| [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`, `sciot-replay check`) |
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
 | [worker/README.md](worker/README.md) | the Python worker and the model build tool |
 | [docs/CLIENT.md](docs/CLIENT.md) | the Python device client (`client/`): install, configuration, benchmarks |
@@ -172,6 +172,13 @@ the server) to the second-to-last segment:
 curl -X POST http://127.0.0.1:8080/api/v1/admin/devices/web_96/policy -d '{"mode":"SPLIT","split_point":5}'
 ```
 
+In `SPLIT`, `max_inflight` (optional) also sets the device's window, from 1
+to `stream.max_inflight`; without it the device uses that maximum:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/admin/devices/web_96/policy -d '{"mode":"SPLIT","split_point":6,"max_inflight":2}'
+```
+
 A forced policy pins the device: with `offload.algorithm` `latency` the
 algorithm leaves it alone until it is released:
 
@@ -211,6 +218,7 @@ Layout:
 
 ```text
 cmd/server/          main: flags, wiring, http.Server with timeouts
+cmd/sciot-replay/    offline replay of a recording: queue model, algorithms, client check (docs/COSTMODEL.md)
 internal/api/        protocol types and their validation (no dependencies)
 internal/config/     config.json → registry.Config, server.Config
 internal/registry/   model_hash → model info, computed at startup
@@ -219,6 +227,11 @@ internal/load/       server host load, sampled in its own goroutine (gopsutil)
 internal/server/     HTTP handlers, verbose heartbeat table
 internal/stream/     data plane WebSocket (/api/v1/stream)
 internal/dispatch/   admission by deadline, FIFO queue, load metrics
+internal/netmeasure/ each device's bandwidth and latency, measured on the stream
+internal/ewma/       time-weighted estimate of a value measured at irregular intervals
+internal/costmodel/  predicted cost of a frame per split point and window (simulation)
+internal/offload/    offloading algorithms (static, latency), decided at every heartbeat
+internal/replay/     reads a recording back for offline checks (cmd/sciot-replay)
 internal/record/     JSON Lines recording of events (docs/RECORDING.md)
 internal/worker/     gRPC client, catalog and supervisor of the Python worker
 internal/workerpb/   generated gRPC code (from proto/)
@@ -231,12 +244,17 @@ testdata/            golden files: the executable specification of the decoders 
 Dependencies point one way (`cmd/server` wires everything):
 
 ```text
-config    → api, load, registry, server, stream, worker
-server    → api, device, dispatch, load, record, registry, stream
-worker    → api, stream, workerpb      (implements stream.Executor over gRPC)
-dispatch  → stream                     (an Executor in front of the worker)
-stream    → api, record                (sessions and executor are interfaces)
-record    → api, load
-registry, device → api
-api, load → nothing internal
+config     → api, device, dispatch, load, netmeasure, offload, registry, server, stream, worker
+server     → api, device, dispatch, ewma, load, netmeasure, offload, record, registry, stream
+replay     → api, costmodel, offload, record
+offload    → api, costmodel, ewma, record
+costmodel  → dispatch, netmeasure      (simulates the dispatcher's admission)
+worker     → api, stream, workerpb      (implements stream.Executor over gRPC)
+dispatch   → ewma, stream               (an Executor in front of the worker)
+stream     → api, netmeasure, record    (sessions and executor are interfaces)
+record     → api, ewma, load, netmeasure
+device     → api, ewma
+netmeasure → ewma
+registry   → api
+api, ewma, load → nothing internal
 ```

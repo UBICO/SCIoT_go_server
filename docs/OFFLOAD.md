@@ -178,11 +178,11 @@ otherwise). A new registration starts unpinned.
 |---|---|---|
 | `offload.algorithm` | `static` | `static` or `latency` |
 | `offload.objective` | `p95` | `p95` or `mean` |
-| `offload.min_fps_ratio` | 1 | 0–10 |
-| `offload.max_reject_share` | 0.1 | 0–1 |
-| `offload.min_hold_ms` | 10000 | 0–3600000 |
-| `offload.margin_min_ms` | 2 | 0–1000 |
-| `offload.margin_rel` | 0.1 | 0–1 |
+| `offload.min_fps_ratio` | 1 | 0–10: a candidate must give at least LOCAL's frames per second times this |
+| `offload.max_reject_share` | 0.1 | 0–1: a candidate must not have more than this share of its frames refused by the server |
+| `offload.min_hold_ms` | 10000 | 0–3600000: no change before the policy has been in force this long |
+| `offload.margin_min_ms` | 2 | 0–1000: the smallest gain (ms) that replaces the current policy (the hysteresis base, step 5 of [`latency`](#latency)) |
+| `offload.margin_rel` | 0.1 | 0–1: the gain needed as a share of the current value; the base is the larger of the two |
 | `offload.k_queue` | 1 | 0–100; 0 removes the queue term (ablation, phase 3.8) |
 | `offload.k_noise` | 1 | 0–100; 0 removes the noise term |
 | `offload.queue_rho_from` | 0.8 | 0–0.99: utilization from which the queue term grows; 0 = from no load |

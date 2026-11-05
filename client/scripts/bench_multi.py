@@ -6,7 +6,8 @@ One Go server (worker, recording, ``offload.algorithm``) and ``--devices``
 clients with different device ids, started ``--stagger`` seconds apart (0 =
 together: the case where the algorithm's reservations matter, phase 3.7).
 Every client is released to the algorithm (the registration check pins it,
-like any admin policy) and runs for ``--duration`` seconds.
+like any admin policy), or pinned to ``--pin`` (load chosen by hand), and
+runs for ``--duration`` seconds.
 
 Per device: frames per second, latency p50/p95 after ``--warmup`` seconds,
 the share answered by the server, the policy changes and the last policy.
@@ -69,6 +70,14 @@ def policy_label(policy: dict) -> str:
     return f"SPLIT {policy.get('split_point')}/{policy.get('max_inflight') or 'max'}"
 
 
+def pin_body(text: str) -> dict:
+    """Split/window text ("6/2") -> the admin policy SPLIT at split point 6 with window 2."""
+    split, sep, window = text.partition("/")
+    if not sep:
+        raise ValueError(f"--pin {text!r}: expected split/window, e.g. 6/2")
+    return {"mode": "SPLIT", "split_point": int(split), "max_inflight": int(window)}
+
+
 def device_metrics(frames: list[dict], warmup_s: float, end_s: float) -> dict:
     """What one device got between warmup_s and end_s (its frames CSV)."""
     kept = [r for r in frames if warmup_s <= float(r["t_s"]) <= end_s]
@@ -114,8 +123,10 @@ def format_table(per_device: dict[str, dict], timeline: list[dict]) -> str:
     ]
     fmt = lambda v: "—" if v is None else f"{v:.1f}"
     for device_id, m in per_device.items():
-        changes = [c for c in timeline if c["device_id"] == device_id and c["reason"] != "admin"]
-        last = changes[-1]["policy"] if changes else "LOCAL"
+        mine = [c for c in timeline if c["device_id"] == device_id]
+        changes = [c for c in mine if c["reason"] != "admin"]
+        # Admin changes count for the last policy: with --pin it is the pin.
+        last = mine[-1]["policy"] if mine else "LOCAL"
         lines.append(
             f"| {device_id} | {m['fps']:.1f} | {fmt(m['latency_ms_p50'])} | "
             f"{fmt(m['latency_ms_p95'])} | {m['result_fraction']:.0%} | {len(changes)} | {last} |"
@@ -142,6 +153,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--duration", type=float, default=60.0, help="seconds after the last start")
     p.add_argument("--warmup", type=float, default=20.0, help="seconds not measured, per device")
     p.add_argument("--algorithm", default="latency", help="offload.algorithm of the server")
+    p.add_argument(
+        "--pin",
+        metavar="SPLIT/WINDOW",
+        help="keep every device at this policy (e.g. 6/2) instead of releasing it: "
+        "load chosen by hand, the algorithm is not asked",
+    )
     p.add_argument("--go-repo", type=Path, default=GO_REPO)
     p.add_argument("--go-bin", type=Path, help="prebuilt Go server binary")
     p.add_argument("--python", default=sys.executable, help="interpreter with the client")
@@ -158,6 +175,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     if not (args.model_dir / "manifest.json").is_file():
         p.error(f"{args.model_dir} has no manifest.json: build it with sciot-model build")
     args.go_repo = args.go_repo.expanduser().resolve()
+    if args.pin:
+        try:
+            args.pin_body = pin_body(args.pin)
+        except ValueError as exc:
+            p.error(str(exc))
     return args
 
 
@@ -231,9 +253,16 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             for device_id, client in zip(ids, clients, strict=True):
-                # The check pins the device (an admin policy): release it.
+                # The check pins the device (an admin policy): release it, or pin it
+                # to --pin.
                 wait_registered(server_url, device_id, 120, client)
-                http_json("DELETE", f"{server_url}/api/v1/admin/devices/{device_id}/policy")
+                policy_url = f"{server_url}/api/v1/admin/devices/{device_id}/policy"
+                if args.pin:
+                    status, body = http_json("POST", policy_url, args.pin_body)
+                    if status != 200:
+                        raise RuntimeError(f"pin {device_id} to {args.pin}: HTTP {status} {body}")
+                else:
+                    http_json("DELETE", policy_url)
             print(f"{len(ids)} clients registered, running {args.duration:.0f} s")
             time.sleep(args.duration)
         except Exception:
