@@ -91,8 +91,43 @@ on the device are right in total (15.3 against 15.1) but split differently
 between their causes: half of the real ones found the window full, almost
 none in the simulation. The order of a refusal and the next cycle decides
 which; it does not change share or rates, but it changes the latency of
-those frames (a refused one also waits for the next `drain`). Not verified
-yet: latencies against the client's own record, several devices.
+those frames (a refused one also waits for the next `drain`). Latencies
+against the client and several devices: next section.
+
+### Verification with the client, several devices (phase 3.8)
+
+`sciot-replay check record.jsonl frames_<device>.csv...` compares, at every
+heartbeat of a device in SPLIT, the prediction for the pair it applies with
+what the client measured in the same window (its frames CSV, aligned on
+`captured_at`): p95, mean, frames/s, share served, frames refused or expired
+and frames that found the window full. The server does not see frames the
+device finishes; the client does. Errors are (predicted − measured) /
+measured, median per band of predicted `ρ`.
+
+Recordings with `client/scripts/bench_multi.py --pin 6/w`: 1 to 4 devices
+held at split 6, window 1–3, 2 slots × 2 threads, 120 s, clients and worker
+on the same MacBook (2026-11-05). The other devices' load was first taken as
+the total minus the device's frames per second, frames never admitted
+included (refused or window full), so with several devices in SPLIT it came
+out 30–60% low (4 devices: 26.6 frames/s against 39.2). Median error of the
+p95, before and after taking the device's admitted load on the same window:
+
+| Devices, window | before | after | refused/s predicted / measured, after |
+|---|---|---|---|
+| 1, 2 | +4% | +1% | 0 / 0 |
+| 2, 1 | −1% | −1% | 0 / 0 |
+| 2, 2 | −22% | −2% | 2.2 / 6.0 |
+| 3, 2 | −26% | −26% | 4.0 / 7.0 |
+| 4, 2 | −27% | −2% | 5.8 / 8.9 |
+| 2, 3 | −1% | −1% | 5.4 / 6.0 |
+| 3, 3 | −26% | −1% | 7.0 / 8.0 |
+
+The p95 is now within 3% in all but one run (3 devices, window 2: one run
+per configuration, the spread between runs is not measured yet). Refusals
+are still under-predicted with several devices, and with them the frames
+per second and the share served (+10–20%): the simulation treats the other
+devices as a stream that is always admitted and does not react, while they
+are clients like this one, with their own window and refusals.
 
 ## Mean or p95
 
@@ -166,7 +201,7 @@ wait in steady state?
 | `cs` | `Queue.CS` | — | std / mean of `S`: 0 constant, 1 exponential | std of the `S` estimates |
 | `C(c, a)` | `ErlangC` | probability | an arriving frame has to wait (all slots busy), M/M/c | Erlang B recursion `B(k)` |
 | `Wq` | `WaitMMc`, `WaitGGc` | s (ms in `Prediction`) | mean wait in queue, M/M/c or G/G/c | formulas above |
-| `λ_others`, `a_others` | `Queue.OthersLambda`, `Queue.OthersErlangs` | frames/s, erlang | load of the other devices, without the one moved | caller |
+| `λ_others`, `a_others` | `Queue.OthersLambda`, `Queue.OthersErlangs` | frames/s, erlang | load of the other devices, without the one moved | dispatcher total minus the device's own load on the same window (`offload.Others`; recording: `device_admitted_per_s`, `device_erlangs`) |
 | `λs` | `Prediction.ServerFramesPerSec` | frames/s | the device's frames the server serves at split `k` | simulation |
 | — | `Prediction.FramesPerSec`, `ServerShare` | frames/s, — | all the device's frames per second, and the share served | simulation |
 | `ρ'` | `Prediction.Rho` | — | utilization with the device at `k`: simulated slot busy time / (`c` × time) | simulation |

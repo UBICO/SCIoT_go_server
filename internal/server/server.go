@@ -376,7 +376,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Telemetry:       req.Telemetry,
 		SinceLastSeenMS: float64(res.SinceLastSeen.Microseconds()) / 1000,
 		ServerLoad:      serverLoad,
-		Queue:           s.queueState(),
+		Queue:           s.queueState(req.DeviceID),
 		Network:         network,
 		DeviceSegments:  segmentEstimates(res.Segments, s.now()),
 		ModelKey:        res.Model.ModelKey,
@@ -605,6 +605,8 @@ func (s storeSessions) Lookup(deviceID, sessionID string) (stream.Session, bool)
 // *dispatch.Dispatcher la soddisfa.
 type QueueSource interface {
 	Snapshot() dispatch.Snapshot
+	// DeviceLoad è il carico di un device sulla finestra di Snapshot.
+	DeviceLoad(deviceID string) (admittedPerSec, erlangs float64)
 	// Estimate è S per modello e split point, misurata o ricavata dai segmenti.
 	Estimate(model string, split int) (dispatch.Stats, dispatch.Source, bool)
 }
@@ -695,8 +697,9 @@ func (s *Server) maxInflight(deviceID string) int {
 	return s.notifier.MaxInflight(deviceID)
 }
 
-// queueState è lo stato della coda per la registrazione; nil senza data plane.
-func (s *Server) queueState() *record.Queue {
+// queueState è lo stato della coda per la registrazione, con il carico del
+// device; nil senza data plane.
+func (s *Server) queueState(deviceID string) *record.Queue {
 	if s.queue == nil || !s.wantState() {
 		return nil
 	}
@@ -709,6 +712,8 @@ func (s *Server) queueState() *record.Queue {
 	if ia := q.Interarrival; ia != nil {
 		r.InterarrivalMS, r.InterarrivalStdMS = &ia.MeanMS, &ia.StdMS
 	}
+	admitted, erlangs := s.queue.DeviceLoad(deviceID)
+	r.DeviceAdmittedPerSec, r.DeviceErlangs = &admitted, &erlangs
 	return r
 }
 

@@ -72,7 +72,8 @@ func StateFrom(hb record.Heartbeat, policyAge time.Duration) State {
 		split := st.Split()
 		inSplit := split < st.Last
 		in.Queue.OthersLambda, in.Queue.OthersErlangs = Others(
-			q.AdmittedPerSec, rho, q.Slots, st.FramesPerSec, in.ServiceMS[split], inSplit)
+			q.AdmittedPerSec, rho, q.Slots, q.DeviceAdmittedPerSec, q.DeviceErlangs,
+			st.FramesPerSec, in.ServiceMS[split], inSplit)
 	}
 	st.Inputs = in
 	return st

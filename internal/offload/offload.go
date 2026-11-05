@@ -193,19 +193,31 @@ func (Static) Decide(now time.Time, s State) Decision {
 }
 
 // Others è il carico del server senza il device: dal carico totale misurato
-// (utilization ρ su slots slot) si toglie il suo contributo, i suoi frame al
-// secondo per il suo S, se è in SPLIT.
+// si toglie quello che il device ha portato, sulla stessa finestra.
 //
 //   - totalLambda: frame ammessi al secondo dal dispatcher (tutti i device);
-//   - rho, slots: utilizzo misurato e slot;
-//   - fps: frame al secondo del device; serviceMS: S del suo split point;
-//   - inSplit: il device è in SPLIT (in LOCAL non carica il server).
+//   - rho, slots: utilizzo misurato e slot (rho × slots = erlang totali);
+//   - deviceAdmitted, deviceErlangs: frame ammessi al secondo ed erlang del
+//     device, sulla finestra del totale (dispatch.DeviceLoad). Si sottraggono
+//     anche in LOCAL: un device appena tornato in LOCAL ha ancora frame nella
+//     finestra, e sono nel totale;
+//   - fps, serviceMS, inSplit: solo per le registrazioni precedenti alla Fase
+//     3.8 (deviceAdmitted o deviceErlangs nil): frame al secondo del device,
+//     S del suo split point, se è in SPLIT.
 //
-// Restituisce frame al secondo ed erlang degli altri, mai sotto zero: le
-// misure vengono da finestre diverse e la differenza può uscire negativa.
-func Others(totalLambda, rho float64, slots int, fps, serviceMS float64, inSplit bool) (lambda, erlangs float64) {
+// Restituisce frame al secondo ed erlang degli altri, mai sotto zero
+// (arrotondamenti; nel ripiego, finestre diverse).
+func Others(totalLambda, rho float64, slots int, deviceAdmitted, deviceErlangs *float64,
+	fps, serviceMS float64, inSplit bool) (lambda, erlangs float64) {
 	lambda, erlangs = totalLambda, rho*float64(slots)
-	if inSplit {
+	switch {
+	case deviceAdmitted != nil && deviceErlangs != nil:
+		lambda -= *deviceAdmitted
+		erlangs -= *deviceErlangs
+	case inSplit:
+		// shortcut: toglie anche i frame mai ammessi (rifiutati o a finestra
+		// piena); da togliere quando le registrazioni senza i campi del
+		// device non servono più.
 		lambda -= fps
 		erlangs -= fps * serviceMS / 1000
 	}

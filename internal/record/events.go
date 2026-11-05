@@ -113,6 +113,11 @@ type Queue struct {
 	// Intervalli tra frame offerti: media e deviazione (dispatch.Snapshot).
 	InterarrivalMS    *float64 `json:"interarrival_ms,omitempty"`
 	InterarrivalStdMS *float64 `json:"interarrival_std_ms,omitempty"`
+	// Il carico del device dell'heartbeat, sulla stessa finestra:
+	// frame ammessi al secondo ed erlang (dispatch.DeviceLoad). Assenti nelle
+	// registrazioni precedenti alla Fase 3.8.
+	DeviceAdmittedPerSec *float64 `json:"device_admitted_per_s,omitempty"`
+	DeviceErlangs        *float64 `json:"device_erlangs,omitempty"`
 }
 
 // Policy: il server ha cambiato la policy di un device.
