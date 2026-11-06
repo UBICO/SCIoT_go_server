@@ -52,7 +52,8 @@ need for the `config.json` of the run.
  "telemetry":{"inference_count":47,"inference_time_ms":21.3,"inference_time_max_ms":38.9,"cpu_load":0.42,"rtt_ms":3.1},
  "since_last_seen_ms":1001.2,
  "server_load":{"cpu_percent":18.2,"cpu_count":10,"load_avg_1_min":2.1,"memory_available_bytes":8517640192,"goroutines":41},
- "queue":{"slots":2,"running":1,"queued":0,"offered_per_s":9.8,"admitted_per_s":9.8,"utilization":0.31,"predicted_wait_ms":0},
+ "queue":{"slots":2,"running":1,"queued":0,"offered_per_s":9.8,"admitted_per_s":9.8,"utilization":0.31,"predicted_wait_ms":0,
+          "device_admitted_per_s":0,"device_erlangs":0},
  "network":{"bandwidth_bps":11250000,"bandwidth_std_bps":820000,"bandwidth_age_ms":420,"latency_ms":1.8,"not_limiting":false,"valid_samples":412,"discarded_samples":37},
  "device_segments":[{"mean":0.47,"std":0.02,"n":12,"age_ms":3},"…",null]}
 ```
@@ -62,6 +63,11 @@ need for the `config.json` of the run.
 - `telemetry` is the device's window since its previous heartbeat (see
   PROTOCOL.md).
 - `queue` is the dispatcher's state, absent without the data plane.
+  `device_admitted_per_s` and `device_erlangs` are this device's part of it,
+  on the same window: frames admitted per second and slots its frames kept
+  busy on average. The cost model takes the other devices' load as the
+  total minus these (absent before phase 3.8: there, the device's frames per
+  second, which also count frames never admitted).
 - `network` is the device's network seen by the server (see [Network](#network)),
   absent if the device never opened a stream.
 - `device_segments` is the server's estimate of the device's compute time
@@ -234,7 +240,14 @@ Written by the server at every heartbeat when an algorithm is enabled
 the chosen window, absent for `LOCAL` and for a policy without one.
 `pending_per_s` and `pending_erlangs` are the load other devices reserved
 and the dispatcher does not measure yet, added to the others' before
-predicting ([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
+predicting, only in the fallback without clients
+([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
+`clients` is how many other devices the simulation ran as clients
+([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation)); omitted
+when 0: no other device in `SPLIT`, or the fallback on the measured load.
+`lag_ms` is the time from the heartbeat to the decision in the server's
+decision goroutine ([OFFLOAD.md](OFFLOAD.md#cost)); absent from
+`sciot-replay algo -out`, which decides at each heartbeat.
 `predictions` has one entry per candidate, a pair split point and `window`
 (split −1..last−1, window from the maximum down to 1), and LOCAL last
 (no `window`), with the fields of [COSTMODEL.md](COSTMODEL.md): how many frames per

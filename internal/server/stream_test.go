@@ -140,6 +140,8 @@ type fixedQueue struct{ snap dispatch.Snapshot }
 
 func (f fixedQueue) Snapshot() dispatch.Snapshot { return f.snap }
 
+func (f fixedQueue) DeviceLoad(string) (float64, float64) { return 0, 0 }
+
 // Estimate: S misurata per gli split in snap.Service, nient'altro.
 func (f fixedQueue) Estimate(model string, split int) (dispatch.Stats, dispatch.Source, bool) {
 	for _, st := range f.snap.Service {

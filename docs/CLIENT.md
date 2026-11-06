@@ -337,12 +337,23 @@ Limits `0,10,50` (the link free first):
 
 `scripts/bench_multi.py` runs `--devices` clients on one server with an
 offloading algorithm (`--algorithm`, default `latency`), started `--stagger`
-seconds apart (default 0: together, the case the algorithm's reservations
-are for, [OFFLOAD.md](OFFLOAD.md#reservations)), for `--duration` seconds.
+seconds apart (default 0: together, devices deciding at the same time,
+[OFFLOAD.md](OFFLOAD.md#reservations)), for `--duration` seconds.
 
 ```bash
 uv run --project client python client/scripts/bench_multi.py --model-dir ~/sciot-models/yolo_small_320 --devices 2
 ```
+
+With `--pin SPLIT/WINDOW` (e.g. `--pin 6/2`; for split −1 write
+`--pin=-1/3`, or argparse takes `-1/3` for an option) every device is pinned
+to that policy instead of being released: the load is chosen by hand and the
+algorithm is not asked (no `decision` events: `sciot-replay algo` computes
+the predictions offline). This is how loads near saturation are recorded,
+which the algorithm avoids by itself.
+
+`--offload JSON` adds keys to the server's `offload` section, e.g.
+`--offload '{"k_noise": 0}'`: how the ablation of phase 3.8 runs the
+algorithm without one of its parts ([OFFLOAD.md](OFFLOAD.md#configuration)).
 
 Per device: frames/s, latency p50/p95 after `--warmup` seconds (default
 20), share answered by the server, policy changes and the last policy
@@ -364,7 +375,10 @@ multi_0 moved at 23 s, and at 25 s multi_1 saw 1.23 erlang reserved and
 stayed `LOCAL`: two devices at split 6 would need about 2.7 erlang of the 2
 slots. Its best `SPLIT` candidates then had window 1, twice the frames per
 second of `LOCAL` at the same p95: the tie goes to `LOCAL`, the objective
-being the latency ([OFFLOAD.md](OFFLOAD.md#ties)).
+being the latency ([OFFLOAD.md](OFFLOAD.md#ties)). Since phase 3.8 the
+second device sees the first as a simulated client instead of reserved load
+(reservations count only in the fallback, so this line usually shows 0);
+runs with 2 to 4 devices: [OFFLOAD.md](OFFLOAD.md#verification-phase-38).
 
 ## Tests
 

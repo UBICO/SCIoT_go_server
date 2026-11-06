@@ -248,13 +248,19 @@ func (s *Store) SetPolicy(id string, req api.SetPolicyRequest) (Device, error) {
 // dall'admin.
 var ErrPinned = errors.New("policy pinned by the admin")
 
+// ErrStalePolicy: la decisione è stata presa su una policy che nel frattempo
+// è cambiata (per esempio l'admin l'ha impostata e poi rilasciata).
+var ErrStalePolicy = errors.New("policy changed since the decision")
+
 // SetAutoPolicy è il cambio di policy dell'algoritmo di offloading: come
 // SetPolicy, ma solo per la sessione sessionID (una ri-registrazione nel
-// frattempo l'ha resa vecchia: ErrSessionExpired) e mai su un device
-// bloccato (ErrPinned). La decisione e la scrittura non sono sotto lo stesso
-// lock: questi controlli impediscono che una decisione presa sullo stato
-// vecchio sovrascriva quello nuovo.
-func (s *Store) SetAutoPolicy(id, sessionID string, req api.SetPolicyRequest) (Device, error) {
+// frattempo l'ha resa vecchia: ErrSessionExpired), mai su un device
+// bloccato (ErrPinned) e solo se la policy è ancora la versione basedOn su
+// cui l'algoritmo ha deciso (ErrStalePolicy). La decisione e la scrittura non
+// sono sotto lo stesso lock (e con le decisioni in una goroutine passa
+// tempo tra le due): questi controlli impediscono che una decisione presa
+// sullo stato vecchio sovrascriva quello nuovo.
+func (s *Store) SetAutoPolicy(id, sessionID string, basedOn uint64, req api.SetPolicyRequest) (Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -264,6 +270,9 @@ func (s *Store) SetAutoPolicy(id, sessionID string, req api.SetPolicyRequest) (D
 	}
 	if d.Pinned {
 		return Device{}, ErrPinned
+	}
+	if d.Policy.PolicyVersion != basedOn {
+		return Device{}, ErrStalePolicy
 	}
 	d, err := s.setPolicyLocked(d, req)
 	if err != nil {

@@ -38,8 +38,12 @@ import (
 // e la S stimata, coda FIFO, slot; un frame che ottiene lo slot dopo la sua
 // scadenza torna come errore.
 //
-// Gli altri device sono un flusso di frame sempre ammessi (il loro ritmo
-// misurato conta già solo gli ammessi), con la loro variabilità.
+// Gli altri device in SPLIT sono client con le stesse regole e i loro tempi
+// (simParams.Others, Fase 3.8): inviano appena la finestra si libera, vengono
+// rifiutati, finiscono i rifiutati al drain. Si contano solo i frame del
+// device (client 0). Senza l'elenco (ripiego), gli altri sono un flusso di
+// frame sempre ammessi (il loro ritmo misurato conta già solo gli ammessi),
+// con la loro variabilità.
 
 const (
 	// simWarmupMS è il tempo virtuale scartato all'inizio (coda vuota,
@@ -62,9 +66,17 @@ const (
 	// deciderebbe il risultato (frame/s al server raddoppiati); nel sistema
 	// vero la risposta arriva sempre dopo.
 	//
-	// shortcut: valore stimato, non misurato; misurarlo dal client (tempo tra
-	// invio e rifiuto) se le previsioni dipendono da lui.
-	simMinAnswerMS = 0.1
+	// Misurato (Fase 3.8): in localhost, split −1 (1.2 MB), invio → risposta
+	// meno il tempo del server è 1.06 ms di mediana (0.85–1.25 tra 10° e 90°
+	// percentile); la sola lettura del frame sul server è 0.54 ms. Con 0.1 ms
+	// la simulazione dava 14.8 rifiuti/s e nessuna finestra piena contro 7.9
+	// e 7.0 misurati; con 1 ms 7.6 e 7.4.
+	//
+	// shortcut: costante, mentre il tempo vero cresce con i byte inviati (con
+	// la rete "non limitante" l'invio simulato è solo la latenza); usare la
+	// lettura misurata dal server (receive_ms) per split point se su rete vera
+	// (Fase 4) le previsioni dipendono da lui.
+	simMinAnswerMS = 1.0
 	// simSeed rende il risultato riproducibile: la stessa registrazione dà
 	// sempre le stesse previsioni.
 	simSeed = 0x5c107
@@ -77,8 +89,22 @@ type simParams struct {
 	Window, Slots int
 	CS            float64 // variabilità di S (anche per gli altri)
 
-	// Altri device: frame al millisecondo, S medio, variabilità degli arrivi.
+	// Altri device come client (Fase 3.8); vuoto = il flusso qui sotto.
+	Others []Client
+	// Altri device come flusso (ripiego): frame al millisecondo, S medio,
+	// variabilità degli arrivi.
 	OthersPerMS, OthersS, CA float64
+}
+
+// client è un device nella simulazione: i suoi tempi e il suo stato. own è
+// il device di cui si prevede il costo: solo i suoi frame si contano.
+type client struct {
+	p   Client
+	own bool
+
+	inflight int    // frame in volo (finestra)
+	errors   []*job // errori ricevuti, da finire al prossimo drain
+	captured float64
 }
 
 // simResult è ciò che la simulazione ha contato sui frame del device nati
@@ -103,8 +129,9 @@ const (
 type event struct {
 	at   float64
 	kind int
-	job  *job // evArrive, evFinish, evAnswer
-	seq  int  // ordine di inserimento: a pari istante, prima chi è entrato prima
+	job  *job    // evArrive, evFinish, evAnswer
+	cl   *client // evDrain, evPrefixDone
+	seq  int     // ordine di inserimento: a pari istante, prima chi è entrato prima
 }
 
 type eventQueue []*event
@@ -125,10 +152,11 @@ func (q *eventQueue) Pop() any {
 	return e
 }
 
-// job è un frame sul server: del device (own) o di un altro.
+// job è un frame sul server, inviato da un client; cl nil = frame del flusso
+// di ripiego (scadenza infinita, nessuna risposta).
 type job struct {
-	own      bool
-	captured float64 // quando è nato (frame del device)
+	cl       *client
+	captured float64 // quando è nato
 	deadline float64 // istante oltre cui il risultato non serve più
 	sEst     float64 // S stimata dal dispatcher
 	sActual  float64 // S vera di questa esecuzione
@@ -159,12 +187,8 @@ type sim struct {
 	queue   []*job
 	busyMS  float64 // tempo di slot occupato nella finestra di misura
 
-	// Device.
-	inflight int    // frame in volo (finestra)
-	errors   []*job // errori ricevuti, da finire al prossimo drain
-	captured float64
-
-	done []outcome
+	clients []*client // clients[0] è il device
+	done    []outcome
 }
 
 func (s *sim) schedule(at float64, kind int, j *job) {
@@ -172,11 +196,24 @@ func (s *sim) schedule(at float64, kind int, j *job) {
 	heap.Push(&s.q, &event{at: at, kind: kind, job: j, seq: s.seq})
 }
 
+func (s *sim) scheduleClient(at float64, kind int, c *client) {
+	s.seq++
+	heap.Push(&s.q, &event{at: at, kind: kind, cl: c, seq: s.seq})
+}
+
 // simulate esegue la simulazione e riassume i frame del device.
 func simulate(p simParams) simResult {
 	s := &sim{p: p, rng: rand.New(rand.NewPCG(simSeed, uint64(p.Slots)))}
-	s.schedule(0, evDrain, nil)
-	if p.OthersPerMS > 0 {
+	s.clients = []*client{{p: Client{P: p.P, X: p.X, U: p.U, A: p.A, S: p.S, DownMS: p.DownMS, Window: p.Window}, own: true}}
+	for _, o := range p.Others {
+		s.clients = append(s.clients, &client{p: o})
+	}
+	for i, c := range s.clients {
+		// Sfasa le partenze su un ciclo intero (A+P), non su A soltanto: con
+		// tempi costanti, partenze ravvicinate fanno sempre vincere lo stesso.
+		s.scheduleClient(float64(i)*(c.p.A+c.p.P)/float64(len(s.clients)), evDrain, c)
+	}
+	if len(p.Others) == 0 && p.OthersPerMS > 0 {
 		s.schedule(s.sample(1/p.OthersPerMS, p.CA), evOthers, nil)
 	}
 	end := simWarmupMS + simMeasureMS + simTailMS
@@ -188,9 +225,9 @@ func simulate(p simParams) simResult {
 		s.now = e.at
 		switch e.kind {
 		case evDrain:
-			s.drain()
+			s.drain(e.cl)
 		case evPrefixDone:
-			s.prefixDone()
+			s.prefixDone(e.cl)
 		case evArrive:
 			s.arrive(e.job)
 		case evOthers:
@@ -206,39 +243,42 @@ func simulate(p simParams) simResult {
 	return s.summary()
 }
 
-// drain inizia un ciclo del device: finisce un errore ricevuto, se ce n'è,
+// drain inizia un ciclo del client: finisce un errore ricevuto, se ce n'è,
 // altrimenti acquisisce e calcola il prefisso di un frame nuovo.
-func (s *sim) drain() {
-	if len(s.errors) > 0 {
-		j := s.errors[0]
-		s.errors = s.errors[1:]
-		s.done = append(s.done, outcome{captured: j.captured, done: s.now + s.p.X, rejected: true})
+func (s *sim) drain(c *client) {
+	if len(c.errors) > 0 {
+		j := c.errors[0]
+		c.errors = c.errors[1:]
+		if c.own {
+			s.done = append(s.done, outcome{captured: j.captured, done: s.now + c.p.X, rejected: true})
+		}
 		// Rischedulare il drain gestisce anche gli errori arrivati nel frattempo.
-		s.schedule(s.after(s.p.X), evDrain, nil)
+		s.scheduleClient(s.after(c.p.X), evDrain, c)
 		return
 	}
-	s.captured = s.now + s.p.A
-	s.schedule(s.after(s.p.A+s.p.P), evPrefixDone, nil)
+	c.captured = s.now + c.p.A
+	s.scheduleClient(s.after(c.p.A+c.p.P), evPrefixDone, c)
 }
 
-// prefixDone: il prefisso è pronto; il device invia il frame o lo finisce.
-func (s *sim) prefixDone() {
-	p := s.p
-	if s.inflight >= p.Window {
-		s.done = append(s.done, outcome{captured: s.captured, done: s.now + p.X, windowFull: true})
-		s.schedule(s.after(p.X), evDrain, nil)
+// prefixDone: il prefisso è pronto; il client invia il frame o lo finisce.
+func (s *sim) prefixDone(c *client) {
+	if c.inflight >= c.p.Window {
+		if c.own {
+			s.done = append(s.done, outcome{captured: c.captured, done: s.now + c.p.X, windowFull: true})
+		}
+		s.scheduleClient(s.after(c.p.X), evDrain, c)
 		return
 	}
-	s.inflight++
+	c.inflight++
 	// La scadenza conta da quando il server legge il frame.
-	j := &job{own: true, captured: s.captured, deadline: s.now + p.U + p.X, sEst: p.S, sActual: s.sample(p.S, p.CS)}
-	s.schedule(s.now+p.U, evArrive, j)
-	s.schedule(s.after(p.U), evDrain, nil)
+	j := &job{cl: c, captured: c.captured, deadline: s.now + c.p.U + c.p.X, sEst: c.p.S, sActual: s.sample(c.p.S, s.p.CS)}
+	s.schedule(s.now+c.p.U, evArrive, j)
+	s.scheduleClient(s.after(c.p.U), evDrain, c)
 }
 
-// answerDelay è quanto impiega una risposta a tornare al device: la latenza
+// answerDelay è quanto impiega una risposta a tornare al client: la latenza
 // di rete, ma mai meno di simMinAnswerMS.
-func (s *sim) answerDelay() float64 { return max(s.p.DownMS, simMinAnswerMS) }
+func (s *sim) answerDelay(c *client) float64 { return max(c.p.DownMS, simMinAnswerMS) }
 
 // after è l'istante del prossimo evento del device dopo d ms di lavoro.
 func (s *sim) after(d float64) float64 { return s.now + max(d, simMinCycleMS) }
@@ -246,10 +286,10 @@ func (s *sim) after(d float64) float64 { return s.now + max(d, simMinCycleMS) }
 // arrive: un frame arriva al server.
 func (s *sim) arrive(j *job) {
 	j.arrived = s.now
-	// I frame degli altri hanno scadenza infinita: sempre ammessi.
-	if j.own && s.now+s.predictedWait()+j.sEst > j.deadline {
+	// I frame del flusso di ripiego hanno scadenza infinita: sempre ammessi.
+	if j.cl != nil && s.now+s.predictedWait()+j.sEst > j.deadline {
 		j.failed = true
-		s.schedule(s.now+s.answerDelay(), evAnswer, j)
+		s.schedule(s.now+s.answerDelay(j.cl), evAnswer, j)
 		return
 	}
 	s.queue = append(s.queue, j)
@@ -280,9 +320,9 @@ func (s *sim) dispatch() {
 	for len(s.queue) > 0 && len(s.running) < s.p.Slots {
 		j := s.queue[0]
 		s.queue = s.queue[1:]
-		if j.own && s.now > j.deadline {
+		if j.cl != nil && s.now > j.deadline {
 			j.failed = true
-			s.schedule(s.now+s.answerDelay(), evAnswer, j)
+			s.schedule(s.now+s.answerDelay(j.cl), evAnswer, j)
 			continue
 		}
 		j.started = s.now
@@ -295,17 +335,21 @@ func (s *sim) dispatch() {
 func (s *sim) finish(j *job) {
 	s.running = slices.DeleteFunc(s.running, func(r *job) bool { return r == j })
 	s.busyMS += overlap(j.started, s.now, simWarmupMS, simWarmupMS+simMeasureMS)
-	if j.own {
-		s.schedule(s.now+s.answerDelay(), evAnswer, j)
+	if j.cl != nil {
+		s.schedule(s.now+s.answerDelay(j.cl), evAnswer, j)
 	}
 	s.dispatch()
 }
 
-// answer: la risposta di un frame arriva al device e libera la finestra.
+// answer: la risposta di un frame arriva al client e libera la finestra.
 func (s *sim) answer(j *job) {
-	s.inflight--
+	c := j.cl
+	c.inflight--
 	if j.failed {
-		s.errors = append(s.errors, j)
+		c.errors = append(c.errors, j)
+		return
+	}
+	if !c.own {
 		return
 	}
 	s.done = append(s.done, outcome{captured: j.captured, done: s.now, served: true, waitMS: j.started - j.arrived})
@@ -347,7 +391,7 @@ func (s *sim) summary() simResult {
 	if n > 0 {
 		r.ServerShare = float64(served) / float64(n)
 		r.TotalMS = (serverSum + localSum) / float64(n)
-		r.P95MS = percentile(lat, 0.95)
+		r.P95MS = Percentile(lat, 0.95)
 	}
 	if served > 0 {
 		r.WaitMS, r.ServerMS = waitSum/float64(served), serverSum/float64(served)
@@ -359,10 +403,10 @@ func (s *sim) summary() simResult {
 	return r
 }
 
-// percentile restituisce il quantile q (0..1) dei valori, con il metodo del
+// Percentile restituisce il quantile q (0..1) dei valori, con il metodo del
 // rango più vicino: il valore più piccolo che ha almeno q·n valori ≤ di sé.
 // 0 senza valori. Non modifica values.
-func percentile(values []float64, q float64) float64 {
+func Percentile(values []float64, q float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}

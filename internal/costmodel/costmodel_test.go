@@ -93,16 +93,16 @@ func localhost(in Inputs) Inputs {
 
 func TestPercentile(t *testing.T) {
 	v := []float64{5, 1, 4, 2, 3}
-	if got := percentile(v, 0.95); got != 5 {
+	if got := Percentile(v, 0.95); got != 5 {
 		t.Errorf("p95 di 1..5 = %v, atteso 5", got)
 	}
-	if got := percentile(v, 0.5); got != 3 {
+	if got := Percentile(v, 0.5); got != 3 {
 		t.Errorf("p50 di 1..5 = %v, atteso 3", got)
 	}
-	if got := percentile(v, 0); got != 1 {
+	if got := Percentile(v, 0); got != 1 {
 		t.Errorf("p0 = %v, atteso il minimo", got)
 	}
-	if v[0] != 5 || percentile(nil, 0.95) != 0 {
+	if v[0] != 5 || Percentile(nil, 0.95) != 0 {
 		t.Error("non deve ordinare l'originale; senza valori 0")
 	}
 }

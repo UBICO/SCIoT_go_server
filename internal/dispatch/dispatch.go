@@ -113,7 +113,12 @@ type Dispatcher struct {
 	lastArrival  time.Time
 
 	window *window
-	totals Totals
+	// devices sono le finestre di ogni device, con la stessa durata di
+	// window: il carico di un device si sottrae dal totale su intervalli
+	// identici (offload.Others). Un device con la finestra vuota viene tolto
+	// in Snapshot.
+	devices map[string]*window
+	totals  Totals
 }
 
 var _ stream.Executor = (*Dispatcher)(nil)
@@ -131,7 +136,8 @@ func New(backend Backend, cfg Config) *Dispatcher {
 		overhead: map[string]ewma.Stat{},
 		last:     map[string]int{},
 
-		window: newWindow(cfg.Window),
+		window:  newWindow(cfg.Window),
+		devices: map[string]*window{},
 	}
 }
 
@@ -169,6 +175,7 @@ func (d *Dispatcher) admit(job stream.Job, now time.Time) (*entry, error) {
 	defer d.mu.Unlock()
 
 	d.window.add(now, bucket{offered: 1})
+	d.deviceWindow(job.DeviceID).add(now, bucket{offered: 1})
 	if !d.lastArrival.IsZero() {
 		d.interarrival.Update(now, now.Sub(d.lastArrival).Seconds(), d.cfg.ServiceTau)
 	}
@@ -205,6 +212,7 @@ func (d *Dispatcher) admit(job stream.Job, now time.Time) (*entry, error) {
 	}
 
 	d.window.add(now, bucket{admitted: 1})
+	d.deviceWindow(job.DeviceID).add(now, bucket{admitted: 1})
 	e := &entry{job: job, arrived: now, service: service, wait: wait, known: known, granted: make(chan struct{})}
 	d.queue = append(d.queue, e)
 	// Lo avvia subito se c'è uno slot libero.
@@ -266,6 +274,7 @@ func (d *Dispatcher) finish(e *entry, layerMS []float64, execErr error) {
 	defer d.mu.Unlock()
 	delete(d.running, e)
 	d.window.add(now, bucket{busy: elapsed})
+	d.deviceWindow(e.job.DeviceID).add(now, bucket{busy: elapsed})
 	if execErr != nil {
 		// Un'esecuzione fallita (worker giù, scadenza durante il calcolo) non
 		// misura il servizio: non entra in S.

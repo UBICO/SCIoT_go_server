@@ -23,9 +23,11 @@ At every heartbeat, in order:
    ([COSTMODEL.md](COSTMODEL.md)): a formula for `LOCAL`, the simulation of
    device and dispatcher for `SPLIT`. A candidate is `LOCAL` or a pair
    (split point −1..last−1, window 1..`stream.max_inflight`): 9 × 3 + 1 for
-   yolo-small. The load of the other devices is the measured one plus what
-   the algorithm granted and the dispatcher does not see yet
-   ([Reservations](#reservations)). A prediction with missing inputs is not
+   yolo-small. The other devices in `SPLIT` are simulated as clients at
+   their current policy ([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation));
+   only when one of them has incomplete inputs the simulation falls back to
+   their measured load plus what the algorithm granted and the dispatcher
+   does not see yet ([Reservations](#reservations)). A prediction with missing inputs is not
    a candidate; if the current one's is missing, nothing changes
    (`current_unknown`): one cannot tell whether another is better.
 2. **Minimum duration**: no change before the policy has been in force for
@@ -49,10 +51,10 @@ At every heartbeat, in order:
    - `ρ` is the best candidate's utilization from the simulation (capped at
      0.99): near saturation a small error on the load moves the latency a
      lot, so the margin grows. Only above `queue_rho_from` (default 0.8):
-     below, the queue model predicts the wait well (COSTMODEL.md,
-     verification 1: close below ρ ≈ 0.8, 2–4× off above), and a margin that
-     grew from low loads kept a single device at split 3 instead of split 6,
-     26% faster at ρ = 0.69;
+     below, the simulation's p95 is within `margin_rel` of the client's
+     (phase 3.8, `sciot-replay check`: [Verification](#verification-phase-38)),
+     and a margin that grew from low loads kept a single device at split 3
+     instead of split 6, 26% faster at ρ = 0.69;
    - `σ` is the noise of the two predictions' difference (below).
 
    If the current candidate violates the constraints, the algorithm moves
@@ -61,7 +63,9 @@ At every heartbeat, in order:
    current one (`few_samples`).
 
 A change of split point or of window gives the device a new policy version,
-in the answer to that same heartbeat and on the stream; the recording gets a
+on the stream as soon as it is decided and in the answer to its next
+heartbeat (the answer to the heartbeat that triggered the decision carries
+the current policy: see [Cost](#cost)); the recording gets a
 `policy` event with the reason (`latency` or `infeasible`) and, at every
 heartbeat, a `decision` event with every prediction, the reserved load it
 saw and the reason.
@@ -77,28 +81,51 @@ server.
 With the `p95` objective ties are frequent, not chance: when more than 5%
 of a `SPLIT` candidate's frames are finished by the device (full window,
 refused), those frames cost the whole model, and the p95 *is* the `LOCAL`
-time. Two devices on one server (CLIENT.md, "Multi-device benchmark"), the
-second deciding with the first at split 6:
+time. With one device at split 6 and window 2, the others see (replay of
+the phase 3.8 recordings, medians):
 
 | Candidate | p95 (ms) | Mean (ms) | Served by the server | Frames/s |
 |---|---|---|---|---|
-| `LOCAL` | 66.0 | 66.0 | 0% | 15.0 |
-| split 1, window 1 | 66.0 | 54.8 | 50% | 28.0 |
-| split 6, window 2 | 114.7 | 69.1 | 61% | 27.0 |
+| `LOCAL` | 66 | 66 | 0% | 15 |
+| split −1, window 2 | 66 | 50 | 67% | 45 |
 
-The p95 cannot see that half the frames of split 1 are 11 ms faster on
-average and the frames per second double. This is accepted (decided
-2026-11-04): the objective is the stability of the latency, which does not
-get worse, and frames per second are a constraint, not a goal; staying
-`LOCAL` also leaves the server to the other devices.
+The p95 cannot see that two frames in three come back 16 ms earlier on
+average and the frames per second triple. This is accepted (decided
+2026-11-04, confirmed by the test below): the objective is the stability of
+the latency, which does not get worse, and frames per second are a
+constraint, not a goal; staying `LOCAL` also leaves the server to the
+device already in `SPLIT`.
 
 The tie rule alone would not change this: a tie is a gain of 0, never
 beyond the margin, so the device keeps its policy whatever the rule (the
 rule matters only when the current candidate breaks the constraints and the
-algorithm moves without margin). The alternative, for phase 3.8 with
-several devices: the mean as a second criterion, with its own margin, when
-the p95 are within the margin; it trades a better mean for more load on
-the server.
+algorithm moves without margin).
+
+**Option b, tried and dropped (phase 3.8).** The mean as a second criterion:
+among the candidates with a p95 within the margin of the current one, the
+one with the lowest mean wins if it beats the current mean by more than 10%.
+In the replay of 18 recordings such a candidate existed in 59% of the
+decisions, nearly all for devices in `LOCAL` (split −1 to 3, window 2:
+mean −14…−16 ms, frames per second ×2–3). Live, devices started together,
+2 runs each:
+
+| Devices | Rule | p95 per device (ms) | Mean (ms) | Frames/s, all | Policy changes in 2 min |
+|---|---|---|---|---|---|
+| 2 | p95 only | 47–50 / 69–71 | 46–47 / 68 | 65–66 | 1 |
+| 2 | mean as tie-break | 68–86 | 54–57 | 62–63 | 16–18 |
+| 4 | p95 only | 51 / 73 | 49 / 71 | 91 | 1 |
+| 4 | mean as tie-break | 75–87 | 62–68 | 86–90 | 25–30 |
+
+Every ~10 s (the minimum duration) devices in `LOCAL` moved to a low split
+point for the mean, often two or three at once; the server filled up, the
+refusals passed 10% and they went back to `LOCAL` (`infeasible`); then
+again. The p95 hides the damage: with more than 5% of the frames finished
+on the device it stays at the `LOCAL` time however full the server is, so
+the candidate is still "within the margin", and only the refusal constraint
+stops the move, after it is made. Each device also looks only at its own
+mean. The p95 got worse for every device, stability was lost, and the
+frames per second and the mean of all devices did not improve. The code was
+not kept.
 
 ### Window
 
@@ -124,6 +151,18 @@ Later: a maximum computed per device from its network, with a cap in
 `config.json` for memory.
 
 ### Reservations
+
+With the other devices simulated as clients (phase 3.8) a granted change is
+already in the next decisions: the server updates the device's policy in
+`offload.Fleet` when it changes it. So reservations are added only in the
+fallback, when the others are the measured load; a change still reserves,
+for a device that decides in the fallback right after. The ablation (phase
+3.8) found no difference with them off when every other device is a client.
+The fallback happens when a device in `SPLIT` has incomplete inputs (for
+example a client without `segment_ms`, optional in the protocol, or an
+unknown bandwidth on a real network): whether reservations can go is to be
+measured on real devices (phase 4), counting decisions with `clients` 0
+while other devices are in `SPLIT`.
 
 The dispatcher measures λ and ρ over a sliding window of 10 s, so a device
 that moves to `SPLIT` appears in the measure gradually. Without correction,
@@ -164,6 +203,43 @@ a model again when the estimate of one of its segments is older than
 `dispatch.reprofile_age_ms` (default 30 s): with a device at split k,
 segments 0..k never run on the server.
 
+## Verification (phase 3.8)
+
+`client/scripts/bench_multi.py` with the algorithm free, yolo-small, 2 slots
+× 2 threads, clients and worker on the same MacBook, 120 s after the last
+start, 3 runs per scenario (2026-11-06):
+
+| Devices, start | Final policies (every run) | p95 in `SPLIT` / `LOCAL` (ms) | Frames/s, all | Changes | Decision lag p95 / max (ms) |
+|---|---|---|---|---|---|
+| 2, together | one at 6/2, one `LOCAL` | 47–50 / 69–72 | 65–66 | 1 | 3 / 6 |
+| 2, 15 s apart | one at 6/2, one `LOCAL` | 47–54 / 68–75 | 64–66 | 1 | 0.1 / 0.7 |
+| 3, together | one at 6/2, two `LOCAL` | 47–50 / 69–71 | 79–81 | 1 | 6 / 12 |
+| 3, 15 s apart | one at 6/2, two `LOCAL` | 47–51 / 69–74 | 78–81 | 1 | 0.1 / 4 |
+| 4, together | one at 6/2 (once 6/3), three `LOCAL` | 51–60 / 73–81 | 87–91 | 1–2 | 8 / 23 |
+| 4, 15 s apart | one at 6/2 (once 6/3), three `LOCAL` | 52–60 / 73–84 | 88–91 | 1–2 | 3 / 11 |
+
+Exactly one device moves to `SPLIT`, after 21–25 s, and stays there; the
+others stay `LOCAL`. That is right: with two devices pinned at 6/2 the p95
+is 87 ms, worse than `LOCAL` ([COSTMODEL.md](COSTMODEL.md#verification-with-the-client-several-devices-phase-38)).
+The two moves from window 2 to 3 (p95 worse by ~8 ms) came with a rise of
+the measured `S` (27 → 34 ms) while other clients were loading, and a late
+move to `SPLIT` in an early run (fixed since in the benchmark) came from an
+`S` profiled while three clients loaded TensorFlow on the same CPU (42 ms,
+against 28 measured once in `SPLIT`): CPU contention of the shared machine,
+to be checked again with devices on other machines (phase 4).
+
+**Ablation** (2 and 4 devices started together, 2 runs, 90 s): with
+`k_noise: 0` or `k_queue: 0` the policies, changes, time to the first
+`SPLIT`, p95 and frames per second are those of the full algorithm; with
+the other devices simulated as clients the reservations change neither the
+predictions nor the decision (`TestReservationsOnlyInTheFallback`). The
+decisions here are clear-cut (`SPLIT` beats `LOCAL` by ~20 ms for the first
+device and loses by ~20 ms for the second), so the margin's terms never
+decide; they stay, for noisier predictions on real networks and devices
+that differ (phase 4). `queue_rho_from` from the prediction error per band
+of ρ (`sciot-replay check`): no band above `margin_rel` in 6 of the 11
+recordings, 0.8 in 3 and 0.95 in 2, so the default 0.8 stays.
+
 ## Admin
 
 A policy set with `POST /api/v1/admin/devices/{id}/policy` **pins** the
@@ -178,23 +254,36 @@ otherwise). A new registration starts unpinned.
 |---|---|---|
 | `offload.algorithm` | `static` | `static` or `latency` |
 | `offload.objective` | `p95` | `p95` or `mean` |
-| `offload.min_fps_ratio` | 1 | 0–10 |
-| `offload.max_reject_share` | 0.1 | 0–1 |
-| `offload.min_hold_ms` | 10000 | 0–3600000 |
-| `offload.margin_min_ms` | 2 | 0–1000 |
-| `offload.margin_rel` | 0.1 | 0–1 |
+| `offload.min_fps_ratio` | 1 | 0–10: a candidate must give at least LOCAL's frames per second times this |
+| `offload.max_reject_share` | 0.1 | 0–1: a candidate must not have more than this share of its frames refused by the server |
+| `offload.min_hold_ms` | 10000 | 0–3600000: no change before the policy has been in force this long |
+| `offload.margin_min_ms` | 2 | 0–1000: the smallest gain (ms) that replaces the current policy (the hysteresis base, step 5 of [`latency`](#latency)) |
+| `offload.margin_rel` | 0.1 | 0–1: the gain needed as a share of the current value; the base is the larger of the two |
 | `offload.k_queue` | 1 | 0–100; 0 removes the queue term (ablation, phase 3.8) |
 | `offload.k_noise` | 1 | 0–100; 0 removes the noise term |
 | `offload.queue_rho_from` | 0.8 | 0–0.99: utilization from which the queue term grows; 0 = from no load |
+| `offload.reserve` | true | false turns the [reservations](#reservations) off (ablation, phase 3.8) |
 
 `sciot-replay algo -algorithm latency -config config.json` replays a
 recording with the parameters of that file's `offload` section.
 
 ## Cost
 
-One simulation per `SPLIT` candidate per heartbeat: ~0.1 ms each, about
-3 ms per heartbeat for yolo-small with a maximum window of 3 (27
-candidates), in the heartbeat handler. Decisions of different devices run
-one at a time (the reservations' lock).
-shortcut: synchronous; with many devices, move it to a goroutine and apply
-the decision at the next heartbeat.
+One simulation per `SPLIT` candidate per heartbeat (27 for yolo-small with a
+maximum window of 3), and each simulation runs
+every other device in `SPLIT` as a client: 0.34 ms per heartbeat alone,
+0.73 ms with 1 other, 1.75 ms with 3, 4.5 ms with 7 (MacBook,
+`BenchmarkPredictAllClients`). With N devices that is ~N² work per
+heartbeat interval.
+
+So decisions run outside the heartbeat handler, in one goroutine of the
+server, one device at a time (two devices never decide on the same free
+server; the reservations' lock stays for the fallback). The handler queues
+the device and answers at once with the current policy. The queue holds
+each device once: a new heartbeat of a device already waiting replaces the
+older one, so the queue never exceeds the number of devices and every
+decision uses the latest state, in the order the devices started waiting.
+Between queueing and deciding the device may have been pinned, registered
+again or given a policy by the admin: the store refuses such a stale
+decision. The `decision` event's `lag_ms` is the time from the heartbeat to
+the decision; the replay decides at each heartbeat, without lag.

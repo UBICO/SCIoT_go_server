@@ -56,19 +56,27 @@ func TestAlgorithmChangesThePolicy(t *testing.T) {
 		t.Errorf("la registrazione deve far dimenticare la sessione precedente: %v", alg.forgotten)
 	}
 
-	// La decisione arriva nella risposta dello stesso heartbeat e sullo stream.
+	// La risposta porta la policy attuale: la decisione arriva dopo, dalla
+	// goroutine, sullo stream e con la risposta al prossimo heartbeat.
+	if p := heartbeatPolicy(t, s, session); p.Mode != api.ModeLocal || p.PolicyVersion != 1 {
+		t.Fatalf("risposta al primo heartbeat = %+v, attesa la policy attuale LOCAL v1", p)
+	}
+	s.decider.wait()
+	if len(n.policies) != 1 || n.policies[0].PolicyVersion != 2 {
+		t.Errorf("notifiche = %+v", n.policies)
+	}
 	p := heartbeatPolicy(t, s, session)
 	if p.Mode != api.ModeSplit || p.SplitPoint == nil || *p.SplitPoint != 5 || p.PolicyVersion != 2 {
 		t.Fatalf("policy = %+v", p)
 	}
-	if len(n.policies) != 1 || n.policies[0].PolicyVersion != 2 {
-		t.Errorf("notifiche = %+v", n.policies)
-	}
-	// L'algoritmo vede lo stato costruito dall'heartbeat.
+	// L'algoritmo vede lo stato costruito dall'heartbeat (anche il secondo
+	// heartbeat ha accodato una decisione: si aspetta prima di leggere).
+	s.decider.wait()
 	if st := alg.states[0]; st.DeviceID != "web_192" || st.Last != 58 || st.Split() != 58 {
 		t.Errorf("stato = %+v", st)
 	}
 	// Al prossimo heartbeat la decisione è la stessa: nessun cambio.
+	s.decider.wait()
 	if p := heartbeatPolicy(t, s, session); p.PolicyVersion != 2 || len(n.policies) != 1 {
 		t.Errorf("senza cambio: policy %+v, notifiche %d", p, len(n.policies))
 	}
@@ -84,15 +92,19 @@ func TestAdminPinStopsTheAlgorithm(t *testing.T) {
 		t.Fatalf("admin: %d %s", rec.Code, rec.Body)
 	}
 	p := heartbeatPolicy(t, s, session)
+	s.decider.wait()
 	if p.Mode != api.ModeLocal || p.PolicyVersion != 2 || len(alg.states) != 0 {
 		t.Errorf("bloccato dall'admin: policy %+v, decisioni %d", p, len(alg.states))
 	}
 
-	// Rilasciato, l'algoritmo decide di nuovo.
+	// Rilasciato, l'algoritmo decide di nuovo: la nuova policy arriva con la
+	// risposta all'heartbeat successivo.
 	rec := do(t, s, http.MethodDelete, "/api/v1/admin/devices/web_192/policy", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("unpin: %d %s", rec.Code, rec.Body)
 	}
+	heartbeatPolicy(t, s, session)
+	s.decider.wait()
 	if p := heartbeatPolicy(t, s, session); p.Mode != api.ModeSplit || p.PolicyVersion != 3 {
 		t.Errorf("dopo unpin: %+v", p)
 	}

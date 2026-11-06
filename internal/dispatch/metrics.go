@@ -81,6 +81,33 @@ type Snapshot struct {
 	Totals   Totals         `json:"totals"`
 }
 
+// deviceWindow è la finestra del device id, creata alla prima richiesta con
+// la durata del totale. Da chiamare con d.mu preso.
+func (d *Dispatcher) deviceWindow(id string) *window {
+	w, ok := d.devices[id]
+	if !ok {
+		w = newWindow(d.cfg.Window)
+		d.devices[id] = w
+	}
+	return w
+}
+
+// DeviceLoad è il carico che il device id ha portato al server, sulla stessa
+// finestra di Snapshot: frame ammessi al secondo ed erlang (slot occupati in
+// media: tempo di servizio dei suoi frame / durata della finestra). 0, 0 per
+// un device senza frame nella finestra.
+func (d *Dispatcher) DeviceLoad(id string) (admittedPerSec, erlangs float64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	w, ok := d.devices[id]
+	if !ok {
+		return 0, 0
+	}
+	sum := w.sum(d.now())
+	sec := w.length().Seconds()
+	return float64(sum.admitted) / sec, sum.busy.Seconds() / sec
+}
+
 // Snapshot restituisce lo stato attuale.
 func (d *Dispatcher) Snapshot() Snapshot {
 	now := d.now()
@@ -90,6 +117,13 @@ func (d *Dispatcher) Snapshot() Snapshot {
 	slots := d.backend.Slots()
 	sum := d.window.sum(now)
 	w := d.window.length().Seconds()
+	// Toglie le finestre dei device senza eventi nella finestra: senza, la
+	// mappa cresce con ogni device_id mai visto.
+	for id, dw := range d.devices {
+		if dw.sum(now) == (bucket{}) {
+			delete(d.devices, id)
+		}
+	}
 	snap := Snapshot{
 		Slots:          slots,
 		Running:        len(d.running),

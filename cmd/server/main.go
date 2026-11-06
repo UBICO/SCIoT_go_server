@@ -268,6 +268,9 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+	// Nessun heartbeat nuovo: si ferma la goroutine delle decisioni, che
+	// scrive nella registrazione.
+	srv.Close()
 	// Dopo Shutdown: nessuna richiesta registra più nulla. Close scrive gli
 	// eventi in attesa e la riga "end".
 	if rec != nil {

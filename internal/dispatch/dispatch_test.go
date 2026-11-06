@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -627,5 +628,81 @@ func TestExecutionErrorCarriesTheAdmission(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rpc deadline") {
 		t.Errorf("il messaggio originale va conservato: %q", err)
+	}
+}
+
+// --- carico per device (Fase 3.8) --------------------------------------------------
+
+func jobFrom(device string, id byte, deadline time.Duration) stream.Job {
+	j := job(id, deadline)
+	j.DeviceID = device
+	return j
+}
+
+// TestDeviceLoadAddsUpToTheTotal: con qualunque durata della finestra, la
+// somma dei device è il totale di Snapshot (offload.Others sottrae l'uno
+// dall'altro), e un frame rifiutato non è un frame ammesso.
+func TestDeviceLoadAddsUpToTheTotal(t *testing.T) {
+	for _, window := range []time.Duration{10 * time.Second, 5 * time.Second} {
+		d := New(newBackend(2, false), Config{ServiceTau: 10 * time.Second, Window: window})
+		for i := range byte(3) {
+			if _, err := d.Execute(context.Background(), jobFrom("a", i, time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := d.Execute(context.Background(), jobFrom("b", 9, time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		// Rifiutato: S misurata 1 s, scadenza 1 ms.
+		seed(d, time.Second)
+		if _, err := d.Execute(context.Background(), jobFrom("b", 10, time.Millisecond)); !errors.Is(err, stream.ErrBusy) {
+			t.Fatalf("finestra %v: atteso un rifiuto, %v", window, err)
+		}
+
+		snap := d.Snapshot()
+		aAdm, aErl := d.DeviceLoad("a")
+		bAdm, bErl := d.DeviceLoad("b")
+		w := window.Seconds()
+		if math.Abs(aAdm-3/w) > 1e-9 || math.Abs(bAdm-1/w) > 1e-9 {
+			t.Errorf("finestra %v: ammessi/s a %v, b %v; attesi %v e %v", window, aAdm, bAdm, 3/w, 1/w)
+		}
+		if math.Abs(aAdm+bAdm-snap.AdmittedPerSec) > 1e-9 {
+			t.Errorf("finestra %v: a + b = %v, totale %v", window, aAdm+bAdm, snap.AdmittedPerSec)
+		}
+		total := *snap.Utilization * float64(snap.Slots)
+		if aErl <= 0 || bErl <= 0 || math.Abs(aErl+bErl-total) > 1e-9 {
+			t.Errorf("finestra %v: erlang a %v + b %v, totale %v", window, aErl, bErl, total)
+		}
+	}
+}
+
+// TestDeviceWindowsAreForgotten: leggere un device sconosciuto non crea nulla;
+// una finestra rimasta vuota viene tolta da Snapshot.
+func TestDeviceWindowsAreForgotten(t *testing.T) {
+	d := New(newBackend(2, false), Config{ServiceTau: 10 * time.Second, Window: 2 * time.Second})
+	clock := time.Unix(1000, 0)
+	d.now = func() time.Time { return clock }
+	if adm, erl := d.DeviceLoad("ghost"); adm != 0 || erl != 0 {
+		t.Errorf("sconosciuto: %v, %v", adm, erl)
+	}
+	if _, err := d.Execute(context.Background(), jobFrom("a", 1, time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	devices := func() int {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return len(d.devices)
+	}
+	if n := devices(); n != 1 {
+		t.Fatalf("finestre = %d, attesa 1 (ghost non va creata)", n)
+	}
+	d.Snapshot()
+	if n := devices(); n != 1 {
+		t.Errorf("con frame nella finestra: %d finestre, attesa 1", n)
+	}
+	clock = clock.Add(3 * time.Second) // oltre la finestra di 2 s
+	d.Snapshot()
+	if n := devices(); n != 0 {
+		t.Errorf("finestra vuota: %d finestre, attese 0", n)
 	}
 }

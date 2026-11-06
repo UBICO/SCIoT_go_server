@@ -113,6 +113,11 @@ type Queue struct {
 	// Intervalli tra frame offerti: media e deviazione (dispatch.Snapshot).
 	InterarrivalMS    *float64 `json:"interarrival_ms,omitempty"`
 	InterarrivalStdMS *float64 `json:"interarrival_std_ms,omitempty"`
+	// Il carico del device dell'heartbeat, sulla stessa finestra:
+	// frame ammessi al secondo ed erlang (dispatch.DeviceLoad). Assenti nelle
+	// registrazioni precedenti alla Fase 3.8.
+	DeviceAdmittedPerSec *float64 `json:"device_admitted_per_s,omitempty"`
+	DeviceErlangs        *float64 `json:"device_erlangs,omitempty"`
 }
 
 // Policy: il server ha cambiato la policy di un device.
@@ -142,9 +147,15 @@ type Decision struct {
 	// PendingPerSec e PendingErlangs sono il carico prenotato da altri
 	// device e non ancora nella misura, aggiunto agli altri prima di
 	// prevedere (docs/OFFLOAD.md, "Reservations").
-	PendingPerSec  float64      `json:"pending_per_s,omitempty"`
-	PendingErlangs float64      `json:"pending_erlangs,omitempty"`
-	Predictions    []Prediction `json:"predictions,omitempty"`
+	PendingPerSec  float64 `json:"pending_per_s,omitempty"`
+	PendingErlangs float64 `json:"pending_erlangs,omitempty"`
+	// Clients: quanti altri device sono stati simulati come client (Fase
+	// 3.8); 0 = gli altri come flusso al ritmo misurato (ripiego).
+	Clients int `json:"clients,omitempty"`
+	// LagMS: dall'arrivo dell'heartbeat alla decisione (la goroutine del
+	// server, Fase 3.8); assente nel replay, che decide subito.
+	LagMS       float64      `json:"lag_ms,omitempty"`
+	Predictions []Prediction `json:"predictions,omitempty"`
 }
 
 // Prediction è una previsione del modello di costo (internal/costmodel) per

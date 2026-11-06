@@ -87,6 +87,8 @@ type Offload struct {
 	KQueue         *float64 `json:"k_queue,omitempty"`
 	KNoise         *float64 `json:"k_noise,omitempty"`
 	QueueRhoFrom   *float64 `json:"queue_rho_from,omitempty"`
+	// Reserve: false spegne le prenotazioni (ablazione, Fase 3.8).
+	Reserve *bool `json:"reserve,omitempty"`
 }
 
 // Record è la sezione "record": dove scrivere la registrazione degli eventi
@@ -419,6 +421,9 @@ func (f File) OffloadConfig() (string, offload.LatencyConfig, error) {
 			return "", cfg, fmt.Errorf("%s must be in [%g, %g], got %g", v.name, v.lo, v.hi, *v.in)
 		}
 		*v.out = *v.in
+	}
+	if o.Reserve != nil {
+		cfg.Reserve = *o.Reserve
 	}
 	if h := o.MinHoldMS; h != nil {
 		if *h < 0 || time.Duration(*h)*time.Millisecond > maxTau {

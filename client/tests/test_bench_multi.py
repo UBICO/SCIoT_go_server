@@ -6,6 +6,7 @@ from scripts.bench_multi import (
     device_metrics,
     format_table,
     max_pending,
+    pin_body,
     policy_label,
     policy_timeline,
 )
@@ -68,3 +69,23 @@ def test_timeline_and_pending():
     # The admin check of the benchmark is not a change of the algorithm.
     assert "| a | 50.0 | 40.0 | — | 100% | 1 | SPLIT 6/2 |" in table
     assert "admin" not in table
+
+
+def test_pin_body():
+    assert pin_body("6/2") == {"mode": "SPLIT", "split_point": 6, "max_inflight": 2}
+    assert pin_body("-1/3")["split_point"] == -1
+    with pytest.raises(ValueError):
+        pin_body("6")
+
+
+def test_table_shows_the_pin_as_last_policy():
+    pinned = {"mode": "SPLIT", "split_point": 6, "max_inflight": 2, "policy_version": 3}
+    events = [
+        {"kind": "start", "t_ms": 0},
+        {"kind": "policy", "t_ms": 1000, "device_id": "a", "reason": "admin", "policy": pinned},
+    ]
+    table = format_table(
+        {"a": {"fps": 50, "latency_ms_p50": 40, "latency_ms_p95": 45, "result_fraction": 1}},
+        policy_timeline(events),
+    )
+    assert "| 100% | 0 | SPLIT 6/2 |" in table

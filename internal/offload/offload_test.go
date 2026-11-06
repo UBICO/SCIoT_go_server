@@ -110,21 +110,42 @@ func TestPredictAllWindows(t *testing.T) {
 	}
 }
 
+func ptr(v float64) *float64 { return &v }
+
 func TestOthers(t *testing.T) {
-	// 2 slot al 60%: 1.2 erlang, 100 frame/s ammessi. Il device in SPLIT
-	// invia 20 frame/s con S = 10 ms: 0.2 erlang suoi.
-	l, e := Others(100, 0.6, 2, 20, 10, true)
-	if math.Abs(l-80) > 1e-9 || math.Abs(e-1.0) > 1e-9 {
-		t.Errorf("in SPLIT: %v frame/s, %v erlang; attesi 80 e 1.0", l, e)
+	// 2 slot al 60%: 1.2 erlang, 100 frame/s ammessi. Il device elabora 20
+	// frame/s (S = 10 ms), ma il dispatcher ne ha ammessi 14, per 0.15 erlang:
+	// gli altri 6 sono stati rifiutati o non inviati (finestra piena).
+	l, e := Others(100, 0.6, 2, ptr(14), ptr(0.15), 20, 10, true)
+	if math.Abs(l-86) > 1e-9 || math.Abs(e-1.05) > 1e-9 {
+		t.Errorf("con il carico del device: %v frame/s, %v erlang; attesi 86 e 1.05", l, e)
 	}
-	// In LOCAL il device non carica il server: tutto è degli altri.
-	l, e = Others(100, 0.6, 2, 20, 10, false)
-	if l != 100 || math.Abs(e-1.2) > 1e-9 {
-		t.Errorf("in LOCAL: %v, %v; attesi 100 e 1.2", l, e)
+	// Tornato in LOCAL da poco: i suoi frame sono ancora nella finestra.
+	l, e = Others(100, 0.6, 2, ptr(5), ptr(0.05), 20, 10, false)
+	if math.Abs(l-95) > 1e-9 || math.Abs(e-1.15) > 1e-9 {
+		t.Errorf("in LOCAL con frame nella finestra: %v, %v; attesi 95 e 1.15", l, e)
 	}
-	// Finestre diverse: la differenza non scende sotto zero.
-	if l, e := Others(10, 0.05, 2, 20, 10, true); l != 0 || e != 0 {
+	// Mai sotto zero.
+	if l, e := Others(10, 0.05, 2, ptr(12), ptr(0.2), 20, 10, true); l != 0 || e != 0 {
 		t.Errorf("sotto zero: %v, %v; attesi 0 e 0", l, e)
+	}
+
+	// Ripiego (registrazioni senza i campi): la formula di prima.
+	l, e = Others(100, 0.6, 2, nil, nil, 20, 10, true)
+	if math.Abs(l-80) > 1e-9 || math.Abs(e-1.0) > 1e-9 {
+		t.Errorf("ripiego in SPLIT: %v frame/s, %v erlang; attesi 80 e 1.0", l, e)
+	}
+	l, e = Others(100, 0.6, 2, nil, nil, 20, 10, false)
+	if l != 100 || math.Abs(e-1.2) > 1e-9 {
+		t.Errorf("ripiego in LOCAL: %v, %v; attesi 100 e 1.2", l, e)
+	}
+	if l, e := Others(10, 0.05, 2, nil, nil, 20, 10, true); l != 0 || e != 0 {
+		t.Errorf("ripiego sotto zero: %v, %v; attesi 0 e 0", l, e)
+	}
+	// Uno solo dei due campi: ripiego (non si mescolano le due formule).
+	l, _ = Others(100, 0.6, 2, ptr(14), nil, 20, 10, true)
+	if math.Abs(l-80) > 1e-9 {
+		t.Errorf("un campo solo: %v frame/s, atteso il ripiego 80", l)
 	}
 }
 

@@ -358,7 +358,7 @@ func TestAdminPinsThePolicy(t *testing.T) {
 	split := api.SetPolicyRequest{Mode: api.ModeSplit, SplitPoint: &sp}
 
 	// L'algoritmo cambia la policy di un device libero.
-	d, err := s.SetAutoPolicy("web_96", reg.SessionID, split)
+	d, err := s.SetAutoPolicy("web_96", reg.SessionID, 1, split)
 	if err != nil || d.Pinned || d.Policy.PolicyVersion != 2 {
 		t.Fatalf("SetAutoPolicy: %+v, %v", d, err)
 	}
@@ -366,7 +366,7 @@ func TestAdminPinsThePolicy(t *testing.T) {
 	if d, _ := s.SetPolicy("web_96", api.SetPolicyRequest{Mode: api.ModeLocal}); !d.Pinned {
 		t.Fatal("la policy dell'admin deve bloccare il device")
 	}
-	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, split); !errors.Is(err, ErrPinned) {
+	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, 3, split); !errors.Is(err, ErrPinned) {
 		t.Errorf("su un device bloccato: err = %v, atteso ErrPinned", err)
 	}
 	res, _ := s.Heartbeat("web_96", reg.SessionID, 3, api.Telemetry{})
@@ -377,7 +377,11 @@ func TestAdminPinsThePolicy(t *testing.T) {
 	if d, err := s.Unpin("web_96"); err != nil || d.Pinned || d.Policy.Mode != api.ModeLocal {
 		t.Errorf("Unpin: %+v, %v", d, err)
 	}
-	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, split); err != nil {
+	// Decisa sulla versione 2, ma l'admin l'ha portata a 3: vecchia.
+	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, 2, split); !errors.Is(err, ErrStalePolicy) {
+		t.Errorf("decisione su una versione vecchia: err = %v, atteso ErrStalePolicy", err)
+	}
+	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, 3, split); err != nil {
 		t.Errorf("dopo Unpin: %v", err)
 	}
 	if _, err := s.Unpin("mai-visto"); !errors.Is(err, ErrDeviceNotFound) {
@@ -389,7 +393,7 @@ func TestAutoPolicyNeedsTheCurrentSession(t *testing.T) {
 	s := NewStore()
 	old := s.Register("web_96", "python", fomo, api.Capabilities{})
 	s.Register("web_96", "python", fomo, api.Capabilities{}) // nuova sessione
-	if _, err := s.SetAutoPolicy("web_96", old.SessionID, api.SetPolicyRequest{Mode: api.ModeLocal}); !errors.Is(err, ErrSessionExpired) {
+	if _, err := s.SetAutoPolicy("web_96", old.SessionID, 1, api.SetPolicyRequest{Mode: api.ModeLocal}); !errors.Is(err, ErrSessionExpired) {
 		t.Errorf("decisione sulla sessione vecchia: err = %v, atteso ErrSessionExpired", err)
 	}
 }
@@ -403,7 +407,7 @@ func TestPolicySince(t *testing.T) {
 		t.Errorf("alla registrazione: %v", reg.PolicySince)
 	}
 	now = now.Add(5 * time.Second)
-	d, _ := s.SetAutoPolicy("web_96", reg.SessionID, api.SetPolicyRequest{Mode: api.ModeLocal})
+	d, _ := s.SetAutoPolicy("web_96", reg.SessionID, 1, api.SetPolicyRequest{Mode: api.ModeLocal})
 	if !d.PolicySince.Equal(now) {
 		t.Errorf("dopo un cambio: %v, atteso %v", d.PolicySince, now)
 	}
