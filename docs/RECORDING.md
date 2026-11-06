@@ -240,7 +240,8 @@ Written by the server at every heartbeat when an algorithm is enabled
 the chosen window, absent for `LOCAL` and for a policy without one.
 `pending_per_s` and `pending_erlangs` are the load other devices reserved
 and the dispatcher does not measure yet, added to the others' before
-predicting ([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
+predicting, only in the fallback without clients
+([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
 `clients` is how many other devices the simulation ran as clients
 ([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation)); omitted
 when 0: no other device in `SPLIT`, or the fallback on the measured load.

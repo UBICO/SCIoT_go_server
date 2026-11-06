@@ -131,8 +131,15 @@ Later: a maximum computed per device from its network, with a cap in
 
 With the other devices simulated as clients (phase 3.8) a granted change is
 already in the next decisions: the server updates the device's policy in
-`offload.Fleet` when it changes it. Reservations matter only for the
-fallback, when the others are the measured load:
+`offload.Fleet` when it changes it. So reservations are added only in the
+fallback, when the others are the measured load; a change still reserves,
+for a device that decides in the fallback right after. The ablation (phase
+3.8) found no difference with them off when every other device is a client.
+The fallback happens when a device in `SPLIT` has incomplete inputs (for
+example a client without `segment_ms`, optional in the protocol, or an
+unknown bandwidth on a real network): whether reservations can go is to be
+measured on real devices (phase 4), counting decisions with `clients` 0
+while other devices are in `SPLIT`.
 
 The dispatcher measures λ and ρ over a sliding window of 10 s, so a device
 that moves to `SPLIT` appears in the measure gradually. Without correction,
@@ -195,6 +202,7 @@ otherwise). A new registration starts unpinned.
 | `offload.k_queue` | 1 | 0–100; 0 removes the queue term (ablation, phase 3.8) |
 | `offload.k_noise` | 1 | 0–100; 0 removes the noise term |
 | `offload.queue_rho_from` | 0.8 | 0–0.99: utilization from which the queue term grows; 0 = from no load |
+| `offload.reserve` | true | false turns the [reservations](#reservations) off (ablation, phase 3.8) |
 
 `sciot-replay algo -algorithm latency -config config.json` replays a
 recording with the parameters of that file's `offload` section.

@@ -350,6 +350,10 @@ algorithm is not asked (no `decision` events: `sciot-replay algo` computes
 the predictions offline). This is how loads near saturation are recorded,
 which the algorithm avoids by itself.
 
+`--offload JSON` adds keys to the server's `offload` section, e.g.
+`--offload '{"k_noise": 0}'`: how the ablation of phase 3.8 runs the
+algorithm without one of its parts ([OFFLOAD.md](OFFLOAD.md#configuration)).
+
 Per device: frames/s, latency p50/p95 after `--warmup` seconds (default
 20), share answered by the server, policy changes and the last policy
 (`SPLIT k/w`: split point and window); then every change with its reason,

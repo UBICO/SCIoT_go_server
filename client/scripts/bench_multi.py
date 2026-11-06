@@ -155,6 +155,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--warmup", type=float, default=20.0, help="seconds not measured, per device")
     p.add_argument("--algorithm", default="latency", help="offload.algorithm of the server")
     p.add_argument(
+        "--offload",
+        type=json.loads,
+        default={},
+        metavar="JSON",
+        help='more keys of the server\'s "offload" section, e.g. \'{"k_noise": 0}\' (ablation)',
+    )
+    p.add_argument(
         "--pin",
         metavar="SPLIT/WINDOW",
         help="keep every device at this policy (e.g. 6/2) instead of releasing it: "
@@ -212,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                 record_dir,
                 args.heartbeat_ms,
             )
-            cfg["offload"] = {"algorithm": args.algorithm}
+            cfg["offload"] = {"algorithm": args.algorithm, **args.offload}
             (tmp / "config.json").write_text(json.dumps(cfg))
             server = subprocess.Popen(
                 [
