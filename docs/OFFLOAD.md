@@ -81,28 +81,51 @@ server.
 With the `p95` objective ties are frequent, not chance: when more than 5%
 of a `SPLIT` candidate's frames are finished by the device (full window,
 refused), those frames cost the whole model, and the p95 *is* the `LOCAL`
-time. Two devices on one server (CLIENT.md, "Multi-device benchmark"), the
-second deciding with the first at split 6:
+time. With one device at split 6 and window 2, the others see (replay of
+the phase 3.8 recordings, medians):
 
 | Candidate | p95 (ms) | Mean (ms) | Served by the server | Frames/s |
 |---|---|---|---|---|
-| `LOCAL` | 66.0 | 66.0 | 0% | 15.0 |
-| split 1, window 1 | 66.0 | 54.8 | 50% | 28.0 |
-| split 6, window 2 | 114.7 | 69.1 | 61% | 27.0 |
+| `LOCAL` | 66 | 66 | 0% | 15 |
+| split −1, window 2 | 66 | 50 | 67% | 45 |
 
-The p95 cannot see that half the frames of split 1 are 11 ms faster on
-average and the frames per second double. This is accepted (decided
-2026-11-04): the objective is the stability of the latency, which does not
-get worse, and frames per second are a constraint, not a goal; staying
-`LOCAL` also leaves the server to the other devices.
+The p95 cannot see that two frames in three come back 16 ms earlier on
+average and the frames per second triple. This is accepted (decided
+2026-11-04, confirmed by the test below): the objective is the stability of
+the latency, which does not get worse, and frames per second are a
+constraint, not a goal; staying `LOCAL` also leaves the server to the
+device already in `SPLIT`.
 
 The tie rule alone would not change this: a tie is a gain of 0, never
 beyond the margin, so the device keeps its policy whatever the rule (the
 rule matters only when the current candidate breaks the constraints and the
-algorithm moves without margin). The alternative, for phase 3.8 with
-several devices: the mean as a second criterion, with its own margin, when
-the p95 are within the margin; it trades a better mean for more load on
-the server.
+algorithm moves without margin).
+
+**Option b, tried and dropped (phase 3.8).** The mean as a second criterion:
+among the candidates with a p95 within the margin of the current one, the
+one with the lowest mean wins if it beats the current mean by more than 10%.
+In the replay of 18 recordings such a candidate existed in 59% of the
+decisions, nearly all for devices in `LOCAL` (split −1 to 3, window 2:
+mean −14…−16 ms, frames per second ×2–3). Live, devices started together,
+2 runs each:
+
+| Devices | Rule | p95 per device (ms) | Mean (ms) | Frames/s, all | Policy changes in 2 min |
+|---|---|---|---|---|---|
+| 2 | p95 only | 47–50 / 69–71 | 46–47 / 68 | 65–66 | 1 |
+| 2 | mean as tie-break | 68–86 | 54–57 | 62–63 | 16–18 |
+| 4 | p95 only | 51 / 73 | 49 / 71 | 91 | 1 |
+| 4 | mean as tie-break | 75–87 | 62–68 | 86–90 | 25–30 |
+
+Every ~10 s (the minimum duration) devices in `LOCAL` moved to a low split
+point for the mean, often two or three at once; the server filled up, the
+refusals passed 10% and they went back to `LOCAL` (`infeasible`); then
+again. The p95 hides the damage: with more than 5% of the frames finished
+on the device it stays at the `LOCAL` time however full the server is, so
+the candidate is still "within the margin", and only the refusal constraint
+stops the move, after it is made. Each device also looks only at its own
+mean. The p95 got worse for every device, stability was lost, and the
+frames per second and the mean of all devices did not improve. The code was
+not kept.
 
 ### Window
 
