@@ -52,10 +52,10 @@ type LatencyConfig struct {
 	// Margine: max(MarginMinMS, MarginRel × valore attuale) × (1 + KQueue ·
 	// max(0, ρ' − QueueRhoFrom)/(1−ρ')) + KNoise · σ.
 	MarginMinMS, MarginRel, KQueue, KNoise float64
-	// QueueRhoFrom è da dove parte il termine di coda: sotto, il modello a
-	// code prevede bene l'attesa (COSTMODEL.md, verifica 1: vicino al vero
-	// sotto ρ ≈ 0.8, 2–4× sopra) e il margine non deve crescere. 0 = da
-	// subito.
+	// QueueRhoFrom è da dove parte il termine di coda: sotto, il p95 della
+	// simulazione è entro MarginRel da quello del client (Fase 3.8, sciot-replay
+	// check, docs/OFFLOAD.md "Verification") e il margine non deve crescere.
+	// 0 = da subito.
 	QueueRhoFrom float64
 	// NoiseTau è la costante di tempo della stima del rumore σ.
 	NoiseTau time.Duration

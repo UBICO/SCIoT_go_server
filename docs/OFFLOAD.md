@@ -51,10 +51,10 @@ At every heartbeat, in order:
    - `ρ` is the best candidate's utilization from the simulation (capped at
      0.99): near saturation a small error on the load moves the latency a
      lot, so the margin grows. Only above `queue_rho_from` (default 0.8):
-     below, the queue model predicts the wait well (COSTMODEL.md,
-     verification 1: close below ρ ≈ 0.8, 2–4× off above), and a margin that
-     grew from low loads kept a single device at split 3 instead of split 6,
-     26% faster at ρ = 0.69;
+     below, the simulation's p95 is within `margin_rel` of the client's
+     (phase 3.8, `sciot-replay check`: [Verification](#verification-phase-38)),
+     and a margin that grew from low loads kept a single device at split 3
+     instead of split 6, 26% faster at ρ = 0.69;
    - `σ` is the noise of the two predictions' difference (below).
 
    If the current candidate violates the constraints, the algorithm moves
@@ -202,6 +202,43 @@ keep the inputs fresh for split points no frame uses, the server profiles
 a model again when the estimate of one of its segments is older than
 `dispatch.reprofile_age_ms` (default 30 s): with a device at split k,
 segments 0..k never run on the server.
+
+## Verification (phase 3.8)
+
+`client/scripts/bench_multi.py` with the algorithm free, yolo-small, 2 slots
+× 2 threads, clients and worker on the same MacBook, 120 s after the last
+start, 3 runs per scenario (2026-11-06):
+
+| Devices, start | Final policies (every run) | p95 in `SPLIT` / `LOCAL` (ms) | Frames/s, all | Changes | Decision lag p95 / max (ms) |
+|---|---|---|---|---|---|
+| 2, together | one at 6/2, one `LOCAL` | 47–50 / 69–72 | 65–66 | 1 | 3 / 6 |
+| 2, 15 s apart | one at 6/2, one `LOCAL` | 47–54 / 68–75 | 64–66 | 1 | 0.1 / 0.7 |
+| 3, together | one at 6/2, two `LOCAL` | 47–50 / 69–71 | 79–81 | 1 | 6 / 12 |
+| 3, 15 s apart | one at 6/2, two `LOCAL` | 47–51 / 69–74 | 78–81 | 1 | 0.1 / 4 |
+| 4, together | one at 6/2 (once 6/3), three `LOCAL` | 51–60 / 73–81 | 87–91 | 1–2 | 8 / 23 |
+| 4, 15 s apart | one at 6/2 (once 6/3), three `LOCAL` | 52–60 / 73–84 | 88–91 | 1–2 | 3 / 11 |
+
+Exactly one device moves to `SPLIT`, after 21–25 s, and stays there; the
+others stay `LOCAL`. That is right: with two devices pinned at 6/2 the p95
+is 87 ms, worse than `LOCAL` ([COSTMODEL.md](COSTMODEL.md#verification-with-the-client-several-devices-phase-38)).
+The two moves from window 2 to 3 (p95 worse by ~8 ms) came with a rise of
+the measured `S` (27 → 34 ms) while other clients were loading, and a late
+move to `SPLIT` in an early run (fixed since in the benchmark) came from an
+`S` profiled while three clients loaded TensorFlow on the same CPU (42 ms,
+against 28 measured once in `SPLIT`): CPU contention of the shared machine,
+to be checked again with devices on other machines (phase 4).
+
+**Ablation** (2 and 4 devices started together, 2 runs, 90 s): with
+`k_noise: 0` or `k_queue: 0` the policies, changes, time to the first
+`SPLIT`, p95 and frames per second are those of the full algorithm; with
+the other devices simulated as clients the reservations change neither the
+predictions nor the decision (`TestReservationsOnlyInTheFallback`). The
+decisions here are clear-cut (`SPLIT` beats `LOCAL` by ~20 ms for the first
+device and loses by ~20 ms for the second), so the margin's terms never
+decide; they stay, for noisier predictions on real networks and devices
+that differ (phase 4). `queue_rho_from` from the prediction error per band
+of ρ (`sciot-replay check`): no band above `margin_rel` in 6 of the 11
+recordings, 0.8 in 3 and 0.95 in 2, so the default 0.8 stays.
 
 ## Admin
 
