@@ -29,6 +29,7 @@ results.json, results.md, one frames CSV per device and the recording.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import shutil
 import signal
@@ -229,15 +230,30 @@ def main(argv: list[str] | None = None) -> int:
             wait_worker(server_url, 180, server, server_log)
             print("server and worker ready")
 
-            for i, device_id in enumerate(ids):
-                if i:
-                    time.sleep(args.stagger)
-                config_path = tmp / f"{device_id}.yaml"
-                config_path.write_text(
-                    json.dumps(client_config(server_url, device_id, args.model_dir))
-                )
-                clients.append(
-                    subprocess.Popen(
+            def release(device_id: str, client: subprocess.Popen) -> None:
+                # The check pins the device (an admin policy): release it, or pin
+                # it to --pin, as soon as it is registered. Doing it after every
+                # client had started let the algorithm decide for the first ones,
+                # and the check then put them back to LOCAL.
+                wait_registered(server_url, device_id, 120, client)
+                policy_url = f"{server_url}/api/v1/admin/devices/{device_id}/policy"
+                if args.pin:
+                    status, body = http_json("POST", policy_url, args.pin_body)
+                    if status != 200:
+                        raise RuntimeError(f"pin {device_id} to {args.pin}: HTTP {status} {body}")
+                else:
+                    http_json("DELETE", policy_url)
+
+            releases: list[concurrent.futures.Future] = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(ids)) as pool:
+                for i, device_id in enumerate(ids):
+                    if i:
+                        time.sleep(args.stagger)
+                    config_path = tmp / f"{device_id}.yaml"
+                    config_path.write_text(
+                        json.dumps(client_config(server_url, device_id, args.model_dir))
+                    )
+                    client = subprocess.Popen(
                         [
                             args.python,
                             "-m",
@@ -251,18 +267,10 @@ def main(argv: list[str] | None = None) -> int:
                         stdout=(tmp / f"client_{device_id}.log").open("w"),
                         stderr=subprocess.STDOUT,
                     )
-                )
-            for device_id, client in zip(ids, clients, strict=True):
-                # The check pins the device (an admin policy): release it, or pin it
-                # to --pin.
-                wait_registered(server_url, device_id, 120, client)
-                policy_url = f"{server_url}/api/v1/admin/devices/{device_id}/policy"
-                if args.pin:
-                    status, body = http_json("POST", policy_url, args.pin_body)
-                    if status != 200:
-                        raise RuntimeError(f"pin {device_id} to {args.pin}: HTTP {status} {body}")
-                else:
-                    http_json("DELETE", policy_url)
+                    clients.append(client)
+                    releases.append(pool.submit(release, device_id, client))
+                for f in releases:
+                    f.result()  # an error in a release stops the benchmark here
             print(f"{len(ids)} clients registered, running {args.duration:.0f} s")
             time.sleep(args.duration)
         except Exception:
