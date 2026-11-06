@@ -23,9 +23,11 @@ At every heartbeat, in order:
    ([COSTMODEL.md](COSTMODEL.md)): a formula for `LOCAL`, the simulation of
    device and dispatcher for `SPLIT`. A candidate is `LOCAL` or a pair
    (split point −1..last−1, window 1..`stream.max_inflight`): 9 × 3 + 1 for
-   yolo-small. The load of the other devices is the measured one plus what
-   the algorithm granted and the dispatcher does not see yet
-   ([Reservations](#reservations)). A prediction with missing inputs is not
+   yolo-small. The other devices in `SPLIT` are simulated as clients at
+   their current policy ([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation));
+   only when one of them has incomplete inputs the simulation falls back to
+   their measured load plus what the algorithm granted and the dispatcher
+   does not see yet ([Reservations](#reservations)). A prediction with missing inputs is not
    a candidate; if the current one's is missing, nothing changes
    (`current_unknown`): one cannot tell whether another is better.
 2. **Minimum duration**: no change before the policy has been in force for
@@ -125,6 +127,11 @@ Later: a maximum computed per device from its network, with a cap in
 
 ### Reservations
 
+With the other devices simulated as clients (phase 3.8) a granted change is
+already in the next decisions: the server updates the device's policy in
+`offload.Fleet` when it changes it. Reservations matter only for the
+fallback, when the others are the measured load:
+
 The dispatcher measures λ and ρ over a sliding window of 10 s, so a device
 that moves to `SPLIT` appears in the measure gradually. Without correction,
 another device deciding a second later sees the server almost free, moves
@@ -192,9 +199,12 @@ recording with the parameters of that file's `offload` section.
 
 ## Cost
 
-One simulation per `SPLIT` candidate per heartbeat: ~0.1 ms each, about
-3 ms per heartbeat for yolo-small with a maximum window of 3 (27
-candidates), in the heartbeat handler. Decisions of different devices run
-one at a time (the reservations' lock).
+One simulation per `SPLIT` candidate per heartbeat (27 for yolo-small with a
+maximum window of 3), in the heartbeat handler, and each simulation runs
+every other device in `SPLIT` as a client: 0.34 ms per heartbeat alone,
+0.73 ms with 1 other, 1.75 ms with 3, 4.5 ms with 7 (MacBook,
+`BenchmarkPredictAllClients`). With N devices that is ~N² work per
+heartbeat interval. Decisions of different devices run one at a time (the
+reservations' lock).
 shortcut: synchronous; with many devices, move it to a goroutine and apply
 the decision at the next heartbeat.

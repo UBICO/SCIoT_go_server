@@ -42,6 +42,51 @@ type Queue struct {
 	// dei tempi di servizio: la simulazione (sim.go) ne estrae arrivi e
 	// servizi.
 	CA, CS float64
+	// Clients sono gli altri device in SPLIT, simulati come client con le
+	// stesse regole del device (sim.go, Fase 3.8). Vuoto = ripiego: gli
+	// altri sono un flusso di frame al ritmo OthersLambda.
+	Clients []Client
+}
+
+// Client sono i tempi di un altro device in SPLIT alla sua policy attuale,
+// in millisecondi: prefisso P, suffisso X, invio U, ciclo A, servizio S
+// (al suo split point), ritorno della risposta DownMS, e la sua finestra.
+type Client struct {
+	P, X, U, A, S, DownMS float64
+	Window                int
+}
+
+// ClientFrom ricava i tempi di un device dai suoi ingressi, alla policy
+// (split, window): lo stesso calcolo di Predict (deviceMS, uploadMS), così un
+// device simulato come "altro" costa quanto quando si prevede per lui.
+// ok = false se manca un ingresso (Missing non vuoto), se split è LOCAL
+// (split ≥ last: non carica il server) o se window < 1.
+func ClientFrom(in Inputs, split, window, last int) (c Client, ok bool) {
+	if split >= last || window < 1 {
+		return Client{}, false
+	}
+	var p Prediction // raccoglie solo Missing
+	c = Client{
+		P: deviceMS(in, 0, split, &p), X: deviceMS(in, split+1, last, &p),
+		U: uploadMS(in, split, &p), Window: window,
+	}
+	if s, ok := in.ServiceMS[split]; ok {
+		c.S = s
+	} else {
+		p.Missing = append(p.Missing, "service")
+	}
+	if in.CycleMS != nil {
+		c.A = *in.CycleMS
+	} else {
+		p.Missing = append(p.Missing, "cycle")
+	}
+	if in.Network != nil && in.Network.LatencyMS != nil {
+		c.DownMS = *in.Network.LatencyMS
+	}
+	if len(p.Missing) > 0 {
+		return Client{}, false
+	}
+	return c, true
 }
 
 // Perché i frame del device non arrivano tutti al server (Prediction.Bound).
@@ -165,7 +210,10 @@ func Predict(in Inputs, split, last int) Prediction {
 		P: p.DeviceMS, X: p.SuffixMS, U: p.UploadMS, S: p.ServiceMS, A: *in.CycleMS, DownMS: down,
 		Window: in.MaxInflight, Slots: q.Slots, CS: q.CS, CA: q.CA,
 	}
-	if q.OthersLambda > 0 {
+	switch {
+	case len(q.Clients) > 0:
+		sp.Others = q.Clients
+	case q.OthersLambda > 0:
 		sp.OthersPerMS = q.OthersLambda / 1000
 		sp.OthersS = q.OthersErlangs / q.OthersLambda * 1000
 	}

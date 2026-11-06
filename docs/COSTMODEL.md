@@ -50,7 +50,7 @@ rules of the real code, for 1 s of warm-up and 5 s of measure in virtual time
 | device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it (`upload` ms) |
 | answer | returns after the network latency (at least 0.1 ms) and frees the window when it arrives |
 | server | admission with `dispatch.PredictWait` (the dispatcher's own function) and the estimated `S`: refused when wait + `S` exceeds the deadline, the device's `device(k+1..last)`; FIFO queue, `c` slots; a frame that gets its slot after its deadline returns as an error |
-| other devices | a stream of frames, always admitted (their measured rate counts only admitted frames), with their rate, `ca`, `S` and `cs` (log-normal) |
+| other devices | every other device in `SPLIT` is a client with the same rules and its own times at its policy (prefix, suffix, upload, `A`, `S`, window: `costmodel.ClientFrom`); their frames are refused, expire and are drained like the device's, only the device's are counted. Fallback when some other device's inputs are incomplete (or in recordings replayed without them): a stream of frames, always admitted, at the others' measured rate (admitted frames only), with `ca`, `S` and `cs` (log-normal) |
 
 Results per split point: frames per second of the device and served by the
 server, `share`, refused and window-full frames per second, mean queue wait
@@ -70,6 +70,15 @@ frames finished on the device, unlike `inference_time_ms`) minus the upload
 of the frames sent, per frame. With an image from file it is ~2 ms.
 
 `Saturated` means the other devices alone already fill the server.
+
+The other devices come from `offload.Fleet`: the last state of every device
+(its heartbeat), kept by the server and rebuilt by the replay from the
+recorded heartbeats, so both feed the same inputs. A device not seen for 3
+heartbeat intervals is dropped; a device pinned by the admin counts like any
+other. When the server changes a device's policy, the next decisions
+simulate it at the new policy at once. The cost grows with the others:
+one decision (all 28 candidates) takes 0.34 ms alone, 0.73 ms with 1 other,
+1.75 ms with 3, 4.5 ms with 7 (MacBook, `BenchmarkPredictAllClients`).
 
 **Coupling**: the simulation mirrors the client. A change of the client's
 window or fallback behaviour must change `sim.go` too.
@@ -122,12 +131,32 @@ p95, before and after taking the device's admitted load on the same window:
 | 2, 3 | −1% | −1% | 5.4 / 6.0 |
 | 3, 3 | −26% | −1% | 7.0 / 8.0 |
 
-The p95 is now within 3% in all but one run (3 devices, window 2: one run
-per configuration, the spread between runs is not measured yet). Refusals
-are still under-predicted with several devices, and with them the frames
-per second and the share served (+10–20%): the simulation treats the other
-devices as a stream that is always admitted and does not react, while they
-are clients like this one, with their own window and refusals.
+That fixed the p95 in all but one configuration (3 devices, window 2:
+−25/−26% in four runs, so not noise), but refusals stayed under-predicted
+(2.2/s against 6.0 with 2 devices) and frames per second and share
+over-predicted by 10–20%: the other devices were a stream of frames
+arriving at random and always admitted, while real clients send as soon as
+their window frees, keep the queue full and are refused too. The p95 sits
+where the slow frames (refused and drained, expired) pass 5%, so it jumps
+when their share crosses that line, while the mean is off everywhere
+(−8…−14%).
+
+Two prototypes, on the same recordings: the others as a stream at their
+*offered* rate that admission can refuse (no change, sometimes worse), and
+the others as clients with the device's rules (all errors within ±2%). With
+the others as clients (`ClientFrom`, `offload.Fleet`), median error per run:
+
+| Devices, window | p95 | mean | frames/s | share | refused/s predicted / measured |
+|---|---|---|---|---|---|
+| 1, 2 | +1% | −1% | 0% | 0% | 0 / 0 |
+| 2–3, 1 | −1…−2% | −1% | 0% | 0% | 0 / 0 |
+| 2, 2 | −1% | −2% | +1% | +1% | 3.4 / 6.0 |
+| 3, 2 (4 runs) | −1% | −4…−5% | +1…+5% | +2…+5% | 6.6 / 7–8 |
+| 4, 2 | −2% | −4% | +3% | +8% | 7.8 / 8.9 |
+| 2, 3 | −1% | −1% | +5% | +4% | 5.0 / 6.0 |
+| 3, 3 | −1% | −3% | +4% | +3% | 7.8 / 8.0 |
+
+Not verified yet: devices that differ (model, split point), a real network.
 
 ## Mean or p95
 

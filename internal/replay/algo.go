@@ -42,6 +42,9 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 	}
 	since := map[string]float64{}  // device → t_ms da cui vale la policy
 	version := map[string]uint64{} // device → ultima versione vista
+	// Gli altri device come client, come nel server (Server.decide). Senza
+	// SetPolicy: a ciclo aperto la policy di un device è quella dei dati.
+	fleet := offload.NewFleet(3 * heartbeatInterval(hbs))
 	var out []Step
 	for _, hb := range hbs {
 		if hb.NumSegments == 0 {
@@ -52,6 +55,10 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 			since[hb.DeviceID] = hb.TMS
 		}
 		st := offload.StateFrom(hb, time.Duration((hb.TMS-since[hb.DeviceID])*float64(time.Millisecond)))
+		fleet.Update(hb.TS, st)
+		if clients, ok := fleet.Clients(hb.TS, hb.DeviceID); ok {
+			st.Inputs.Queue.Clients = clients
+		}
 		d := alg.Decide(hb.TS, st)
 		preds := d.Predictions
 		if preds == nil {
@@ -65,6 +72,22 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 		out = append(out, step)
 	}
 	return out, nil
+}
+
+// heartbeatInterval è l'intervallo tipico tra heartbeat di un device: la
+// mediana di since_last_seen_ms (la riga start lo dice, ma qui non la si
+// legge); 1 s senza dati.
+func heartbeatInterval(hbs []record.Heartbeat) time.Duration {
+	var gaps []float64
+	for _, hb := range hbs {
+		if hb.SinceLastSeenMS > 0 {
+			gaps = append(gaps, hb.SinceLastSeenMS)
+		}
+	}
+	if len(gaps) == 0 {
+		return time.Second
+	}
+	return time.Duration(costmodel.Percentile(gaps, 0.5) * float64(time.Millisecond))
 }
 
 // predicted è la latenza prevista per lo split point split con la finestra

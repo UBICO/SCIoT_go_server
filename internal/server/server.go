@@ -94,6 +94,9 @@ type Server struct {
 	// alg decide la policy dei device a ogni heartbeat; nil = nessuna
 	// decisione (la policy cambia solo con l'admin). Vedi SetAlgorithm.
 	alg offload.Algorithm
+	// fleet: l'ultimo stato di ogni device, per simulare gli altri come
+	// client (Fase 3.8); nil senza algoritmo.
+	fleet *offload.Fleet
 
 	table *heartbeatTable  // usata solo se cfg.Verbose
 	now   func() time.Time // orario delle righe; sostituibile nei test
@@ -281,6 +284,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if f, ok := s.alg.(offload.Forgetter); ok {
 		f.Forget(req.DeviceID) // la memoria della sessione precedente non vale più
+	}
+	if s.fleet != nil {
+		s.fleet.Forget(req.DeviceID)
 	}
 	log.Printf("registered device=%s type=%s model=%s session=%s",
 		req.DeviceID, d.Type, d.Model.ModelKey, d.SessionID)
@@ -474,6 +480,9 @@ func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
 	if s.notifier != nil {
 		s.notifier.NotifyPolicy(id, d.Policy)
 	}
+	if s.fleet != nil {
+		s.fleet.SetPolicy(id, d.Policy) // gli altri lo simulano subito con la nuova
+	}
 	s.rec.Record(&record.Policy{DeviceID: id, SessionID: d.SessionID, Policy: d.Policy, Reason: "admin"})
 	writeJSON(w, http.StatusOK, api.SetPolicyResponse{
 		DeviceID:  id,
@@ -625,22 +634,35 @@ func (s *Server) wantState() bool { return s.rec != nil || s.alg != nil }
 // SetAlgorithm attiva l'algoritmo di offloading: a ogni heartbeat decide la
 // policy del device (internal/offload). Va chiamata prima di servire
 // richieste.
-func (s *Server) SetAlgorithm(a offload.Algorithm) { s.alg = a }
+func (s *Server) SetAlgorithm(a offload.Algorithm) {
+	s.alg = a
+	// Tre heartbeat mancati: il device non c'è più.
+	s.fleet = offload.NewFleet(3 * s.cfg.HeartbeatInterval)
+}
 
 // decide esegue l'algoritmo sull'heartbeat hb e, se cambia la policy, la
 // applica: nuova versione nello store, notifica sullo stream, evento policy.
 // Restituisce la policy da mandare al device. Un device bloccato dall'admin
 // non viene toccato.
 //
-// Gira nel gestore dell'heartbeat (meno di 1 ms per yolo-small).
+// Gira nel gestore dell'heartbeat: per yolo-small 0.3 ms da solo, circa
+// 0.5 ms in più per ogni altro device in SPLIT (docs/OFFLOAD.md, "Cost").
 // shortcut: sincrono; con molti device spostarlo in una goroutine e
 // applicare la decisione all'heartbeat successivo.
 func (s *Server) decide(deviceID, sessionID string, hb *record.Heartbeat, res device.HeartbeatResult) api.Policy {
-	if s.alg == nil || res.Pinned {
+	if s.alg == nil {
 		return res.Policy
 	}
 	now := s.now()
 	st := offload.StateFrom(*hb, now.Sub(res.PolicySince))
+	// Anche un device bloccato carica il server: entra tra gli altri.
+	s.fleet.Update(now, st)
+	if res.Pinned {
+		return res.Policy
+	}
+	if clients, ok := s.fleet.Clients(now, deviceID); ok {
+		st.Inputs.Queue.Clients = clients
+	}
 	d := s.alg.Decide(now, st)
 	s.rec.Record(offload.DecisionRecord(st, d, s.alg.Name()))
 	if !d.Changes(res.Policy, st.MaxWindow) {
@@ -655,6 +677,7 @@ func (s *Server) decide(deviceID, sessionID string, hb *record.Heartbeat, res de
 		}
 		return res.Policy
 	}
+	s.fleet.SetPolicy(deviceID, dev.Policy)
 	if s.notifier != nil {
 		s.notifier.NotifyPolicy(deviceID, dev.Policy)
 	}

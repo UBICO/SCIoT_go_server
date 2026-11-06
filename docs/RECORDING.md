@@ -241,6 +241,9 @@ the chosen window, absent for `LOCAL` and for a policy without one.
 `pending_per_s` and `pending_erlangs` are the load other devices reserved
 and the dispatcher does not measure yet, added to the others' before
 predicting ([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
+`clients` is how many other devices the simulation ran as clients
+([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation)); omitted
+when 0: no other device in `SPLIT`, or the fallback on the measured load.
 `predictions` has one entry per candidate, a pair split point and `window`
 (split −1..last−1, window from the maximum down to 1), and LOCAL last
 (no `window`), with the fields of [COSTMODEL.md](COSTMODEL.md): how many frames per

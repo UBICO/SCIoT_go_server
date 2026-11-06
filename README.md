@@ -29,7 +29,7 @@ Status:
 - [ ] phase 3, offloading algorithm: cost model with a simulation of device
   and queue, `latency` algorithm (opt-in, `offload.algorithm`; by default
   the policy changes only from the admin endpoint) choosing split point and
-  window per device, with reservations for devices that decide together;
+  window per device, simulating the other devices as clients;
   verification in progress
 
 The reference device client is in `client/`, in Python

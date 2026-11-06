@@ -281,6 +281,7 @@ func DecisionRecord(s State, d Decision, algorithm string) *record.Decision {
 		Mode: d.Mode, SplitPoint: d.SplitPoint, MaxInflight: d.MaxInflight,
 		Changed: d.Changes(s.Policy, s.MaxWindow), Reason: d.Reason,
 		PendingPerSec: d.Pending.PerSec, PendingErlangs: d.Pending.Erlangs,
+		Clients:     len(s.Inputs.Queue.Clients),
 		Predictions: RecordPredictions(d.Predictions),
 	}
 }
