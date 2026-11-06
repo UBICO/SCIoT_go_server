@@ -244,6 +244,9 @@ predicting ([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
 `clients` is how many other devices the simulation ran as clients
 ([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation)); omitted
 when 0: no other device in `SPLIT`, or the fallback on the measured load.
+`lag_ms` is the time from the heartbeat to the decision in the server's
+decision goroutine ([OFFLOAD.md](OFFLOAD.md#cost)); absent from
+`sciot-replay algo -out`, which decides at each heartbeat.
 `predictions` has one entry per candidate, a pair split point and `window`
 (split −1..last−1, window from the maximum down to 1), and LOCAL last
 (no `window`), with the fields of [COSTMODEL.md](COSTMODEL.md): how many frames per

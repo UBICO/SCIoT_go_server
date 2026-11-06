@@ -63,7 +63,9 @@ At every heartbeat, in order:
    current one (`few_samples`).
 
 A change of split point or of window gives the device a new policy version,
-in the answer to that same heartbeat and on the stream; the recording gets a
+on the stream as soon as it is decided and in the answer to its next
+heartbeat (the answer to the heartbeat that triggered the decision carries
+the current policy: see [Cost](#cost)); the recording gets a
 `policy` event with the reason (`latency` or `infeasible`) and, at every
 heartbeat, a `decision` event with every prediction, the reserved load it
 saw and the reason.
@@ -200,11 +202,20 @@ recording with the parameters of that file's `offload` section.
 ## Cost
 
 One simulation per `SPLIT` candidate per heartbeat (27 for yolo-small with a
-maximum window of 3), in the heartbeat handler, and each simulation runs
+maximum window of 3), and each simulation runs
 every other device in `SPLIT` as a client: 0.34 ms per heartbeat alone,
 0.73 ms with 1 other, 1.75 ms with 3, 4.5 ms with 7 (MacBook,
 `BenchmarkPredictAllClients`). With N devices that is ~N² work per
-heartbeat interval. Decisions of different devices run one at a time (the
-reservations' lock).
-shortcut: synchronous; with many devices, move it to a goroutine and apply
-the decision at the next heartbeat.
+heartbeat interval.
+
+So decisions run outside the heartbeat handler, in one goroutine of the
+server, one device at a time (two devices never decide on the same free
+server; the reservations' lock stays for the fallback). The handler queues
+the device and answers at once with the current policy. The queue holds
+each device once: a new heartbeat of a device already waiting replaces the
+older one, so the queue never exceeds the number of devices and every
+decision uses the latest state, in the order the devices started waiting.
+Between queueing and deciding the device may have been pinned, registered
+again or given a policy by the admin: the store refuses such a stale
+decision. The `decision` event's `lag_ms` is the time from the heartbeat to
+the decision; the replay decides at each heartbeat, without lag.

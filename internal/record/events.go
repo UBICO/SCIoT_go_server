@@ -151,7 +151,10 @@ type Decision struct {
 	PendingErlangs float64 `json:"pending_erlangs,omitempty"`
 	// Clients: quanti altri device sono stati simulati come client (Fase
 	// 3.8); 0 = gli altri come flusso al ritmo misurato (ripiego).
-	Clients     int          `json:"clients,omitempty"`
+	Clients int `json:"clients,omitempty"`
+	// LagMS: dall'arrivo dell'heartbeat alla decisione (la goroutine del
+	// server, Fase 3.8); assente nel replay, che decide subito.
+	LagMS       float64      `json:"lag_ms,omitempty"`
 	Predictions []Prediction `json:"predictions,omitempty"`
 }
 

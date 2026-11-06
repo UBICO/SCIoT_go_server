@@ -97,6 +97,9 @@ type Server struct {
 	// fleet: l'ultimo stato di ogni device, per simulare gli altri come
 	// client (Fase 3.8); nil senza algoritmo.
 	fleet *offload.Fleet
+	// decider decide in una goroutine, fuori dal gestore dell'heartbeat;
+	// nil senza algoritmo. Vedi Close.
+	decider *decider
 
 	table *heartbeatTable  // usata solo se cfg.Verbose
 	now   func() time.Time // orario delle righe; sostituibile nei test
@@ -392,7 +395,11 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		MaxInflight:     s.maxInflight(req.DeviceID),
 	}
 	s.rec.Record(hb)
-	res.Policy = s.decide(req.DeviceID, req.SessionID, hb, res)
+	// La risposta porta la policy attuale: una nuova arriva sullo stream
+	// appena decisa, o con la risposta al prossimo heartbeat.
+	if s.decider != nil {
+		s.decider.submit(decisionJob{deviceID: req.DeviceID, sessionID: req.SessionID, hb: hb, res: res, at: s.now()})
+	}
 
 	if s.cfg.Verbose {
 		s.table.print(heartbeatRow{
@@ -638,51 +645,59 @@ func (s *Server) SetAlgorithm(a offload.Algorithm) {
 	s.alg = a
 	// Tre heartbeat mancati: il device non c'è più.
 	s.fleet = offload.NewFleet(3 * s.cfg.HeartbeatInterval)
+	s.decider = newDecider(s.decideNow)
 }
 
-// decide esegue l'algoritmo sull'heartbeat hb e, se cambia la policy, la
-// applica: nuova versione nello store, notifica sullo stream, evento policy.
-// Restituisce la policy da mandare al device. Un device bloccato dall'admin
-// non viene toccato.
-//
-// Gira nel gestore dell'heartbeat: per yolo-small 0.3 ms da solo, circa
-// 0.5 ms in più per ogni altro device in SPLIT (docs/OFFLOAD.md, "Cost").
-// shortcut: sincrono; con molti device spostarlo in una goroutine e
-// applicare la decisione all'heartbeat successivo.
-func (s *Server) decide(deviceID, sessionID string, hb *record.Heartbeat, res device.HeartbeatResult) api.Policy {
-	if s.alg == nil {
-		return res.Policy
+// Close ferma la goroutine delle decisioni: da chiamare dopo lo shutdown
+// HTTP (nessun heartbeat nuovo) e prima di chiudere la registrazione.
+func (s *Server) Close() {
+	if s.decider != nil {
+		s.decider.close()
 	}
+}
+
+// decideNow esegue l'algoritmo sull'heartbeat di j e, se cambia la policy,
+// la applica: nuova versione nello store, notifica sullo stream, evento
+// policy. Un device bloccato dall'admin non viene toccato.
+//
+// Gira nella goroutine del decider, un device alla volta: per yolo-small
+// 0.3 ms da solo, circa 0.5 ms in più per ogni altro device in SPLIT
+// (docs/OFFLOAD.md, "Cost").
+func (s *Server) decideNow(j decisionJob) {
+	deviceID, sessionID, hb, res := j.deviceID, j.sessionID, j.hb, j.res
 	now := s.now()
 	st := offload.StateFrom(*hb, now.Sub(res.PolicySince))
 	// Anche un device bloccato carica il server: entra tra gli altri.
 	s.fleet.Update(now, st)
 	if res.Pinned {
-		return res.Policy
+		return
 	}
 	if clients, ok := s.fleet.Clients(now, deviceID); ok {
 		st.Inputs.Queue.Clients = clients
 	}
 	d := s.alg.Decide(now, st)
-	s.rec.Record(offload.DecisionRecord(st, d, s.alg.Name()))
+	rec := offload.DecisionRecord(st, d, s.alg.Name())
+	rec.LagMS = float64(now.Sub(j.at).Microseconds()) / 1000
+	s.rec.Record(rec)
 	if !d.Changes(res.Policy, st.MaxWindow) {
-		return res.Policy
+		return
 	}
-	dev, err := s.devices.SetAutoPolicy(deviceID, sessionID,
+	dev, err := s.devices.SetAutoPolicy(deviceID, sessionID, res.Policy.PolicyVersion,
 		api.SetPolicyRequest{Mode: d.Mode, SplitPoint: d.SplitPoint, MaxInflight: d.MaxInflight})
 	if err != nil {
-		// Bloccato o ri-registrato nel frattempo: la decisione è vecchia.
-		if !errors.Is(err, device.ErrPinned) && !errors.Is(err, device.ErrSessionExpired) {
+		// Bloccato, ri-registrato o cambiato dall'admin nel frattempo: la
+		// decisione è vecchia.
+		if !errors.Is(err, device.ErrPinned) && !errors.Is(err, device.ErrSessionExpired) &&
+			!errors.Is(err, device.ErrStalePolicy) {
 			log.Printf("offload: device=%s: %v", deviceID, err)
 		}
-		return res.Policy
+		return
 	}
 	s.fleet.SetPolicy(deviceID, dev.Policy)
 	if s.notifier != nil {
 		s.notifier.NotifyPolicy(deviceID, dev.Policy)
 	}
 	s.rec.Record(&record.Policy{DeviceID: deviceID, SessionID: sessionID, Policy: dev.Policy, Reason: d.Reason})
-	return dev.Policy
 }
 
 // splitService è S per ogni split point −1..numSegments−2 del modello che il
