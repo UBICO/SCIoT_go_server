@@ -344,8 +344,9 @@ are for, [OFFLOAD.md](OFFLOAD.md#reservations)), for `--duration` seconds.
 uv run --project client python client/scripts/bench_multi.py --model-dir ~/sciot-models/yolo_small_320 --devices 2
 ```
 
-With `--pin SPLIT/WINDOW` (e.g. `--pin 6/2`) every device is pinned to that
-policy instead of being released: the load is chosen by hand and the
+With `--pin SPLIT/WINDOW` (e.g. `--pin 6/2`; for split −1 write
+`--pin=-1/3`, or argparse takes `-1/3` for an option) every device is pinned
+to that policy instead of being released: the load is chosen by hand and the
 algorithm is not asked (no `decision` events: `sciot-replay algo` computes
 the predictions offline). This is how loads near saturation are recorded,
 which the algorithm avoids by itself.

@@ -66,9 +66,17 @@ const (
 	// deciderebbe il risultato (frame/s al server raddoppiati); nel sistema
 	// vero la risposta arriva sempre dopo.
 	//
-	// shortcut: valore stimato, non misurato; misurarlo dal client (tempo tra
-	// invio e rifiuto) se le previsioni dipendono da lui.
-	simMinAnswerMS = 0.1
+	// Misurato (Fase 3.8): in localhost, split −1 (1.2 MB), invio → risposta
+	// meno il tempo del server è 1.06 ms di mediana (0.85–1.25 tra 10° e 90°
+	// percentile); la sola lettura del frame sul server è 0.54 ms. Con 0.1 ms
+	// la simulazione dava 14.8 rifiuti/s e nessuna finestra piena contro 7.9
+	// e 7.0 misurati; con 1 ms 7.6 e 7.4.
+	//
+	// shortcut: costante, mentre il tempo vero cresce con i byte inviati (con
+	// la rete "non limitante" l'invio simulato è solo la latenza); usare la
+	// lettura misurata dal server (receive_ms) per split point se su rete vera
+	// (Fase 4) le previsioni dipendono da lui.
+	simMinAnswerMS = 1.0
 	// simSeed rende il risultato riproducibile: la stessa registrazione dà
 	// sempre le stesse previsioni.
 	simSeed = 0x5c107

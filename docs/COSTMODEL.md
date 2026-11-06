@@ -48,7 +48,7 @@ rules of the real code, for 1 s of warm-up and 5 s of measure in virtual time
 | Who | Rule |
 |---|---|
 | device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it (`upload` ms) |
-| answer | returns after the network latency (at least 0.1 ms) and frees the window when it arrives |
+| answer | returns after the network latency (at least 1 ms, measured) and frees the window when it arrives |
 | server | admission with `dispatch.PredictWait` (the dispatcher's own function) and the estimated `S`: refused when wait + `S` exceeds the deadline, the device's `device(k+1..last)`; FIFO queue, `c` slots; a frame that gets its slot after its deadline returns as an error |
 | other devices | every other device in `SPLIT` is a client with the same rules and its own times at its policy (prefix, suffix, upload, `A`, `S`, window: `costmodel.ClientFrom`); their frames are refused, expire and are drained like the device's, only the device's are counted. Fallback when some other device's inputs are incomplete (or in recordings replayed without them): a stream of frames, always admitted, at the others' measured rate (admitted frames only), with `ca`, `S` and `cs` (log-normal) |
 
@@ -100,8 +100,9 @@ on the device are right in total (15.3 against 15.1) but split differently
 between their causes: half of the real ones found the window full, almost
 none in the simulation. The order of a refusal and the next cycle decides
 which; it does not change share or rates, but it changes the latency of
-those frames (a refused one also waits for the next `drain`). Latencies
-against the client and several devices: next section.
+those frames (a refused one also waits for the next `drain`); the cause and
+the fix (the minimum answer time, measured) are at the end of the next
+section. Latencies against the client and several devices: next section.
 
 ### Verification with the client, several devices (phase 3.8)
 
@@ -157,6 +158,21 @@ the others as clients (`ClientFrom`, `offload.Fleet`), median error per run:
 | 3, 3 | −1% | −3% | +4% | +3% | 7.8 / 8.0 |
 
 Not verified yet: devices that differ (model, split point), a real network.
+
+**Refused or window full, one device at split −1** (window 3, 2 slots):
+the simulation gave 14.8 refused frames per second and no full window,
+against 7.9 and 7.0 measured; the total finished on the device was right,
+and p95, mean and frames per second within 3%. The cause was the minimum
+time for an answer to reach the device, 0.1 ms (estimated): a refusal came
+back before the device finished its next cycle, so the window was free and
+the device sent again. Measured on the client at split −1 (send → answer
+minus the server's time): 1.06 ms median, 0.85–1.25 ms between the 10th and
+90th percentile; the server alone takes 0.54 ms to read the 1.2 MB frame.
+With 1 ms: 7.6 refused and 7.4 window full per second; the runs with several
+devices do not change. The real time grows with the bytes sent, while on a
+network that does not limit the simulated upload is the latency only:
+using the server's measured read time per split point is left for a real
+network (phase 4).
 
 ## Mean or p95
 
