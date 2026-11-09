@@ -7,3 +7,7 @@
 
 # Config locale (path specifici della macchina)
 /config.json
+
+# Personal Claude Code files
+CLAUDE.local.md
+.claude/settings.local.json
