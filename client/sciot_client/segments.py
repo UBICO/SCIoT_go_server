@@ -21,6 +21,65 @@ import numpy as np
 
 MANIFEST_VERSION = 2
 
+# input.resize_mode in the manifest, from Edge Impulse's EI_CLASSIFIER_RESIZE_MODE
+# (docs/MODELS.md). Same rules as the Edge Impulse SDK
+# (edge-impulse-sdk/dsp/image/processing.cpp), bilinear like it.
+RESIZE_MODES = ("none", "fit_shortest", "fit_longest", "squash")
+
+
+def to_model_input(
+    frame: np.ndarray, input_shape: tuple[int, ...], dtype: np.dtype, resize_mode: str
+) -> np.ndarray:
+    """An RGB uint8 frame [H, W, 3] as the model input [1, h, w, 3] in [0, 1].
+
+    ``input_shape`` is the manifest's [1, h, w, 3]. A frame that already has
+    the input size (Picamera2 scaled by the ISP) is not resized, whatever the
+    mode: cropping or padding it would change nothing.
+    """
+    _, height, width, channels = input_shape
+    if channels != 3:
+        raise ValueError(f"model input has {channels} channels, expected RGB")
+    if resize_mode not in RESIZE_MODES:
+        raise ValueError(f"unknown resize_mode {resize_mode!r}; known: {list(RESIZE_MODES)}")
+    if frame.ndim != 3 or frame.shape[2] != 3 or frame.dtype != np.uint8:
+        raise ValueError(f"expected an RGB uint8 frame [H, W, 3], got {frame.dtype} {frame.shape}")
+
+    if frame.shape[:2] != (height, width):
+        from PIL import Image
+
+        # PIL sizes and boxes are (x, y); numpy shapes are (rows, columns).
+        bilinear = Image.Resampling.BILINEAR
+        src_h, src_w = frame.shape[:2]
+        image = Image.fromarray(frame)
+        if resize_mode == "none":
+            raise ValueError(
+                f"resize_mode is none: the frame must be {width}x{height}, got {src_w}x{src_h}"
+            )
+        if resize_mode == "squash":
+            image = image.resize((width, height), bilinear)
+        elif resize_mode == "fit_shortest":
+            # The largest centered box with the input aspect ratio, cropped and scaled in one step.
+            if src_w * height > src_h * width:  # wider than the input: crop left and right
+                box_w, box_h = src_h * width // height, src_h
+            else:  # taller: crop top and bottom
+                box_w, box_h = src_w, src_w * height // width
+            left, top = (src_w - box_w) // 2, (src_h - box_h) // 2
+            image = image.resize(
+                (width, height), bilinear, box=(left, top, left + box_w, top + box_h)
+            )
+        else:  # fit_longest: scale to fit inside, then center on a black canvas
+            if src_w * height > src_h * width:
+                w, h = width, int(width * src_h / src_w)
+            else:
+                w, h = int(height * src_w / src_h), height
+            canvas = Image.new("RGB", (width, height))
+            scaled = image.resize((max(w, 1), max(h, 1)), bilinear)
+            canvas.paste(scaled, ((width - w) // 2, (height - h) // 2))
+            image = canvas
+        frame = np.asarray(image)
+    x = frame.astype(np.float32) / 255.0
+    return x[np.newaxis].astype(dtype)
+
 
 def model_hash(model_dir: str | Path) -> str:
     """MD5 of all *.tflite files, concatenated in NAME order.
@@ -60,6 +119,13 @@ class Model:
             raise ValueError(f"{self.dir}: segment indexes are not 0..{len(segments) - 1}")
         self.input_shape = tuple(manifest["input"]["shape"])
         self.input_dtype = np.dtype(manifest["input"]["dtype"])
+        # No default: a wrong resize mode silently changes what the model sees.
+        self.resize_mode = manifest["input"].get("resize_mode")
+        if self.resize_mode not in RESIZE_MODES:
+            raise ValueError(
+                f"{self.dir}: input.resize_mode is {self.resize_mode!r}, expected one of "
+                f"{list(RESIZE_MODES)}: rebuild it with sciot-model build --overwrite"
+            )
         self.last_layer = len(segments) - 1
 
         # Imported here: TensorFlow takes seconds to load, and the tests of the
@@ -81,16 +147,14 @@ class Model:
             )
 
     def load_input(self, path: str | Path) -> np.ndarray:
-        """An image as the model input: RGB, resized, float32 in [0, 1], batch 1."""
+        """An image file as the model input (``to_model_input``)."""
         from PIL import Image
 
-        _, height, width, channels = self.input_shape
-        if channels != 3:
-            raise ValueError(f"{self.dir}: input has {channels} channels, expected RGB")
-        # PIL sizes are (width, height).
-        img = Image.open(path).convert("RGB").resize((width, height))
-        x = np.asarray(img, dtype=np.float32) / 255.0
-        return x[np.newaxis].astype(self.input_dtype)
+        return self.to_input(np.asarray(Image.open(path).convert("RGB")))
+
+    def to_input(self, frame: np.ndarray) -> np.ndarray:
+        """An RGB uint8 frame as this model's input (``to_model_input``)."""
+        return to_model_input(frame, self.input_shape, self.input_dtype, self.resize_mode)
 
     def run(self, x: np.ndarray, first: int, last: int) -> tuple[np.ndarray, list[float]]:
         """Run segments first..last on x; (output, seconds of each segment).

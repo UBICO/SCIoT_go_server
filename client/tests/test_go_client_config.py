@@ -132,6 +132,39 @@ def test_validation(tmp_path, model_dir):
         load(write(tmp_path / "c.yaml", base + "device_id: a\nimage: nope.png\n"))
 
 
+def test_camera_defaults_and_values(tmp_path, model_dir):
+    base = f"device_id: a\nmodel_dir: {model_dir}\n"
+    cfg = load(write(tmp_path / "c.yaml", base))
+    assert (cfg.camera, cfg.camera_index) == ("static", 0)
+    cfg = load(write(tmp_path / "c.yaml", base + "camera: picamera2\ncamera_index: 1\n"))
+    assert (cfg.camera, cfg.camera_index) == ("picamera2", 1)
+    # The command line wins over the file.
+    cfg = load(tmp_path / "c.yaml", {"camera": "opencv", "camera_index": 2})
+    assert (cfg.camera, cfg.camera_index) == ("opencv", 2)
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ("camera: webcam\n", "static.*opencv.*picamera2"),
+        ("camera_index: -1\n", "camera_index"),
+        ("camera_index: one\n", "camera_index"),
+        ("camera_index: 1.5\n", "camera_index"),
+        ("camera_index: true\n", "camera_index"),  # bool is an int in Python
+    ],
+)
+def test_invalid_camera(tmp_path, model_dir, text, match):
+    with pytest.raises(ConfigError, match=match):
+        load(write(tmp_path / "c.yaml", f"device_id: a\nmodel_dir: {model_dir}\n" + text))
+
+
+def test_image_is_checked_only_for_the_static_camera(tmp_path, model_dir):
+    base = f"device_id: a\nmodel_dir: {model_dir}\nimage: nope.png\n"
+    assert load(write(tmp_path / "c.yaml", base + "camera: opencv\n")).camera == "opencv"
+    with pytest.raises(ConfigError, match="image .* not found"):
+        load(write(tmp_path / "c.yaml", base + "camera: static\n"))
+
+
 def test_committed_file_is_valid(model_dir):
     # The file in the repo parses and only lacks model_dir.
     cfg = load(gcc.DEFAULT_PATH, {"model_dir": model_dir})

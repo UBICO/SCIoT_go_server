@@ -1,6 +1,6 @@
 # Configuration of the client for the Go server (http_go_client).
 # Command-line options override these values (--server, --device-id,
-# --model-dir, --image, --no-probe); --config or $SCIOT_GO_CLIENT_CONFIG use
+# --model-dir, --image, --no-probe, --camera, --camera-index); --config or $SCIOT_GO_CLIENT_CONFIG use
 # another file.
 # Relative paths are relative to this file. Unknown keys are an error.
 
@@ -15,7 +15,16 @@ device_id: mac1
 # model_dir: ~/sciot-models/yolo_small_320
 model_dir: ~/Documents/Ricerca/sciot-models/yolo_small_320
 
-# Static input image, resized to the model input.
+# Frame source: static (the image below, prepared once: repeatable numbers),
+# opencv (laptop webcam: uv sync --extra opencv) or picamera2 (Raspberry Pi
+# camera, docs/RASPBERRY.md).
+camera: static
+
+# Which camera, 0 = the first: cv2.VideoCapture(index) or Picamera2(index).
+camera_index: 0
+
+# Input image of camera static, cropped/scaled as the model's
+# input.resize_mode says.
 image: stop.png
 
 # Answer the server's bandwidth probes (a few hundred KB every ~30 s while the

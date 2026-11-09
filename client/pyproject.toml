@@ -18,6 +18,11 @@ dependencies = [
 [project.scripts]
 sciot-client = "sciot_client.http_go_client:main"
 
+[project.optional-dependencies]
+opencv = [
+    "opencv-python-headless>=4.10",
+]
+
 [dependency-groups]
 dev = ["pytest>=8", "matplotlib>=3.8"]  # matplotlib: plots of scripts/bench_split.py
 

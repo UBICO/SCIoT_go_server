@@ -1,9 +1,12 @@
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 from sciot_client import control_plane_client as cpc
+from sciot_client import frames
 from sciot_client.http_go_client import (
+    open_camera,
     run_loop,
     stop_layer_for,
 )
@@ -66,7 +69,7 @@ def fixed_infer(ms=20.0, layers=None):
 
 def loop(get_policy=lambda: LOCAL, **kwargs):
     kwargs.setdefault("window", cpc.InferenceWindow())
-    kwargs.setdefault("acquire", lambda: "IMG")
+    kwargs.setdefault("acquire", lambda: ("IMG", "T", None))
     kwargs.setdefault("infer", fixed_infer())
     kwargs.setdefault("stop", threading.Event())
     kwargs.setdefault("clock", StepClock())
@@ -89,7 +92,7 @@ def test_runs_max_cycles_and_records_compute_time():
 
 
 def test_sample_from_acquire_is_passed_to_infer():
-    samples = iter(["frame-1", "frame-2"])
+    samples = iter([("frame-1", "T1", None), ("frame-2", "T2", None)])
     seen = []
 
     def infer(sample, layer):
@@ -161,10 +164,75 @@ def test_on_output_gets_the_policy_and_the_output():
         lambda: split,
         max_cycles=2,
         clock=StepClock(0.005),
-        wall_clock=lambda: "T",
         on_output=lambda *args: seen.append(args),
     )
-    assert seen == [(split, 3, "OUT3", "T", pytest.approx(5.0), 20.0)] * 2
+    assert seen == [(split, 3, "OUT3", "T", pytest.approx(5.0), 20.0, 0.0)] * 2
+
+
+def test_captured_at_comes_from_acquire():
+    # A camera frame was captured before acquire() returned it: its time, not the loop's.
+    times = iter([("IMG", "CAP1", None), ("IMG", "CAP2", None)])
+    seen = []
+    loop(
+        lambda: cpc.Policy("SPLIT", 3, 2),
+        acquire=lambda: next(times),
+        max_cycles=2,
+        on_output=lambda policy, layer, out, captured_at, *rest: seen.append(captured_at),
+    )
+    assert seen == ["CAP1", "CAP2"]
+
+
+@pytest.mark.parametrize(
+    ("captured_t", "age_ms"),
+    [
+        (None, 0.0),  # the static image: it did not exist before the call
+        (0.002, 3.0),  # captured 3 ms before acquire() started (clock: 0.005)
+        (0.008, -3.0),  # arrived 3 ms after: acquire() waited for it
+    ],
+)
+def test_age_of_the_frame_when_acquire_started(captured_t, age_ms):
+    seen = []
+    loop(
+        acquire=lambda: ("IMG", "T", captured_t),
+        max_cycles=1,
+        clock=StepClock(0.005),  # acquire() starts at 0.005, ends at 0.010
+        on_output=lambda *args: seen.append(args[-1]),
+    )
+    assert seen == [pytest.approx(age_ms)]
+
+
+def test_run_loop_has_no_wall_clock():
+    # captured_at comes only from acquire(): no second clock to disagree with it.
+    import inspect
+
+    assert "wall_clock" not in inspect.signature(run_loop).parameters
+
+
+# --- open_camera ---------------------------------------------------------------
+
+
+class FakeModel:
+    input_shape = (1, 240, 320, 3)  # [1, h, w, 3]
+    resize_mode = "fit_shortest"
+
+
+def cfg(camera, index=0):
+    return SimpleNamespace(camera=camera, camera_index=index)
+
+
+def test_open_camera_static_is_none():
+    assert open_camera(cfg("static"), FakeModel()) is None
+
+
+def test_open_camera_opencv(monkeypatch):
+    monkeypatch.setattr(frames, "OpenCVCamera", lambda index: ("opencv", index))
+    assert open_camera(cfg("opencv", 2), FakeModel()) == ("opencv", 2)
+
+
+def test_open_camera_picamera2_gets_width_height(monkeypatch):
+    monkeypatch.setattr(frames, "PiCamera", lambda *args: ("pi", *args))
+    # (width, height), not the manifest order (h, w).
+    assert open_camera(cfg("picamera2", 1), FakeModel()) == ("pi", (320, 240), "fit_shortest", 1)
 
 
 def test_before_cycle_runs_first_every_cycle():

@@ -1,7 +1,7 @@
 """SPLIT benchmark: every configuration of one model, Go server and Go client.
 
 For LOCAL and every split point -1..last-1 it measures what the device gets:
-frames per second, latency (acquisition → outcome), where the time goes
+frames per second, latency (capture → outcome), where the time goes
 (device, server, network), bytes sent, and how many frames the server could
 not take (finished locally by the device).
 
@@ -137,6 +137,8 @@ def client_config(server: str, device_id: str, model_dir: Path) -> dict:
         "model_dir": str(model_dir),
         "image": str(BENCH_IMAGE),
         "probe": True,
+        "camera": "static",  # repeatable: the same frame every cycle
+        "camera_index": 0,
     }
 
 

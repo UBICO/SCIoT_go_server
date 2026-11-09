@@ -87,10 +87,15 @@ def build_manifest(
     segments: Sequence[Segment],
     boundaries: Sequence[Boundary],
     postprocess: dict,
+    resize_mode: str,
     source: Source,
     verification: Verification,
 ) -> dict:
-    """The manifest, without model_hash (added once the files are written)."""
+    """The manifest, without model_hash (added once the files are written).
+
+    ``resize_mode`` (edge_impulse.RESIZE_MODES) goes in "input": it says how a
+    device turns a camera frame into that input.
+    """
 
     # Key order is the order in the file (json keeps insertion order).
     # "quantization" is None for float32; a quantized build will describe it
@@ -114,7 +119,9 @@ def build_manifest(
                 "studio_version": source.ei_studio_version,
             },
         },
-        "input": _tensor(first.input_shape, first.input_dtype),
+        # Only the model input has a resize mode: the segments' "input" are
+        # activations, not images.
+        "input": {**_tensor(first.input_shape, first.input_dtype), "resize_mode": resize_mode},
         "output": _tensor(last.output_shape, last.output_dtype),
         "cuts": [
             {"tensor": b.tensor_name, "operation": b.op_name, "operation_type": b.op_type}

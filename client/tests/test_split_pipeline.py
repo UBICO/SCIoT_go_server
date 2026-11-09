@@ -312,6 +312,7 @@ def record(seq=1, **kw):
         "mode": "SPLIT",
         "split": 4,
         "acq_ms": 1.0,
+        "age_ms": 0.0,
         "dev_ms": 10.0,
         "srv_ms": 8.0,
         "recv_ms": 3.2,
@@ -412,6 +413,34 @@ def test_records_carry_version_bytes_and_time():
     # A LOCAL frame: acquisition → now, i.e. acq + dev.
     assert local.latency_ms == pytest.approx(31.0)
     assert (local.sent_bytes, local.policy_version, local.mode) == (0, 2, "LOCAL")
+
+
+def test_latency_starts_at_the_capture():
+    # A camera frame existed age_ms before acquire(): the latency includes it.
+    clock = Clock()
+    p, _, _ = make(clock=clock)
+    seen = []
+
+    class Sink:
+        def write(self, r):
+            seen.append(r)
+
+        def close(self):
+            pass
+
+    p.outputs = [Sink()]
+    clock.t = 2.5
+    p.handle_output(SPLIT, 4, ACT, "CAP", 1.0, 10.0, 4.0)
+    client = FakeClient.instances[0]
+    client.on_result(
+        dpc.FrameResult(client.sent[0][0], {"timing": {"server_ms": 8.0}, "detections": []}, 12.5)
+    )
+    p.drain()
+    p.handle_output(LOCAL, LAST, ONE_BICYCLE, "CAP2", 1.0, 30.0, -0.5)
+    split, local = seen
+    assert split.latency_ms == pytest.approx(4.0 + 1.0 + 10.0 + 12.5)
+    assert local.latency_ms == pytest.approx(-0.5 + 1.0 + 30.0)  # arrived during acquire()
+    assert (split.age_ms, local.age_ms) == (4.0, -0.5)
 
 
 def test_split_minus_one_sends_the_model_input():

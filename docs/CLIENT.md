@@ -22,6 +22,9 @@ uv sync --project client
 - TensorFlow 2.20, the worker's version. Its wheels cover macOS (Apple
   silicon), Linux x86-64 and Linux aarch64: on a Raspberry Pi, a 64-bit OS
   (Raspberry Pi OS 64-bit); there are no wheels for 32-bit ARM.
+- A laptop webcam needs the `opencv` extra: `uv sync --project client --extra opencv`.
+- On a Raspberry Pi with its camera, follow [RASPBERRY.md](RASPBERRY.md):
+  Picamera2 comes from apt, not PyPI.
 
 ## Modules
 
@@ -38,8 +41,9 @@ split_pipeline.py         SPLIT: sends frames, handles answers, finishes
         ▼
 data_plane_client.py      the WebSocket stream: framing, window, receiver thread
 segments.py               the model directory: manifest.json, model_hash, input, run(x, first, last)
+frames.py                 cameras: OpenCV (laptop), Picamera2 (Raspberry Pi), newest-frame thread
 decoders/                 model output → detections (same as the server's worker)
-go_client_config.py       go_client.yaml + command line → server, device, model, image
+go_client_config.py       go_client.yaml + command line → server, device, model, camera, image
 ```
 
 The inference loop never talks to the server. It reads the policy once per
@@ -134,8 +138,12 @@ fast path, the heartbeat stays the reliable one.
 `manifest.json`, the same file the server reads. The prefix of every frame
 (`0..k`) and the completion of a frame the server did not take (`k+1..last`)
 run with the same `run(x, first, last)`, timing only the interpreter
-invocations. The static image is converted to RGB and resized to the
-manifest's input (width and height can differ).
+invocations. A frame (camera or static image) becomes the input with
+`segments.to_model_input`, as the manifest's `input.resize_mode` says (from
+Edge Impulse, [MODELS.md](MODELS.md)): `fit_shortest` crops the center to the
+input's aspect ratio, `fit_longest` pads with black, `squash` stretches,
+`none` requires the input size; bilinear, like the Edge Impulse SDK. A
+manifest without `resize_mode` is refused: rebuild it.
 
 `LOCAL` outputs are decoded on the device with the `postprocess` parameters
 received at registration, by `sciot_client/decoders`: the same algorithm as
@@ -157,11 +165,13 @@ The configuration is `client/sciot_client/go_client.yaml`:
 | `server` | `http://127.0.0.1:8080` | Go server URL |
 | `device_id` | — (required) | unique per device: the server keeps one session per id |
 | `model_dir` | — (required) | directory built by `sciot-model build` |
-| `image` | `stop.png` | static input image, resized to the model input |
+| `camera` | `static` | frame source: `static` (the image, prepared once), `opencv` (laptop webcam), `picamera2` (Raspberry Pi camera); see [Camera](#camera) |
+| `camera_index` | `0` | which camera, 0 = the first: `cv2.VideoCapture(index)`, `Picamera2(index)` (a Pi 5 has two connectors) |
+| `image` | `stop.png` | input image of `camera: static`; not checked with a camera |
 | `probe` | `true` | declare the `probe` capability: answer the server's bandwidth probes (~512 KB every 30 s while the network is not measured); `false` withdraws it, e.g. on a metered link |
 
 - Command-line options win over the file: `--server`, `--device-id`,
-  `--model-dir`, `--image`, `--no-probe`. `--config PATH` (or `$SCIOT_GO_CLIENT_CONFIG`)
+  `--model-dir`, `--image`, `--no-probe`, `--camera`, `--camera-index`. `--config PATH` (or `$SCIOT_GO_CLIENT_CONFIG`)
   reads another file; the default file is optional.
 - Relative paths are relative to the file (on the command line, to the
   working directory). Unknown keys are an error.
@@ -172,6 +182,35 @@ uv run --project client sciot-client --model-dir ~/sciot-models/yolo_small_320
 
 Other options: `--cycles N` (stop after N inferences), `--no-table` (no
 per-frame table), `--frames-csv PATH`, `--deadline-ms` (fixed SPLIT deadline).
+
+### Camera
+
+```bash
+uv run --project client sciot-client --camera opencv
+```
+
+- **`static`** (default): the image is loaded and converted once, before the
+  loop; every cycle gets the same input in ~0 ms. Repeatable: the benchmarks
+  use it, so their numbers compare across machines and phases.
+- **`opencv`**: a webcam through OpenCV (`--extra opencv`), AVFoundation on
+  macOS. The first run asks for the Camera permission for the terminal
+  (System Settings → Privacy & Security → Camera). The CPU crops and scales
+  each frame (`to_model_input`): that time is in `acq_ms`.
+- **`picamera2`**: the Raspberry Pi camera ([RASPBERRY.md](RASPBERRY.md)).
+  The ISP crops and scales for `resize_mode` (`ScalerCrop` and the output
+  size, `frames.isp_config`), so the frame arrives at the input size and the
+  CPU, which the model needs, only normalizes it.
+
+**Newest frame.** Each camera has a thread that reads continuously and keeps
+only the newest frame: the loop never gets a frame that waited in a driver
+buffer, and never the same frame twice (if the loop is faster than the
+camera, `read()` waits for the next one, and the wait is in `acq_ms`). The
+latency starts when the thread received the frame (`age_ms`, see the frames
+CSV above), and `captured_at` is that instant too.
+
+**Errors.** The thread retries a failed read; after 10 in a row, or no frame
+for 2 s, the client stops. A camera that does not open stops the client
+before it registers, with what to install when the library is missing.
 
 The benchmarks write their own config file (every key explicit, the
 client's `stop.png`) and pass `--config`: a locally edited `go_client.yaml` does not
@@ -191,7 +230,9 @@ locally); `Recv ms` is the server's reading of the frame, first to last byte
 (`timing.receive_ms`): the upload without the latency, possibly
 underestimated when TCP had already buffered the bytes; `Net ms` is the round
 trip minus the server time. The frames CSV has the same columns
-(`recv_ms`).
+(`recv_ms`), plus `age_ms`: how long a camera frame existed when the loop
+asked for it (negative if it arrived while the loop waited for it, 0 for the
+static image); the latency starts at the capture, so it includes it.
 
 Pairing check without running inferences:
 
@@ -234,7 +275,7 @@ TCP proxy counting the bytes.
 | Column | Meaning |
 |---|---|
 | Frames/s | frames completed per second, by the server or by the device |
-| Latency | acquisition → outcome. For a server result, at its **arrival** (acquisition + device compute + round trip), independently of when the client loop reads it; for a frame finished locally, when the device is done with it, waits included |
+| Latency | capture → outcome. It starts when the frame exists: for a camera, when its thread received the frame, so the frame's age when the loop asked for it (`age_ms` in the frames CSV) is included; for the static image, at acquisition (`age_ms` 0). For a server result, at its **arrival** (age + acquisition + device compute + round trip), independently of when the client loop reads it; for a frame finished locally, when the device is done with it, waits included |
 | Device | device compute of the frames the server answered (the offloaded prefix); for `LOCAL`, of every frame. Frames finished locally are counted by "Server results", not mixed in here: their two populations would make the median jump |
 | Server, Network | median server time (queue included) and round trip minus server time, of the server's results |
 | Sent KiB/frame | payload sent per completed frame (0 for frames never sent) |

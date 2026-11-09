@@ -24,7 +24,9 @@ ENV_VAR = "SCIOT_GO_CLIENT_CONFIG"
 DEFAULT_SERVER = "http://127.0.0.1:8080"
 DEFAULT_IMAGE = Path(__file__).resolve().parent / "stop.png"
 
-KEYS = ("server", "device_id", "model_dir", "image", "probe")
+KEYS = ("server", "device_id", "model_dir", "image", "probe", "camera", "camera_index")
+# Frame sources (frames.py); static = the image, prepared once.
+CAMERAS = ("static", "opencv", "picamera2")
 
 
 class ConfigError(ValueError):
@@ -36,10 +38,12 @@ class GoClientConfig:
     server: str
     device_id: str
     model_dir: Path  # built by sciot-model build: the SAME files the server serves
-    image: Path  # static input image (the camera comes in phase 4)
+    image: Path  # input image of camera "static"; not checked with a camera
     # Declare the probe capability (answer the server's bandwidth probes).
     # False only withdraws it: the code supports it.
     probe: bool
+    camera: str  # one of CAMERAS
+    camera_index: int  # which camera, 0 = the first (cv2.VideoCapture, Picamera2)
     source: Path | None  # the file read, None without one
 
 
@@ -86,6 +90,8 @@ def load(path: Path | None = None, overrides: dict[str, Any] | None = None) -> G
         "server": DEFAULT_SERVER,
         "image": DEFAULT_IMAGE,
         "probe": True,
+        "camera": "static",
+        "camera_index": 0,
     }
     if source is not None:
         values.update(read_file(source))
@@ -114,7 +120,15 @@ def _validate(values: dict[str, Any], source: Path | None) -> GoClientConfig:
             f"model_dir {model_dir} has no manifest.json: build it with sciot-model build"
         )
     image = Path(values["image"]).resolve()
-    if not image.is_file():
+    camera = values["camera"]
+    if camera not in CAMERAS:
+        raise ConfigError(f"camera must be one of {', '.join(CAMERAS)}, got {camera!r}")
+    camera_index = values["camera_index"]
+    # bool is a subclass of int: YAML "true" must not pass as 1.
+    if isinstance(camera_index, bool) or not isinstance(camera_index, int) or camera_index < 0:
+        raise ConfigError(f"camera_index must be an integer >= 0, got {camera_index!r}")
+    # With a camera the image is not used: a wrong path must not stop the client.
+    if camera == "static" and not image.is_file():
         raise ConfigError(f"image {image} not found")
     probe = values["probe"]
     if not isinstance(probe, bool):
@@ -125,5 +139,7 @@ def _validate(values: dict[str, Any], source: Path | None) -> GoClientConfig:
         model_dir=model_dir,
         image=image,
         probe=probe,
+        camera=camera,
+        camera_index=camera_index,
         source=source,
     )

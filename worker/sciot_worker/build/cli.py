@@ -125,6 +125,7 @@ def build(args: argparse.Namespace) -> dict:
         segments=segments,
         boundaries=boundaries,
         postprocess=export.postprocess(),
+        resize_mode=export.resize_mode,
         source=Source(
             savedmodel_file=Path(args.savedmodel).name,
             savedmodel_sha256=sha256_file(Path(args.savedmodel))
