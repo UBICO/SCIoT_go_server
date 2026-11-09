@@ -128,8 +128,8 @@ the device and one clock per duration:
   times each one. A read that took at least 200 µs waited for the network;
   a faster one copied bytes already in the kernel's TCP buffer. A frame is a
   *valid* sample if at least 90% of its bytes came from reads that waited:
-  only valid samples enter the moving average (`bandwidth_bps`, with
-  `bandwidth_std_bps` and `bandwidth_age_ms`; time-weighted, τ
+  only valid samples enter the moving average (`bandwidth_bps`, in **bytes**
+  per second, with `bandwidth_std_bps` and `bandwidth_age_ms`; time-weighted, τ
   `stream.bandwidth_tau_ms`, default 60 s: see [Estimates](#estimates)).
 - **The limit.** The server sees bytes when it reads them, not when they
   arrive. Bytes that piled up in the TCP buffer (the server was busy, or the

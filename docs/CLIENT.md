@@ -23,8 +23,8 @@ uv sync --project client
   silicon), Linux x86-64 and Linux aarch64: on a Raspberry Pi, a 64-bit OS
   (Raspberry Pi OS 64-bit); there are no wheels for 32-bit ARM.
 - A laptop webcam needs the `opencv` extra: `uv sync --project client --extra opencv`.
-- On a Raspberry Pi with its camera, follow [RASPBERRY.md](RASPBERRY.md):
-  Picamera2 comes from apt, not PyPI.
+- On a Raspberry Pi, with or without its camera, follow
+  [RASPBERRY.md](RASPBERRY.md): Picamera2 comes from apt, not PyPI.
 
 ## Modules
 

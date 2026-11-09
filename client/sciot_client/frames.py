@@ -210,22 +210,27 @@ class PiCamera:
         from picamera2 import Picamera2
 
         cam = Picamera2(index)  # index: the connector on a Pi 5 with two cameras
-        # shortcut: the sensor area read before configure(); if libcamera picks a
-        # sensor mode with a smaller area, the log below shows it (check on the Pi).
+        # ScalerCropMaximum is the area of the sensor mode libcamera picks in
+        # configure(): (0, 0, 0, 0) before it (seen on a Pi, 2026-11-09).
+        # RGB888 is ordered [B, G, R] in memory (Picamera2 manual): reversed in grab().
+        config = cam.create_video_configuration(main={"size": input_size, "format": "RGB888"})
+        cam.configure(config)
         crop_max = tuple(cam.camera_properties["ScalerCropMaximum"])
         crop, size = isp_config(resize_mode, crop_max, input_size)
-        # RGB888 is ordered [B, G, R] in memory (Picamera2 manual): reversed in grab().
-        cam.configure(cam.create_video_configuration(main={"size": size, "format": "RGB888"}))
+        if size != input_size:  # fit_longest: the output size depends on the area
+            config["main"]["size"] = size
+            cam.configure(config)
+            if tuple(cam.camera_properties["ScalerCropMaximum"]) != crop_max:
+                area = tuple(cam.camera_properties["ScalerCropMaximum"])
+                cam.close()  # nothing else will: __init__ does not return
+                raise FrameError(
+                    f"sensor area changed from {crop_max} to {area} after "
+                    f"reconfiguring to {size}: the crop would be wrong"
+                )
         cam.set_controls({"ScalerCrop": crop})
         cam.start()
         self._cam = cam
-        logger.info(
-            "picamera2: sensor area %s, crop %s, output %s; area after configure %s",
-            crop_max,
-            crop,
-            size,
-            cam.camera_properties.get("ScalerCropMaximum"),
-        )
+        logger.info("picamera2: sensor area %s, crop %s, output %s", crop_max, crop, size)
 
         def grab() -> np.ndarray:
             return cam.capture_array("main")[:, :, ::-1]
