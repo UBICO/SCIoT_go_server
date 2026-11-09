@@ -15,9 +15,11 @@ sends the activation on the data plane stream without waiting: the next frame
 is acquired while this one is on the server. When the server cannot take a
 frame (window full, refused, stream down) the device finishes it itself.
 
-Server, device id, model and image come from ``go_client.yaml``
+Server, device id, model, frame source and image come from ``go_client.yaml``
 (``go_client_config``), overridden by the command line. The model runs with
-``segments.Model``, from the model directory's ``manifest.json``.
+``segments.Model``, from the model directory's ``manifest.json``. The frames
+come from a camera (``frames``) or, with ``--camera static``, from one image
+prepared once.
 
 Usage::
 
@@ -34,7 +36,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from sciot_client import go_client_config, segments
+from sciot_client import frames, go_client_config, segments
 from sciot_client.control_plane_client import (
     MODE_LOCAL,
     MODE_SPLIT,
@@ -78,7 +80,7 @@ def stop_layer_for(policy: Policy, last_layer: int) -> int:
 def run_loop(
     get_policy: Callable[[], Policy],
     window: InferenceWindow,
-    acquire: Callable[[], Any],
+    acquire: Callable[[], tuple[Any, str, float | None]],
     infer: Callable[[Any, int], float],
     *,
     last_layer: int,
@@ -87,22 +89,26 @@ def run_loop(
     clock: Callable[[], float] = time.perf_counter,
     on_cycle: Callable[[int, float, float], None] | None = None,
     before_cycle: Callable[[], None] | None = None,
-    on_output: Callable[[Policy, int, Any, str, float, float], None] | None = None,
-    wall_clock: Callable[[], str] = utc_now,
+    on_output: Callable[[Policy, int, Any, str, float, float, float], None] | None = None,
 ) -> int:
     """Run inferences until ``stop`` is set or ``max_cycles`` is reached.
 
     Each cycle:
 
     1. read the policy (once per cycle) and derive the stop layer;
-    2. ``sample = acquire()``, timed with ``clock`` → acquisition time;
+    2. ``sample, captured_at, captured_t = acquire()``, timed with ``clock`` →
+       acquisition time. ``captured_at`` (RFC 3339, ``split_pipeline.utc_now``)
+       is when the frame was captured, which with a camera is before the call;
+       ``captured_t`` is the same instant on ``clock`` (None: the frame did not
+       exist before the call, the static image) → the frame's age when
+       acquire() started (``age_ms``, negative if it arrived during the call);
     3. ``output, comp_ms = infer(sample, layer)`` → the output of segment
        ``layer`` and the compute time. ``infer`` measures the time itself, so
        that it sums only the interpreter invocations;
     4. ``window.record(comp_ms)`` and, if given, ``on_cycle(layer, acq_ms,
        comp_ms)``;
     5. if given, ``on_output(policy, layer, output, captured_at, acq_ms,
-       comp_ms)``: the SplitPipeline sends or finishes the frame.
+       comp_ms, age_ms)``: the SplitPipeline sends or finishes the frame.
 
     ``before_cycle`` runs first in every cycle: the SplitPipeline handles the
     answers received meanwhile (on this thread, not the receiver's).
@@ -121,11 +127,13 @@ def run_loop(
         layer = stop_layer_for(policy, last_layer)
 
         # acquire/infer exceptions are NOT caught: a broken camera or model
-        # must stop the client.
-        captured_at = wall_clock()
+        # must stop the client (the camera retries transient errors itself).
         start = clock()
-        sample = acquire()
+        sample, captured_at, captured_t = acquire()
         acq_ms = (clock() - start) * 1000
+        # Signed on purpose: a frame that arrived while acquire() waited is
+        # negative, so that age_ms + acq_ms is always capture → sample ready.
+        age_ms = 0.0 if captured_t is None else (start - captured_t) * 1000
 
         # infer times itself (interpreter invocations only), so the loop does
         # not wrap it in clock().
@@ -135,9 +143,25 @@ def run_loop(
         if on_cycle is not None:
             on_cycle(layer, acq_ms, comp_ms)
         if on_output is not None:
-            on_output(policy, layer, output, captured_at, acq_ms, comp_ms)
+            on_output(policy, layer, output, captured_at, acq_ms, comp_ms, age_ms)
         completed += 1
     return completed
+
+
+def open_camera(cfg: go_client_config.GoClientConfig, model: segments.Model):
+    """The frame source of cfg.camera, open; None for "static".
+
+    ``PiCamera`` gets the model input size (width, height) and resize mode: its
+    ISP crops and scales (frames.isp_config).
+    """
+    if cfg.camera == "static":
+        return None
+    if cfg.camera == "opencv":
+        return frames.OpenCVCamera(cfg.camera_index)
+    if cfg.camera == "picamera2":
+        _, height, width, _ = model.input_shape  # [1, h, w, 3], not (w, h)
+        return frames.PiCamera((width, height), model.resize_mode, cfg.camera_index)
+    raise ValueError(f"unknown camera {cfg.camera!r}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -161,7 +185,21 @@ def main(argv: list[str] | None = None) -> int:
         "serves (default: model_dir in the config)",
     )
     parser.add_argument(
-        "--image", type=Path, help="static input image (default: image in the config)"
+        "--image",
+        type=Path,
+        help="input image of --camera static (default: image in the config)",
+    )
+    parser.add_argument(
+        "--camera",
+        choices=go_client_config.CAMERAS,
+        help="frame source: static (the image, prepared once), opencv (laptop "
+        "webcam, needs the opencv extra) or picamera2 (Raspberry Pi) "
+        "(default: camera in the config)",
+    )
+    parser.add_argument(
+        "--camera-index",
+        type=int,
+        help="which camera, 0 = the first (default: camera_index in the config)",
     )
     parser.add_argument(
         "--no-probe",
@@ -191,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
                 "model_dir": args.model_dir,
                 "image": args.image,
                 "probe": args.probe,
+                "camera": args.camera,
+                "camera_index": args.camera_index,
             },
         )
     except go_client_config.ConfigError as exc:
@@ -198,23 +238,18 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     logger.info(
-        "config %s: server %s, device %s, model %s",
+        "config %s: server %s, device %s, model %s, camera %s",
         cfg.source or "(none)",
         cfg.server,
         cfg.device_id,
         cfg.model_dir,
+        cfg.camera if cfg.camera == "static" else f"{cfg.camera} {cfg.camera_index}",
     )
 
     # Loads every segment before timing anything.
     model = segments.Model(cfg.model_dir)
     device_id = cfg.device_id
     last_layer = model.last_layer
-    image = model.load_input(cfg.image)
-
-    def acquire():
-        # A static image: ~0 ms. Real time once this is a camera (phase 4).
-        return image
-
     window = InferenceWindow()
     segment_times = SegmentTimes(window=window)
 
@@ -250,6 +285,34 @@ def main(argv: list[str] | None = None) -> int:
         deadline_ms=args.deadline_ms,
     )
 
+    # Last thing before hb.start(): a camera that does not open stops the client
+    # before it registers, and nothing built above is left holding it.
+    try:
+        camera = open_camera(cfg, model)
+    except (frames.FrameError, ImportError) as exc:
+        hint = ""
+        if isinstance(exc, ImportError):
+            hint = {
+                "opencv": " (uv sync --extra opencv)",
+                "picamera2": " (docs/RASPBERRY.md: python3-picamera2 from apt, "
+                "venv with --system-site-packages)",
+            }.get(cfg.camera, "")
+        logger.error("cannot open the camera: %s%s", exc, hint)
+        return 1
+
+    if camera is None:
+        # Static image: loaded once, ~0 ms per frame (numbers comparable with 3.8).
+        image = model.load_input(cfg.image)
+
+        def acquire():
+            return image, utc_now(), None
+    else:
+
+        def acquire():
+            frame, captured_at, captured_t = camera.read()
+            # Preprocessing counts in acq_ms.
+            return model.to_input(frame), captured_at, captured_t
+
     stop = threading.Event()
     hb.start()
     started = time.monotonic()
@@ -272,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         stop.set()
         pipeline.finish()  # results of the frames still in flight
         hb.stop()
+        if camera is not None:
+            camera.close()
 
     elapsed = time.monotonic() - started
     rate = completed / elapsed if elapsed > 0 else 0.0

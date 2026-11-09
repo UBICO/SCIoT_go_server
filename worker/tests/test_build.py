@@ -46,6 +46,7 @@ METADATA = """\
 #define EI_CLASSIFIER_PROJECT_DEPLOY_VERSION     8
 #define EI_CLASSIFIER_INPUT_WIDTH                8
 #define EI_CLASSIFIER_INPUT_HEIGHT               8
+#define EI_CLASSIFIER_RESIZE_MODE                {resize_mode}
 #define EI_CLASSIFIER_LABEL_COUNT                2
 #define EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER  {last_layer}
 #define EI_CLASSIFIER_OBJECT_DETECTION_COUNT       10
@@ -76,11 +77,14 @@ def fake_export(
     last_layer="EI_CLASSIFIER_LAST_LAYER_YOLO_PRO",
     quantized=0,
     dtype="EI_CLASSIFIER_DATATYPE_FLOAT32",
+    resize_mode="EI_CLASSIFIER_RESIZE_FIT_SHORTEST",
 ) -> Path:
     (path / "model-parameters").mkdir(parents=True)
     (path / "tflite-model").mkdir()
     (path / edge_impulse.METADATA).write_text(
-        METADATA.format(last_layer=last_layer, quantized=quantized, dtype=dtype)
+        METADATA.format(
+            last_layer=last_layer, quantized=quantized, dtype=dtype, resize_mode=resize_mode
+        )
     )
     (path / edge_impulse.VARIABLES).write_text(VARIABLES)
     full = tf.lite.TFLiteConverter.from_saved_model(str(saved_model)).convert()
@@ -196,7 +200,7 @@ def test_image_sample(tmp_path):
 
 
 def test_define():
-    header = METADATA.format(last_layer="X", quantized=0, dtype="D")
+    header = METADATA.format(last_layer="X", quantized=0, dtype="D", resize_mode="R")
     assert edge_impulse.define(header, "EI_CLASSIFIER_INPUT_WIDTH") == "8"
     # A shorter name must not match a longer one with the same prefix.
     assert edge_impulse.define(header, "EI_CLASSIFIER_LOAD_FFT_3") == "1"
@@ -229,6 +233,7 @@ def test_read_cpp_export(tiny, tmp_path, as_zip):
     )
     assert export.decoder == "yolo_pro" and not export.quantized
     assert (export.input_dtype, export.output_dtype) == ("float32", "float32")
+    assert export.resize_mode == "fit_shortest"
     assert export.postprocess() == {
         "decoder": "yolo_pro",
         "labels": ["bicycle", "stop sign"],
@@ -242,6 +247,17 @@ def test_read_cpp_export(tiny, tmp_path, as_zip):
 def test_unknown_datatype(tiny, tmp_path):
     path = fake_export(tmp_path / "cpp", tiny["saved"], dtype="EI_CLASSIFIER_DATATYPE_FLOAT64")
     with pytest.raises(edge_impulse.ExportError, match="unknown data type"):
+        edge_impulse.read_cpp_export(path)
+
+
+@pytest.mark.parametrize("macro, mode", list(edge_impulse.RESIZE_MODES.items()))
+def test_resize_mode(macro, mode):
+    assert edge_impulse.resize_mode(f"#define EI_CLASSIFIER_RESIZE_MODE {macro}\n") == mode
+
+
+def test_unknown_resize_mode(tiny, tmp_path):
+    path = fake_export(tmp_path / "cpp", tiny["saved"], resize_mode="EI_CLASSIFIER_RESIZE_CROP")
+    with pytest.raises(edge_impulse.ExportError, match="EI_CLASSIFIER_RESIZE_FIT_SHORTEST"):
         edge_impulse.read_cpp_export(path)
 
 
@@ -263,6 +279,7 @@ def _manifest_parts(tiny):
         "segments": segments,
         "boundaries": boundaries,
         "postprocess": {"decoder": "yolo_pro", "labels": ["a", "b"]},
+        "resize_mode": "fit_shortest",
         "source": manifest.Source("model.zip", "ab" * 32, 1011188, 8, "1.94.5"),
         "verification": manifest.Verification(2, 1e-4, 1e-4, errors, errors),
     }
@@ -286,7 +303,9 @@ def test_build_manifest(tiny):
     assert m["format_version"] == 2 and m["quantization"] is None
     assert m["tool"] == {"name": "sciot-model", "tensorflow": tf.__version__}
     assert m["source"]["savedmodel"] == {"file": "model.zip", "sha256": "ab" * 32}
-    assert m["input"] == {"shape": [1, 8, 8, 3], "dtype": "float32"}
+    assert m["input"] == {"shape": [1, 8, 8, 3], "dtype": "float32", "resize_mode": "fit_shortest"}
+    assert list(m["input"]) == ["shape", "dtype", "resize_mode"]
+    assert all("resize_mode" not in s["input"] for s in m["segments"])
     assert m["output"] == {"shape": [1, 32, 6], "dtype": "float32"}
     assert [c["operation_type"] for c in m["cuts"]] == ["Relu"] * 3
     assert [s["file"] for s in m["segments"]] == [f"submodel_{i}.tflite" for i in range(4)]

@@ -4,7 +4,7 @@ Studio → Deployment → "C++ library (Linux)" produces a ZIP with the whole SD
 only three files are read:
 
 - model-parameters/model_metadata.h: architecture of the last layer, input
-  size, detection threshold, max detections, quantization and the data types
+  size and resize mode, detection threshold, max detections, quantization and the data types
   of the model input and output;
 - model-parameters/model_variables.h: labels in order, NMS IoU;
 - tflite-model/*.tflite: the whole model as Edge Impulse runs it, used to
@@ -42,6 +42,21 @@ DATATYPES = {
 }
 
 
+# How the device turns a camera frame into the model input
+# (EI_CLASSIFIER_RESIZE_MODE, values in edge-impulse-sdk/classifier/ei_constants.h;
+# the SDK applies them in dsp/image/processing.cpp):
+# - none: no resize, the frame must already have the input size;
+# - fit_shortest: center crop to the input aspect ratio, then scale;
+# - fit_longest: scale to fit, pad the rest (letterbox);
+# - squash: scale width and height independently (stretch).
+RESIZE_MODES = {
+    "EI_CLASSIFIER_RESIZE_NONE": "none",
+    "EI_CLASSIFIER_RESIZE_FIT_SHORTEST": "fit_shortest",
+    "EI_CLASSIFIER_RESIZE_FIT_LONGEST": "fit_longest",
+    "EI_CLASSIFIER_RESIZE_SQUASH": "squash",
+}
+
+
 # The most detections Edge Impulse returns: EI_CLASSIFIER_OBJECT_DETECTION_KEEP_TOPK
 # in the SDK (classifier/ei_nms.h), not a model parameter. Not to be confused
 # with EI_CLASSIFIER_OBJECT_DETECTION_COUNT in model_metadata.h, which is the
@@ -61,6 +76,7 @@ class CppExport:
     last_layer: str  # the macro name, e.g. EI_CLASSIFIER_LAST_LAYER_YOLO_PRO
     input_width: int
     input_height: int
+    resize_mode: str  # a value of RESIZE_MODES: "fit_shortest", ...
     quantized: bool  # EI_CLASSIFIER_QUANTIZATION_ENABLED
     input_dtype: str  # "float32", "int8", "uint8", ...
     output_dtype: str
@@ -119,6 +135,18 @@ def define(header: str, name: str) -> str:
             f"({', '.join(values)}): cannot tell which one applies"
         )
     return values[0]
+
+
+def resize_mode(metadata: str) -> str:
+    """EI_CLASSIFIER_RESIZE_MODE as a RESIZE_MODES value. ExportError if unknown."""
+    name = "EI_CLASSIFIER_RESIZE_MODE"
+    value = define(metadata, name)
+    if value not in RESIZE_MODES:
+        # Never guess a resize mode: a wrong one silently changes the model input.
+        raise ExportError(
+            f"{name} is {value}: unknown resize mode (known: {', '.join(RESIZE_MODES)})"
+        )
+    return RESIZE_MODES[value]
 
 
 def labels(variables: str) -> list[str]:
@@ -216,6 +244,7 @@ def read_cpp_export(path: Path) -> CppExport:
         last_layer=define(metadata, "EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER"),
         input_width=int(number("EI_CLASSIFIER_INPUT_WIDTH")),
         input_height=int(number("EI_CLASSIFIER_INPUT_HEIGHT")),
+        resize_mode=resize_mode(metadata),
         quantized=int(number("EI_CLASSIFIER_QUANTIZATION_ENABLED")) != 0,
         input_dtype=datatype("EI_CLASSIFIER_TFLITE_INPUT_DATATYPE"),
         output_dtype=datatype("EI_CLASSIFIER_TFLITE_OUTPUT_DATATYPE"),

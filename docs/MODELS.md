@@ -25,7 +25,7 @@ From the C++ export only three files are read:
 
 | File | What |
 |---|---|
-| `model-parameters/model_metadata.h` | `EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER` (architecture → decoder), input width/height, `..._OBJECT_DETECTION_THRESHOLD`, `..._QUANTIZATION_ENABLED`, `..._TFLITE_INPUT_DATATYPE` / `..._OUTPUT_DATATYPE`, project id, deploy version, Studio version |
+| `model-parameters/model_metadata.h` | `EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER` (architecture → decoder), input width/height, `EI_CLASSIFIER_RESIZE_MODE`, `..._OBJECT_DETECTION_THRESHOLD`, `..._QUANTIZATION_ENABLED`, `..._TFLITE_INPUT_DATATYPE` / `..._OUTPUT_DATATYPE`, project id, deploy version, Studio version |
 | `model-parameters/model_variables.h` | labels in order (`ei_classifier_inferencing_categories_*`), NMS IoU (`ei_object_detection_nms_*`) |
 | `tflite-model/*.tflite` | the whole model as Edge Impulse runs it |
 
@@ -77,7 +77,7 @@ numbers as the source model (differences ~1e-5).
     "savedmodel": {"file": "ei-...-model.41.zip", "sha256": "…"},
     "edge_impulse": {"project_id": 1011188, "deploy_version": 8, "studio_version": "1.94.5"}
   },
-  "input":  {"shape": [1, 320, 320, 3], "dtype": "float32"},
+  "input":  {"shape": [1, 320, 320, 3], "dtype": "float32", "resize_mode": "fit_shortest"},
   "output": {"shape": [1, 2100, 6], "dtype": "float32"},
   "cuts": [{"tensor": "…/activation_188_1/Relu6:0", "operation": "…", "operation_type": "Relu6"}],
   "segments": [{"index": 0, "file": "submodel_0.tflite", "size_bytes": 4972, "sha256": "…",
@@ -92,6 +92,13 @@ numbers as the source model (differences ~1e-5).
 }
 ```
 
+- `input.resize_mode` is how a device turns a camera frame (or the static
+  image) into the input, from `EI_CLASSIFIER_RESIZE_MODE`: `fit_shortest`
+  (center crop to the input aspect ratio, then scale), `fit_longest` (scale
+  to fit, pad the rest), `squash` (stretch) or `none` (the frame must already
+  have the input size). The device client refuses a manifest without it:
+  rebuild with `--overwrite`. The `model_hash` covers only the `.tflite`
+  files, not the manifest; the server and the worker ignore the field.
 - `source` holds file names and hashes, never local paths. `sha256` is empty
   when the SavedModel was given as a directory.
 - `quantization` is `null` for float32. A quantized build will describe its

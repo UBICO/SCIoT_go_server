@@ -47,6 +47,7 @@ The reference device client is in `client/`, in Python
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
 | [worker/README.md](worker/README.md) | the Python worker and the model build tool |
 | [docs/CLIENT.md](docs/CLIENT.md) | the Python device client (`client/`): install, configuration, benchmarks |
+| [docs/RASPBERRY.md](docs/RASPBERRY.md) | the client on a Raspberry Pi with its camera, against a server on another machine; the phase 3.9 benchmark |
 
 ## Requirements
 

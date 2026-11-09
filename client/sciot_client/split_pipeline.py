@@ -97,6 +97,10 @@ class FrameRecord:
     mode: str  # LOCAL or SPLIT
     split: int | None
     acq_ms: float
+    # Age of the frame when acquire() started: how long it existed before the
+    # loop asked for it (a camera frame waiting in frames.LatestFrame); negative
+    # if it arrived while acquire() waited for it; 0 for the static image.
+    age_ms: float
     dev_ms: float  # device compute: prefix, plus the completion if finished here
     srv_ms: float | None
     # The server's reading of the frame, first to last byte (timing.receive_ms):
@@ -106,8 +110,9 @@ class FrameRecord:
     rtt_ms: float | None  # send → result, on the device
     sent_bytes: int  # payload sent on the stream (0 if never sent)
     detections: int | None
-    # Acquisition → outcome on the device, waits included (the answer of a
-    # refused frame, its local completion): what an application sees.
+    # Capture → outcome on the device (age + acquisition + compute + ...), waits
+    # included (the answer of a refused frame, its local completion): what an
+    # application sees.
     latency_ms: float
     outcome: str  # local, result, local (<why>)
 
@@ -183,7 +188,8 @@ class _Device:
     acq_ms: float
     dev_ms: float
     sent_bytes: int
-    captured: float  # clock() at acquisition
+    captured: float  # clock() when the frame was captured
+    age_ms: float = 0.0  # see FrameRecord.age_ms
 
 
 class SplitPipeline:
@@ -234,13 +240,18 @@ class SplitPipeline:
         captured_at: str,
         acq_ms: float,
         dev_ms: float,
+        age_ms: float = 0.0,
     ) -> None:
-        """The loop computed segments 0..layer of a frame: finish or send it."""
+        """The loop computed segments 0..layer of a frame: finish or send it.
+
+        ``age_ms``: how long the frame existed before acquire() started
+        (FrameRecord.age_ms); the latency starts at the capture, not at acquire().
+        """
         version = policy.policy_version
-        # The acquisition happened acq_ms + dev_ms ago: the loop calls this
-        # right after computing.
-        captured = self.clock() - (acq_ms + dev_ms) / 1000
-        frame = _Device(acq_ms, dev_ms, 0, captured)
+        # The frame was captured age_ms + acq_ms + dev_ms ago: the loop calls
+        # this right after computing.
+        captured = self.clock() - (age_ms + acq_ms + dev_ms) / 1000
+        frame = _Device(acq_ms, dev_ms, 0, captured, age_ms=age_ms)
         if policy.mode == MODE_LOCAL or layer >= self.last_layer:
             # The stream stays open in LOCAL too when the server has one:
             # pings, policy messages and probes measure and reach this device.
@@ -388,7 +399,7 @@ class SplitPipeline:
             outcome="result",
             # At ARRIVAL (the receiver measured rtt), not now: this thread may
             # have been busy finishing another frame locally meanwhile.
-            latency_ms=frame.acq_ms + frame.dev_ms + r.rtt_ms,
+            latency_ms=frame.age_ms + frame.acq_ms + frame.dev_ms + r.rtt_ms,
         )
 
     def _handle_error(self, e: FrameError) -> None:
@@ -464,6 +475,7 @@ class SplitPipeline:
         record = FrameRecord(
             t_s=now - self._started,
             acq_ms=frame.acq_ms,
+            age_ms=frame.age_ms,
             dev_ms=frame.dev_ms,
             sent_bytes=frame.sent_bytes,
             **{"latency_ms": (now - frame.captured) * 1000, **fields},
