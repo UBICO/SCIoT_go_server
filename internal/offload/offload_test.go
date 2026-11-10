@@ -161,41 +161,6 @@ func TestFramesPerSec(t *testing.T) {
 	}
 }
 
-func TestCycleMS(t *testing.T) {
-	// Modello di 3 segmenti, SPLIT a 1: 20 frame in 1 s; 4 finiti sul device
-	// (segmento 2 eseguito 4 volte), 16 inviati con 5 ms di invio.
-	tel := api.Telemetry{
-		InferenceCount: 20,
-		SegmentMS:      []*float64{f(10), f(20), f(30)},
-		SegmentCount:   []int{20, 20, 4},
-	}
-	// Calcolo 200 + 400 + 120 = 720 ms; invio 16 × 5 = 80; A = 200/20 = 10.
-	if a, ok := CycleMS(tel, 1000, true, 2, 5, true); !ok || math.Abs(a-10) > 1e-9 {
-		t.Errorf("SPLIT: %v, %v; attesi 10 ms", a, ok)
-	}
-	// In LOCAL nessun invio: (1000 − 720) / 20 = 14, anche senza la rete.
-	if a, ok := CycleMS(tel, 1000, false, 2, 0, false); !ok || math.Abs(a-14) > 1e-9 {
-		t.Errorf("LOCAL: %v, %v; attesi 14 ms", a, ok)
-	}
-	// Frame inviati e invio sconosciuto: A non è calcolabile.
-	if _, ok := CycleMS(tel, 1000, true, 2, 0, false); ok {
-		t.Error("invio sconosciuto: atteso ok = false")
-	}
-	// Un segmento eseguito senza tempo, o telemetria senza segmenti.
-	bad := tel
-	bad.SegmentMS = []*float64{f(10), nil, f(30)}
-	if _, ok := CycleMS(bad, 1000, true, 2, 5, true); ok {
-		t.Error("segmento senza tempo: atteso ok = false")
-	}
-	if _, ok := CycleMS(api.Telemetry{InferenceCount: 20}, 1000, false, 2, 0, false); ok {
-		t.Error("senza segment_ms: atteso ok = false")
-	}
-	// Orologi diversi: mai sotto zero.
-	if a, ok := CycleMS(tel, 500, false, 2, 0, false); !ok || a != 0 {
-		t.Errorf("finestra più corta del calcolo: %v, %v; atteso 0", a, ok)
-	}
-}
-
 func TestRecordPredictionsAreValidJSON(t *testing.T) {
 	ps := []costmodel.Prediction{
 		{Split: 1, TotalMS: 40, WaitMS: 1, Rho: 0.3},

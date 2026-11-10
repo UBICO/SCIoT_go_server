@@ -127,15 +127,56 @@ func TestSimAllToServer(t *testing.T) {
 	in := inputs()
 	in.Queue.CS = 0 // servizio costante: risultato esatto
 	p := Predict(in, 1, 2)
-	// Ciclo A + prefisso + invio = 2 + 30 + 12 = 44 ms → 22.7 frame/s, tutti
-	// al server: 3 frame in volo bastano, S = 4 ms non si accoda.
-	if p.Bound != BoundDevice || p.ServerShare != 1 || !within(p.FramesPerSec, 1000.0/44, 0.02) ||
+	// Invio in background: ciclo A + prefisso = 2 + 30 = 32 ms → 31.2 frame/s,
+	// tutti al server. Il link (10 ms a frame) si libera prima del frame dopo,
+	// 3 frame in volo bastano, S = 4 ms non si accoda.
+	if p.Bound != BoundDevice || p.ServerShare != 1 || !within(p.FramesPerSec, 1000.0/32, 0.02) ||
 		p.RejectedPerSec != 0 || p.WindowFullPerSec != 0 || p.WaitMS != 0 {
 		t.Errorf("split 1 = %+v: attesi tutti i frame al server", p)
 	}
 	// Latenza: prefisso 30 + invio 12 + S 4 + ritorno 2 (latenza di rete).
 	if !within(p.ServerMS, 48, 1e-9) || p.TotalMS != p.ServerMS || !within(p.P95MS, 48, 1e-9) {
 		t.Errorf("latenza %v, totale %v, p95 %v; attesi 48 ms", p.ServerMS, p.TotalMS, p.P95MS)
+	}
+}
+
+// Fase 3.9, Raspberry Pi allo split −1: suffisso 636 ms, 1.2 MB in 85 ms
+// sul link, S 50 ms. Il client manda due o tre frame in pochi ms (invio in
+// background), il successivo trova la finestra piena e finisce in locale;
+// intanto il secondo frame aspetta il primo sul link. Prima della correzione
+// il client simulato restava fermo durante l'invio, la finestra non si
+// riempiva mai e le finestre 2 e 3 erano uguali.
+func TestSimBackgroundSendOnSlowDevice(t *testing.T) {
+	bw, lat := 1228800/0.085, 2.0 // byte/s: 85 ms per 1.2 MB
+	in := inputs()
+	in.DeviceMS = []*float64{f(200), f(200), f(236)}
+	in.Network = &netmeasure.State{BandwidthBps: &bw, LatencyMS: &lat}
+	in.InputBytes[-1] = 1228800
+	in.ServiceMS[-1] = 50
+	in.Queue.CS = 0
+	for _, c := range []struct {
+		window       int
+		fps, share   float64
+		serverMS     float64 // media dei serviti
+		windowFullPS float64
+	}{
+		// Ciclo: un frame a finestra piena (636) + A = 2 per frame. Serviti,
+		// nati ogni 2 ms: link 85 + latenza 2 + S 50 + ritorno 2 = 139, più la
+		// coda sul link (83 per il secondo, 166 per il terzo).
+		{2, 3000.0 / 642, 2.0 / 3, (139 + 222) / 2.0, 1000.0 / 642},
+		{3, 4000.0 / 644, 3.0 / 4, (139 + 222 + 305) / 3.0, 1000.0 / 644},
+	} {
+		in.MaxInflight = c.window
+		p := Predict(in, -1, 2)
+		// Frame interi in 5 s virtuali: un frame in più o in meno è 0.2 frame/s.
+		if p.Bound != BoundWindow || math.Abs(p.FramesPerSec-c.fps) > 0.2 || !within(p.ServerShare, c.share, 0.03) ||
+			!within(p.WindowFullPerSec, c.windowFullPS, 0.15) || p.RejectedPerSec != 0 {
+			t.Errorf("finestra %d = %+v: attesi %.2f frame/s, quota %.2f", c.window, p, c.fps, c.share)
+		}
+		if !within(p.ServerMS, c.serverMS, 0.03) || !within(p.P95MS, 636, 0.01) {
+			t.Errorf("finestra %d: serviti %.0f ms (attesi %.0f), p95 %.0f (atteso 636: i frame locali)",
+				c.window, p.ServerMS, c.serverMS, p.P95MS)
+		}
 	}
 }
 

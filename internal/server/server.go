@@ -388,6 +388,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Queue:           s.queueState(req.DeviceID),
 		Network:         network,
 		DeviceSegments:  segmentEstimates(res.Segments, s.now()),
+		CycleMS:         cycleMS(res.Cycle),
 		ModelKey:        res.Model.ModelKey,
 		NumSegments:     res.Model.NumLayers,
 		Service:         s.splitService(res.Model.ModelKey, res.Model.NumLayers),
@@ -768,4 +769,12 @@ func segmentEstimates(stats []ewma.Stat, now time.Time) []*ewma.Estimate {
 		}
 	}
 	return out
+}
+
+// cycleMS espone la stima di A del device; nil senza stima (assente ≠ 0).
+func cycleMS(c device.Cycle) *float64 {
+	if a, ok := c.MS(); ok {
+		return &a
+	}
+	return nil
 }

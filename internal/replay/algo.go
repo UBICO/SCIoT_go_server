@@ -11,6 +11,7 @@ import (
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/costmodel"
+	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/offload"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
 )
@@ -45,10 +46,24 @@ func Algo(r io.Reader, alg offload.Algorithm) ([]Step, error) {
 	// Gli altri device come client, come nel server (Server.decide). Senza
 	// SetPolicy: a ciclo aperto la policy di un device è quella dei dati.
 	fleet := offload.NewFleet(3 * heartbeatInterval(hbs))
+	// Registrazioni precedenti alla Fase 3.9, senza cycle_ms: la stima di A
+	// rifatta come nello store, per sessione (una registrazione la azzera).
+	//
+	// shortcut: costante di tempo di default, la registrazione non dice
+	// quella in config (server.device_segment_tau_ms); scriverla nell'evento
+	// start se un run la cambia.
+	cycles := map[string]device.Cycle{}
 	var out []Step
 	for _, hb := range hbs {
 		if hb.NumSegments == 0 {
 			continue // registrazione precedente alla Fase 3.5: stato incompleto
+		}
+		if hb.CycleMS == nil {
+			c := cycles[hb.SessionID].Update(hb.Telemetry, hb.SinceLastSeenMS, hb.TS, device.DefaultSegmentTau)
+			cycles[hb.SessionID] = c
+			if a, ok := c.MS(); ok {
+				hb.CycleMS = &a
+			}
 		}
 		if v, ok := version[hb.DeviceID]; !ok || v != hb.ServerPolicy.PolicyVersion {
 			version[hb.DeviceID] = hb.ServerPolicy.PolicyVersion

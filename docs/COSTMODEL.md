@@ -42,12 +42,15 @@ because two behaviours depend on the exact order of events:
 
 For a SPLIT point `Predict` therefore runs a discrete-event simulation
 (`internal/costmodel/sim.go`) of the device and the dispatcher, with the
-rules of the real code, for 1 s of warm-up and 5 s of measure in virtual time
-(fixed seed: the same inputs give the same prediction):
+rules of the real code, for 1 s of warm-up and 5 s of measure in virtual time,
+or 2 and 30 long device cycles (`A` + prefix + suffix) on a slow device (a
+Raspberry Pi sends bursts every ~660 ms: 5 s hold 7 or 8 of them, a 14%
+jump), with a fixed seed (the same inputs give the same prediction):
 
 | Who | Rule |
 |---|---|
-| device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it (`upload` ms) |
+| device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it **in the background** and starts the next cycle (`ws.send` returns once the bytes are in the kernel's buffer) |
+| link | one per device, FIFO: a frame occupies it for `upload − latency` (bytes / bandwidth) after the frames sent before it, and reaches the server one latency later; the deadline counts from there. Shortcut: an unbounded kernel buffer, so `send` never blocks (on a slow link with a large window it does) |
 | answer | returns after the network latency (at least 1 ms, measured) and frees the window when it arrives |
 | server | admission with `dispatch.PredictWait` (the dispatcher's own function) and the estimated `S`: refused when wait + `S` exceeds the deadline, the device's `device(k+1..last)`; FIFO queue, `c` slots; a frame that gets its slot after its deadline returns as an error |
 | other devices | every other device in `SPLIT` is a client with the same rules and its own times at its policy (prefix, suffix, upload, `A`, `S`, window: `costmodel.ClientFrom`); their frames are refused, expire and are drained like the device's, only the device's are counted. Fallback when some other device's inputs are incomplete (or in recordings replayed without them): a stream of frames, always admitted, at the others' measured rate (admitted frames only), with `ca`, `S` and `cs` (log-normal) |
@@ -63,11 +66,19 @@ the most frequent cause (`window` or `deadline`). LOCAL stays a formula
 second.
 
 `A` is the rest of a device cycle: reading the image (with a camera, also
-waiting for the next frame), handling answers. Not in the telemetry, it is
-derived from each heartbeat window (`offload.CycleMS`): window duration minus
-the device's compute (`segment_ms × segment_count`, which includes the
-frames finished on the device, unlike `inference_time_ms`) minus the upload
-of the frames sent, per frame. With an image from file it is ~2 ms.
+waiting for the next frame), handing frames to the socket, handling answers.
+Not in the telemetry, the server estimates it from the heartbeat windows
+(`device.Cycle`, recorded as `cycle_ms`): the window durations minus the
+device's compute (`segment_ms × segment_count`, which includes the frames
+finished on the device, unlike `inference_time_ms`), over the frames, as a
+time-weighted ratio of sums. The upload is not subtracted: the client sends
+in the background. With an image from file it is ~2 ms.
+
+Phase 3.9 found both as errors on a Raspberry Pi: `A` per window (one
+heartbeat) swung between −43 and +143 ms (a 636 ms local frame counts whole
+in the window where it ends) and, clamped at 0, made cycles too short; and
+subtracting the upload made the simulated client block while sending, so its
+window never filled.
 
 `Saturated` means the other devices alone already fill the server.
 
@@ -157,7 +168,8 @@ the others as clients (`ClientFrom`, `offload.Fleet`), median error per run:
 | 2, 3 | −1% | −1% | +5% | +4% | 5.0 / 6.0 |
 | 3, 3 | −1% | −3% | +4% | +3% | 7.8 / 8.0 |
 
-Not verified yet: devices that differ (model, split point), a real network.
+Not verified yet: devices that differ (model, split point). A real network:
+one device, next section.
 
 **Refused or window full, one device at split −1** (window 3, 2 slots):
 the simulation gave 14.8 refused frames per second and no full window,
@@ -173,6 +185,37 @@ devices do not change. The real time grows with the bytes sent, while on a
 network that does not limit the simulated upload is the latency only:
 using the server's measured read time per split point is left for a real
 network (phase 4).
+
+### Verification on a Raspberry Pi over Wi-Fi (phase 3.9)
+
+Two Raspberry Pi (`client/results/phase39/`, `docs/RASPBERRY.md`), split −1,
+yolo-small: 634 ms per frame on the device (suffix 636 ms), 1.2 MB per frame
+in ~85 ms on the link, 2 slots × 2 threads on a MacBook. Runs A1–A3 with the
+algorithm (window 2), W1–W3 pinned at window 3, C2 with the camera. Before
+the fix the windows 2 and 3 were predicted alike (so the algorithm chose 2),
+at twice the measured frames per second and a quarter of the p95: the
+simulated client blocked while sending, so its window never filled, and
+`A` per heartbeat was mostly clamped to 0. Predicted (median over the
+decisions of the steady part) against measured (client CSV, whole steady
+part):
+
+| Runs | Window | frames/s before → after / measured | p95 ms before → after / measured | mean ms after / measured |
+|---|---|---|---|---|
+| A1–A3 | 2 | 9.2–11.6 → 4.44–4.65 / 4.35–4.56 | 154–166 → 635–636 / 652–653 | 333–341 / 380–398 |
+| W1–W3 | 3 | 11.4–11.8 → 5.97–6.21 / 5.75–6.04 | 153–172 → 637–638 / 654–656 | 319–328 / 370–372 |
+| C2 | 3 | 8.9 → 5.35 / 5.38 | 174 → 647 / 671 | 321 / 387 |
+
+Frames per second within +4%, p95 within −4%, share served exact, frames
+with the window full 1.6/s against 1.8. The mean is 12–17% low: the served
+frames' latency is 20–29% low, because the simulated link always takes the
+same time while the Wi-Fi has a tail (server read time p50 84 ms, p90 175).
+It does not move the p95 here (the frames finished on the device set it); a
+variable transfer time is left for when served frames set the p95.
+`sciot-replay check` compares per heartbeat (1 s): with bursts of 2–4 frames
+every ~660 ms a window holds one or two bursts, so its per-window medians are
+biased on such a device (frames/s −13…−17%); use whole runs there. The
+phase 3.8 recordings (localhost) do not change: per band within 1–3% of
+before, and the bands that were far off before (noisy `A`) are gone.
 
 ## Mean or p95
 
@@ -250,7 +293,7 @@ wait in steady state?
 | `λs` | `Prediction.ServerFramesPerSec` | frames/s | the device's frames the server serves at split `k` | simulation |
 | — | `Prediction.FramesPerSec`, `ServerShare` | frames/s, — | all the device's frames per second, and the share served | simulation |
 | `ρ'` | `Prediction.Rho` | — | utilization with the device at `k`: simulated slot busy time / (`c` × time) | simulation |
-| `A` | `Inputs.CycleMS` | ms | the rest of a device cycle (acquisition, answers) | `offload.CycleMS`, telemetry |
+| `A` | `Inputs.CycleMS` | ms | the rest of a device cycle (acquisition, handing frames to the socket, answers) | `device.Cycle` (heartbeat `cycle_ms`), telemetry |
 | — | `Inputs.MaxInflight` | frames | the device's window | stream, heartbeat |
 | — | `Prediction.Saturated` | — | the other devices alone fill the server (`a_others ≥ c`): none of this device's frames would be served | computed |
 | — | `Prediction.Missing` | — | unknown inputs (segment, network, `S`, slots) | computed |

@@ -68,6 +68,11 @@ type Heartbeat struct {
 	// (ms) dopo questo heartbeat; null per un segmento mai eseguito. Assente
 	// se il device non invia segment_ms.
 	DeviceSegments []*ewma.Estimate `json:"device_segments,omitempty"`
+	// CycleMS è la stima del server di A, il resto del ciclo del device oltre
+	// al calcolo (device.Cycle), dopo questo heartbeat; assente senza una
+	// finestra utile, e nelle registrazioni precedenti alla Fase 3.9 (il
+	// replay la ricalcola dalla telemetria).
+	CycleMS *float64 `json:"cycle_ms,omitempty"`
 
 	// Il resto dello stato che un algoritmo vede per questo device, così il
 	// replay (cmd/sciot-replay algo) gli dà esattamente gli stessi ingressi:
