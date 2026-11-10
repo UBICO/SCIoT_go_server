@@ -73,6 +73,11 @@ type Heartbeat struct {
 	// finestra utile, e nelle registrazioni precedenti alla Fase 3.9 (il
 	// replay la ricalcola dalla telemetria).
 	CycleMS *float64 `json:"cycle_ms,omitempty"`
+	// AnswerMS è la stima del server di answer_ms (device.Store, media
+	// mobile dei telemetry.answer_ms) dopo questo heartbeat; assente senza
+	// campioni e nelle registrazioni precedenti alla Fase 4.2 (la
+	// simulazione usa allora il ritorno minimo, sim.go).
+	AnswerMS *float64 `json:"answer_ms,omitempty"`
 	// WaitForWindow: il device ha dichiarato la capability wait_for_window
 	// (la sua regola della finestra piena). Assente nelle registrazioni
 	// precedenti alla Fase 3.9, i cui client non aspettavano mai.

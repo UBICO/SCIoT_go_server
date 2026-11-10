@@ -55,7 +55,7 @@ jump), with a fixed seed (the same inputs give the same prediction):
 | device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it **in the background** and starts the next cycle (`ws.send` returns once the bytes are in the kernel's buffer) |
 | link | one per device, FIFO: a frame occupies it for `upload − latency` (bytes / bandwidth) after the frames sent before it, and reaches the server one latency later; the deadline counts from there. Shortcut: an unbounded kernel buffer, so `send` never blocks (on a slow link with a large window it does) |
 | device with `wait_for_window` | with the window full, before acquiring (after `drain`) it waits `W − A − prefix` and, with the frame ready, up to `device(k+1..last)` for a place, if `W < device(k+1..last)`; `W` = send time of its oldest frame in flight + its estimated round trip (EWMA of the simulated results, α 0.2, as the client) − now. An answer ends the wait at once; errors wait for the next `drain`. Without a round trip measured it does not wait. Recorded per heartbeat (`wait_for_window`), so a replay simulates each client with its own rule |
-| answer | returns after the network latency (at least 1 ms, measured) and frees the window when it arrives |
+| answer | returns after `answer_ms − latency` (the device's measured `answer_ms`, phase 4.2: the latency up is already in the frame's arrival), or after the network latency for a device that does not send it; at least 1 ms (measured); it frees the window when it arrives |
 | server | admission with `dispatch.PredictWait` (the dispatcher's own function) and the estimated `S`: refused when wait + `S` exceeds the deadline, the device's `device(k+1..last)`; FIFO queue, `c` slots; a frame that gets its slot after its deadline returns as an error |
 | other devices | every other device in `SPLIT` is a client with the same rules and its own times at its policy (prefix, suffix, upload, `A`, `S`, window: `costmodel.ClientFrom`); their frames are refused, expire and are drained like the device's, only the device's are counted. Fallback when some other device's inputs are incomplete (or in recordings replayed without them): a stream of frames, always admitted, at the others' measured rate (admitted frames only), with `ca`, `S` and `cs` (log-normal) |
 
@@ -185,10 +185,8 @@ the device sent again. Measured on the client at split −1 (send → answer
 minus the server's time): 1.06 ms median, 0.85–1.25 ms between the 10th and
 90th percentile; the server alone takes 0.54 ms to read the 1.2 MB frame.
 With 1 ms: 7.6 refused and 7.4 window full per second; the runs with several
-devices do not change. The real time grows with the bytes sent, while on a
-network that does not limit the simulated upload is the latency only:
-using the server's measured read time per split point is left for a real
-network (phase 4).
+devices do not change. On a real network the answer time is the client's
+`answer_ms` (phase 4.2, below); 1 ms stays the minimum.
 
 That split depended on noise. Since `A` is a smoothed ratio (phase 3.9) it
 is a steady 1.10 ms here, just above the 1 ms answer time: every refusal
@@ -250,17 +248,45 @@ Against the strategy-A runs above: 4.4 → 6.7–6.9 frames/s and p95 652 →
 - ~10 ms per round trip on the Pi client (`net_ms − recv_ms − 2 × latency`:
   framing and masking 1.2 MB in Python, the receiver thread), where the
   simulation has the 1 ms measured on a MacBook (`simMinAnswerMS`): frames/s
-  +6–10% at window 1; at window 3 the link hides it. The server cannot see it.
+  +6–10% at window 1; at window 3 the link hides it. Since phase 4.2 the
+  client measures it (`answer_ms`, next section).
 - The camera frame's age (`age_ms`, p50 16 ms, waiting in `LatestFrame`) and
   acquisition: not in the predicted latency. Equal for every policy, LOCAL
   included, so they do not change a choice.
 - Wi-Fi stalls (A1: a few frames read in up to 900 ms, none in A3): they set
   that run's p95. Episodic, so a log-normal transfer time would fit them
-  badly; left open with the answer-time spread.
+  badly; not modeled (phase 4.2, next section).
 - Found by these runs and fixed: at split −1 with every frame served the
   device runs no segment, and the client did not send `segment_ms`, so the
   server's `A` froze at its earlier value (29.8 ms, or 0). The client now
   always sends them (all `null`/`0`).
+
+### Answer time measured by the client (phase 4.2)
+
+Per frame, `rtt − receive_ms − server_ms` is the latency of the first byte
+up, the return of the answer and the client's time to receive it
+(`server_ms` includes the queue wait). At window 1, from the client CSVs:
+
+| | p10 | p50 | p90 | latency |
+|---|---|---|---|---|
+| MacBook, localhost (3.8 P4) | 0.42 ms | 0.52 ms | 0.66 ms | ~0 |
+| Raspberry Pi, Wi-Fi (3.9 rule c) | 9.6 ms | 11.4 ms | 14.7 ms | 1.7 ms |
+
+So ~9 ms on the Pi are the Python client's. At window 3 the same difference
+is 130 ms (W1_new): the frame also waited on the link behind the previous
+one, which the simulation models itself. The client therefore sends
+`answer_ms`, the mean over the window of the frames sent with no other frame
+in flight (stricter than "link free": the client cannot see bytes still in
+the kernel's buffer), absent without such a frame; the server keeps a moving
+average (`device.Store`, τ of the segments, recorded in the heartbeat) and
+the simulation returns an answer after `answer_ms − latency`, at least 1 ms.
+A device at a large window for a long time keeps the value it had.
+
+Wi-Fi stalls (`net_ms` above 3× its median): in 9 runs out of 12, one
+episode of 3–6 consecutive frames in 2–6 s, 3–9× the usual time (up to
+960 ms), 1–2% of the frames. Clustered, not independent noise per frame:
+not modeled. They also reach `answer_ms` (A2_new: p99 48 ms against a p50 of
+11); a window at 300 ms moves the average by ~29 ms for ~10 s.
 
 ## Mean or p95
 

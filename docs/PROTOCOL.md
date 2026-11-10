@@ -200,6 +200,7 @@ Request:
   | `segment_ms` | no, with `segment_count` | per segment `0..last` of the model, the mean compute time of the window on the device; `null` for a segment not run in the window |
   | `segment_count` | with `segment_ms` | per segment, how many times it ran in the window, `>= 0`; `0` if and only if `segment_ms` is `null` there |
   | `wait_ms` | no | total time the client waited in the window for a place in its window of frames in flight (see [CLIENT.md](CLIENT.md#window-full)), `>= 0`; absent = `0` (a client that never waits) |
+  | `answer_ms` | no | mean of `rtt − receive_ms − server_ms` (the data plane's [timing](#data-plane)) over the window's results of frames sent with no other frame of the device in flight: latency of the first byte up, return of the answer and the client's time to receive it, `>= 0`; absent = no such result in the window (the server keeps its estimate). The other frames also waited on the link behind an earlier one, which the cost model simulates itself. A server before phase 4.2 rejects the field: update server and client together |
 
   Optional fields are omitted when unknown: `0` is a value, not "absent".
   `segment_ms` and `segment_count` have one entry per segment of the

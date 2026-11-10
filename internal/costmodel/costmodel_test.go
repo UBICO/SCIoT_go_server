@@ -140,6 +140,28 @@ func TestSimAllToServer(t *testing.T) {
 	}
 }
 
+// Fase 4.2: con answer_ms il ritorno è answer_ms − latenza (la latenza
+// all'andata è già nell'arrivo), mai sotto simMinAnswerMS.
+func TestSimAnswerDelay(t *testing.T) {
+	cases := []struct {
+		name   string
+		answer *float64
+		want   float64 // latenza: prefisso 30 + invio 12 + S 4 + ritorno
+	}{
+		{"sconosciuto: la latenza di rete", nil, 48},
+		{"misurato: answer_ms − latenza", f(12), 56},
+		{"misurato sotto la latenza: il minimo", f(0.5), 47},
+	}
+	for _, tc := range cases {
+		in := inputs() // latenza 2 ms
+		in.Queue.CS = 0
+		in.AnswerMS = tc.answer
+		if p := Predict(in, 1, 2); !within(p.ServerMS, tc.want, 1e-9) {
+			t.Errorf("%s: latenza %v, attesa %v", tc.name, p.ServerMS, tc.want)
+		}
+	}
+}
+
 // Fase 3.9, Raspberry Pi allo split −1: suffisso 636 ms, 1.2 MB in 85 ms
 // sul link, S 50 ms. Il client manda due o tre frame in pochi ms (invio in
 // background), il successivo trova la finestra piena e finisce in locale;

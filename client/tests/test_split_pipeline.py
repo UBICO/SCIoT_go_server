@@ -568,3 +568,17 @@ def test_before_acquire_does_not_wait_in_local_or_when_longer_than_x():
     p.before_acquire(SPLIT, 4)
     p.before_acquire(LOCAL, LAST)
     assert not client.waits
+
+
+@pytest.mark.parametrize(("alone", "want"), [(True, 1.3), (False, None)])
+def test_results_sent_alone_feed_answer_ms(alone, want):
+    p, _, _ = make()
+    p.handle_output(SPLIT, 4, ACT, "T", 1.0, 10.0)
+    ((pending, _),) = FakeClient.instances[0].sent
+    pending.alone = alone
+    p.window.snapshot_and_reset()
+    timing = {"server_ms": 8.0, "receive_ms": 3.2}
+    FakeClient.instances[0].on_result(dpc.FrameResult(pending, {"timing": timing}, 12.5))
+    p.drain()
+    # rtt 12.5 - receive 3.2 - server 8.0
+    assert p.window.snapshot_and_reset().answer_ms == (want and pytest.approx(want))

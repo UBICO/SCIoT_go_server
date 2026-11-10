@@ -433,3 +433,24 @@ def test_telemetry_segment_outside_the_model_is_a_bug():
     w.record_segments(2, [0.001])
     with pytest.raises(ValueError):
         cpc.Telemetry(w.snapshot_and_reset(), num_segments=2).to_dict()
+
+
+def test_window_answer_mean_and_reset():
+    w = cpc.InferenceWindow()
+    assert w.snapshot_and_reset().answer_ms is None, "no sample: not sent"
+    w.record_answer(10.0)
+    w.record_answer(14.0)
+    assert w.snapshot_and_reset().answer_ms == pytest.approx(12.0)
+    assert w.snapshot_and_reset().answer_ms is None, "reset with the window"
+
+
+@pytest.mark.parametrize("bad", [-1.0, math.nan, math.inf])
+def test_window_rejects_invalid_answer(bad):
+    with pytest.raises(ValueError):
+        cpc.InferenceWindow().record_answer(bad)
+
+
+def test_telemetry_answer_ms():
+    stats = cpc.WindowStats(0, None, None, answer_ms=0.0)
+    assert cpc.Telemetry(stats).to_dict()["answer_ms"] == 0.0, "0.0 is a value"
+    assert "answer_ms" not in cpc.Telemetry(cpc.WindowStats(0, None, None)).to_dict()

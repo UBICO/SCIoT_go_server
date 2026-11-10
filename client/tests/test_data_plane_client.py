@@ -380,3 +380,21 @@ def test_send_while_receiving(fake):
     assert seen == set(range(1, n + 1))
     client.close()
     assert rec.errors.empty()
+
+
+def test_send_marks_frames_sent_alone(fake):
+    # Phase 4.2: only a frame sent with nothing else in flight measures
+    # answer_ms (no wait on the link behind an earlier frame).
+    def script(ws, srv):
+        ws.send(hello(max_inflight=2))
+        srv.next_frame(ws)
+        srv.next_frame(ws)
+        ws.recv()
+
+    rec = Recorder()
+    client = rec.client(fake(script))
+    client.open()
+    first, second = pending(1), pending(2)
+    assert client.send(first, b"\0" * 8) and client.send(second, b"\0" * 8)
+    assert first.alone and not second.alone
+    client.close()

@@ -227,6 +227,42 @@ func TestHeartbeatUpdatesSegmentEstimates(t *testing.T) {
 	}
 }
 
+// Fase 4.2: answer_ms entra in una media mobile; una finestra senza
+// campioni (assente) la lascia com'è.
+func TestHeartbeatUpdatesAnswer(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	s := newTestStore(t0)
+	d := s.Register("pi1", "python", fomo, api.Capabilities{})
+
+	s.now = func() time.Time { return t0.Add(time.Second) }
+	res, err := s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Answer.N() != 0 {
+		t.Errorf("senza answer_ms: %d campioni, attesi 0", res.Answer.N())
+	}
+
+	s.now = func() time.Time { return t0.Add(2 * time.Second) }
+	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{AnswerMS: ptr(10.0)}); res.Answer.Mean() != 10 {
+		t.Errorf("primo campione: %v, atteso 10", res.Answer.Mean())
+	}
+	s.now = func() time.Time { return t0.Add(3 * time.Second) }
+	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{}); res.Answer.N() != 1 || res.Answer.Mean() != 10 {
+		t.Errorf("finestra senza answer_ms: %d campioni, media %v; attesi 1 e 10", res.Answer.N(), res.Answer.Mean())
+	}
+	s.now = func() time.Time { return t0.Add(4 * time.Second) }
+	// Due campioni a 1 s di distanza con τ 10 s: pesa la media semplice.
+	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{AnswerMS: ptr(14.0)}); res.Answer.Mean() != 12 {
+		t.Errorf("secondo campione: %v, atteso 12", res.Answer.Mean())
+	}
+
+	s.Register("pi1", "python", fomo, api.Capabilities{})
+	if got, _ := s.Get("pi1"); got.Answer.N() != 0 {
+		t.Errorf("stima dopo la ri-registrazione: %d campioni", got.Answer.N())
+	}
+}
+
 func TestHeartbeatSessionExpired(t *testing.T) {
 	s := newTestStore(time.Now())
 	old := s.Register("web_96", "python", fomo, api.Capabilities{})

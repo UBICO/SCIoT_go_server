@@ -93,10 +93,9 @@ const (
 	// la simulazione dava 14.8 rifiuti/s e nessuna finestra piena contro 7.9
 	// e 7.0 misurati; con 1 ms 7.6 e 7.4.
 	//
-	// shortcut: costante, mentre il tempo vero cresce con i byte inviati (con
-	// la rete "non limitante" l'invio simulato è solo la latenza); usare la
-	// lettura misurata dal server (receive_ms) per split point se su rete vera
-	// (Fase 4) le previsioni dipendono da lui.
+	// Fase 4.2: con answer_ms misurato dal client il ritorno è quello
+	// (answerDelay); questo resta il minimo. Raspberry Pi in Wi-Fi, finestra
+	// 1: answer_ms p50 11,4 ms con latenza 1,7 (~9 ms del client Python).
 	simMinAnswerMS = 1.0
 	// simSeed rende il risultato riproducibile: la stessa registrazione dà
 	// sempre le stesse previsioni.
@@ -106,7 +105,8 @@ const (
 // simParams sono gli ingressi della simulazione, in millisecondi.
 type simParams struct {
 	P, X, U, S, A float64 // prefisso, suffisso, invio, servizio, ciclo
-	DownMS        float64 // ritorno della risposta: latenza di rete
+	DownMS        float64 // latenza di rete
+	AnswerMS      float64 // answer_ms misurato; 0 = sconosciuto (answerDelay)
 	Window, Slots int
 	Waits         bool    // regola della finestra piena (Client.Waits)
 	CS            float64 // variabilità di S (anche per gli altri)
@@ -257,7 +257,7 @@ func (s *sim) scheduleClient(at float64, kind int, c *client) {
 func simulate(p simParams) simResult {
 	s := &sim{p: p, rng: rand.New(rand.NewPCG(simSeed, uint64(p.Slots)))}
 	s.warmupMS, s.measureMS, s.tailMS = simWindows(p)
-	s.clients = []*client{{p: Client{P: p.P, X: p.X, U: p.U, A: p.A, S: p.S, DownMS: p.DownMS, Window: p.Window, Waits: p.Waits}, own: true}}
+	s.clients = []*client{{p: Client{P: p.P, X: p.X, U: p.U, A: p.A, S: p.S, DownMS: p.DownMS, AnswerMS: p.AnswerMS, Window: p.Window, Waits: p.Waits}, own: true}}
 	for _, o := range p.Others {
 		s.clients = append(s.clients, &client{p: o})
 	}
@@ -449,9 +449,21 @@ func (s *sim) send(c *client) {
 	s.scheduleClient(s.after(0), evDrain, c)
 }
 
-// answerDelay è quanto impiega una risposta a tornare al client: la latenza
-// di rete, ma mai meno di simMinAnswerMS.
-func (s *sim) answerDelay(c *client) float64 { return max(c.p.DownMS, simMinAnswerMS) }
+// answerDelay è quanto impiega una risposta a tornare al client, dalla fine
+// del lavoro del server al posto libero nella finestra. Mai meno di
+// simMinAnswerMS.
+//
+// Con answer_ms misurato (c.p.AnswerMS > 0): answer_ms meno la latenza
+// DownMS, perché answer_ms comprende anche la latenza del primo byte
+// all'andata, che la simulazione ha già messo nell'arrivo del frame (send:
+// arrival = linkFree + DownMS). Senza: la latenza di rete, come prima della
+// Fase 4.2.
+func (s *sim) answerDelay(c *client) float64 {
+	if c.p.AnswerMS > 0 {
+		return max(c.p.AnswerMS-c.p.DownMS, simMinAnswerMS)
+	}
+	return max(c.p.DownMS, simMinAnswerMS)
+}
 
 // after è l'istante del prossimo evento del device dopo d ms di lavoro.
 func (s *sim) after(d float64) float64 { return s.now + max(d, simMinCycleMS) }
