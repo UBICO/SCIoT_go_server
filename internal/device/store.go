@@ -49,6 +49,9 @@ type Device struct {
 	// una nuova registrazione. Come LastTelemetry, una copia la condivide con
 	// lo Store: per questo Heartbeat ne crea sempre una nuova (mai in place).
 	Segments []ewma.Stat
+	// Cycle è la stima di A (cycle.go), con la stessa costante di tempo dei
+	// segmenti; si azzera con una nuova registrazione.
+	Cycle Cycle
 }
 
 // DefaultSegmentTau è la costante di tempo delle stime per segmento: un
@@ -165,6 +168,8 @@ type HeartbeatResult struct {
 	// Segments è la stima per segmento dopo questo heartbeat (ms); nil se il
 	// device non ha mai inviato segment_ms.
 	Segments []ewma.Stat
+	// Cycle è la stima di A dopo questo heartbeat (Cycle.MS).
+	Cycle Cycle
 	// Model è il modello della sessione.
 	Model api.ModelInfo
 	// PolicySince e Pinned: vedi Device.
@@ -202,8 +207,9 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 	if t.SegmentMS != nil {
 		d.Segments = updateSegments(d.Segments, t.SegmentMS, now, s.segmentTau)
 	}
+	d.Cycle = d.Cycle.Update(t, float64(since.Microseconds())/1000, now, s.segmentTau)
 	s.devices[id] = d
-	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Model: d.Model,
+	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Cycle: d.Cycle, Model: d.Model,
 		PolicySince: d.PolicySince, Pinned: d.Pinned}, nil
 }
 

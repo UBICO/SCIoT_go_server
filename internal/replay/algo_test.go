@@ -37,9 +37,9 @@ func TestAlgoBuildsTheState(t *testing.T) {
 	if *st.Inputs.DeviceMS[2] != 30 || *st.Inputs.DeviceMS[1] != 20 {
 		t.Errorf("tempi del device = %v", st.Inputs.DeviceMS)
 	}
-	// A: 1000 ms − 20×(10+20) di calcolo − 20 frame inviati × 12 ms di invio
-	// (latenza 2 + 10 KB a 1e6 B/s), su 20 frame = 8 ms.
-	if st.Inputs.MaxInflight != 3 || st.Inputs.CycleMS == nil || math.Abs(*st.Inputs.CycleMS-8) > 1e-9 {
+	// A: 1000 ms − 20×(10+20) di calcolo, su 20 frame = 20 ms (l'invio è in
+	// background: resta in A).
+	if st.Inputs.MaxInflight != 3 || st.Inputs.CycleMS == nil || math.Abs(*st.Inputs.CycleMS-20) > 1e-9 {
 		t.Errorf("finestra %d, ciclo %v", st.Inputs.MaxInflight, st.Inputs.CycleMS)
 	}
 	q := st.Inputs.Queue

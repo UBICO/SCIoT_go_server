@@ -75,6 +75,16 @@ need for the `config.json` of the run.
   standard deviation of the window means, number of windows, age; `null`
   for a segment the device never ran. Absent if the device sends no
   `segment_ms`. See [Estimates](#estimates).
+- `cycle_ms` is the server's estimate of `A`, the rest of a device cycle
+  besides compute (acquisition, handing frames to the socket, answers):
+  Σ (window duration − Σ `segment_ms`·`segment_count`) / Σ `inference_count`
+  over the heartbeats, time-weighted with the same τ as `device_segments`
+  (`server.device_segment_tau_ms`). A ratio of sums, not a mean of per-window
+  values: a frame finished on the device counts whole in the window where it
+  ends, so on a slow device one window's value swings (Raspberry Pi: −43 to
+  +143 ms per window, 15.8 ms over the run). Absent without a usable window,
+  and in recordings before phase 3.9 (`sciot-replay` recomputes it from the
+  telemetry).
 - `model_key`, `num_segments`: the device's model. `service` is the
   dispatcher's `S` per split point of that model (`split_point`, `mean_ms`,
   `std_ms`, `samples`, `source`), for every split point it can estimate:

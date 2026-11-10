@@ -3,7 +3,6 @@ package offload
 import (
 	"time"
 
-	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/costmodel"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
 )
@@ -40,13 +39,8 @@ func StateFrom(hb record.Heartbeat, policyAge time.Duration) State {
 	// La finestra della policy attuale: PredictAll la cambia per ogni
 	// candidato.
 	in.MaxInflight = st.Window()
-	split := hb.Applied.Mode == api.ModeSplit
-	var upload float64
-	uploadOK := false
-	if bytes, ok := in.InputBytes[st.Split()]; ok && hb.Network != nil {
-		upload, uploadOK = hb.Network.UploadMS(bytes)
-	}
-	if a, ok := CycleMS(hb.Telemetry, hb.SinceLastSeenMS, split, st.Last, upload, uploadOK); ok {
+	if hb.CycleMS != nil {
+		a := *hb.CycleMS // una copia: lo State non condivide il puntatore con l'heartbeat
 		in.CycleMS = &a
 	}
 	var cs, weight float64

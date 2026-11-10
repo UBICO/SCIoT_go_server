@@ -26,8 +26,8 @@ type Inputs struct {
 	// al massimo; 0 = sconosciuta.
 	MaxInflight int
 	// CycleMS è A: quanto dura un ciclo del device oltre al calcolo dei
-	// segmenti e all'invio (acquisizione, gestione delle risposte; con una
-	// camera anche l'attesa del frame). nil = sconosciuto.
+	// segmenti (acquisizione, consegna del frame al socket, gestione delle
+	// risposte; con una camera anche l'attesa del frame). nil = sconosciuto.
 	CycleMS *float64
 }
 

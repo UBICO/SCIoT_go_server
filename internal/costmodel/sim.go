@@ -28,8 +28,9 @@ import (
 //     non comprende A);
 //  3. prefisso: P ms;
 //  4. finestra piena (max_inflight frame in volo): il device finisce il
-//     frame subito, X ms; altrimenti lo invia, U ms, e il frame arriva al
-//     server alla fine dell'invio.
+//     frame subito, X ms; altrimenti lo invia in background e torna al punto
+//     1: il frame occupa il link del device per byte/banda dopo quelli già
+//     inviati e arriva al server una latenza dopo.
 //
 // La risposta (risultato o errore) torna dopo la latenza di rete e libera la
 // finestra quando arriva, non al drain. Scadenza di un frame = X.
@@ -49,10 +50,17 @@ const (
 	// simWarmupMS è il tempo virtuale scartato all'inizio (coda vuota,
 	// finestra vuota: non è il regime); simMeasureMS quello in cui si contano
 	// i frame nati; simTailMS quello lasciato ai frame nati alla fine per
-	// terminare.
+	// terminare. Sono minimi: su un device lento valgono almeno simCycles
+	// cicli del device (simWindows), come 5 s per uno veloce.
 	simWarmupMS  = 1000.0
 	simMeasureMS = 5000.0
 	simTailMS    = 2000.0
+	// simCycles: cicli lunghi del device (A + prefisso + suffisso) nella
+	// misura. Fase 3.9, Raspberry Pi allo split −1: raffiche di 3 frame ogni
+	// 658 ms; in 5 s ne cadono 7 o 8, cioè 4,2 o 4,8 frame/s secondo la fase.
+	// Con 30 cicli la risoluzione è ~3%, e si simulano meno frame (~90) di un
+	// device veloce in 5 s (~250).
+	simCycles = 30
 	// simMaxEvents ferma una simulazione degenere (gli altri device da soli
 	// saturano il server e la coda cresce senza limite).
 	simMaxEvents = 1_000_000
@@ -105,6 +113,9 @@ type client struct {
 	inflight int    // frame in volo (finestra)
 	errors   []*job // errori ricevuti, da finire al prossimo drain
 	captured float64
+	// linkFree è quando il link del client finisce di trasmettere i frame già
+	// inviati: un frame nuovo parte solo dopo (FIFO, come il buffer TCP).
+	linkFree float64
 }
 
 // simResult è ciò che la simulazione ha contato sui frame del device nati
@@ -182,6 +193,9 @@ type sim struct {
 	seq int
 	now float64
 
+	// Finestre di tempo virtuale (simWindows).
+	warmupMS, measureMS, tailMS float64
+
 	// Server.
 	running []*job
 	queue   []*job
@@ -204,6 +218,7 @@ func (s *sim) scheduleClient(at float64, kind int, c *client) {
 // simulate esegue la simulazione e riassume i frame del device.
 func simulate(p simParams) simResult {
 	s := &sim{p: p, rng: rand.New(rand.NewPCG(simSeed, uint64(p.Slots)))}
+	s.warmupMS, s.measureMS, s.tailMS = simWindows(p)
 	s.clients = []*client{{p: Client{P: p.P, X: p.X, U: p.U, A: p.A, S: p.S, DownMS: p.DownMS, Window: p.Window}, own: true}}
 	for _, o := range p.Others {
 		s.clients = append(s.clients, &client{p: o})
@@ -216,7 +231,7 @@ func simulate(p simParams) simResult {
 	if len(p.Others) == 0 && p.OthersPerMS > 0 {
 		s.schedule(s.sample(1/p.OthersPerMS, p.CA), evOthers, nil)
 	}
-	end := simWarmupMS + simMeasureMS + simTailMS
+	end := s.warmupMS + s.measureMS + s.tailMS
 	for n := 0; s.q.Len() > 0 && n < simMaxEvents; n++ {
 		e := heap.Pop(&s.q).(*event)
 		if e.at > end {
@@ -270,10 +285,24 @@ func (s *sim) prefixDone(c *client) {
 		return
 	}
 	c.inflight++
+	// Invio in background (Fase 3.9): ws.send ritorna quando i byte sono nel
+	// buffer del kernel, il client riprende subito; il link trasmette i frame
+	// uno alla volta, in ordine. U = latenza + byte/banda: solo byte/banda
+	// occupa il link, la latenza si aggiunge all'arrivo.
+	//
+	// shortcut: buffer del kernel infinito, ws.send non blocca mai; su un link
+	// lento con finestre grandi il buffer si riempie e il client si ferma:
+	// modellarlo se la previsione sbaglia lì (frame/s troppo alti).
+	// Con rete "non limitante" U è la sola latenza: transfer 0, il link non si
+	// occupa.
+	transfer := max(0, c.p.U-c.p.DownMS)
+	start := max(s.now, c.linkFree)
+	c.linkFree = start + transfer
+	arrival := c.linkFree + c.p.DownMS
 	// La scadenza conta da quando il server legge il frame.
-	j := &job{cl: c, captured: c.captured, deadline: s.now + c.p.U + c.p.X, sEst: c.p.S, sActual: s.sample(c.p.S, s.p.CS)}
-	s.schedule(s.now+c.p.U, evArrive, j)
-	s.scheduleClient(s.after(c.p.U), evDrain, c)
+	j := &job{cl: c, captured: c.captured, deadline: arrival + c.p.X, sEst: c.p.S, sActual: s.sample(c.p.S, s.p.CS)}
+	s.schedule(arrival, evArrive, j)
+	s.scheduleClient(s.after(0), evDrain, c)
 }
 
 // answerDelay è quanto impiega una risposta a tornare al client: la latenza
@@ -334,7 +363,7 @@ func (s *sim) dispatch() {
 // finish: un job ha terminato il servizio.
 func (s *sim) finish(j *job) {
 	s.running = slices.DeleteFunc(s.running, func(r *job) bool { return r == j })
-	s.busyMS += overlap(j.started, s.now, simWarmupMS, simWarmupMS+simMeasureMS)
+	s.busyMS += overlap(j.started, s.now, s.warmupMS, s.warmupMS+s.measureMS)
 	if j.cl != nil {
 		s.schedule(s.now+s.answerDelay(j.cl), evAnswer, j)
 	}
@@ -362,7 +391,7 @@ func (s *sim) summary() simResult {
 	var waitSum, serverSum, localSum float64
 	var lat []float64
 	for _, o := range s.done {
-		if o.captured < simWarmupMS || o.captured >= simWarmupMS+simMeasureMS {
+		if o.captured < s.warmupMS || o.captured >= s.warmupMS+s.measureMS {
 			continue
 		}
 		l := o.done - o.captured
@@ -382,7 +411,7 @@ func (s *sim) summary() simResult {
 			}
 		}
 	}
-	sec := simMeasureMS / 1000
+	sec := s.measureMS / 1000
 	n := served + local
 	r.FramesPerSec = float64(n) / sec
 	r.ServerFramesPerSec = float64(served) / sec
@@ -399,8 +428,17 @@ func (s *sim) summary() simResult {
 	if local > 0 {
 		r.LocalMS = localSum / float64(local)
 	}
-	r.Rho = s.busyMS / (float64(s.p.Slots) * simMeasureMS)
+	r.Rho = s.busyMS / (float64(s.p.Slots) * s.measureMS)
 	return r
+}
+
+// simWindows sono riscaldamento, misura e coda in tempo virtuale: i minimi
+// fissi, o più su un device lento. Il ciclo lungo (A + prefisso + suffisso:
+// un frame finito sul device) è il passo più lento del device; gli altri
+// device non contano, si misurano solo i frame del device.
+func simWindows(p simParams) (warmup, measure, tail float64) {
+	cycle := p.A + p.P + p.X
+	return max(simWarmupMS, 2*cycle), max(simMeasureMS, simCycles*cycle), max(simTailMS, 2*cycle)
 }
 
 // Percentile restituisce il quantile q (0..1) dei valori, con il metodo del
