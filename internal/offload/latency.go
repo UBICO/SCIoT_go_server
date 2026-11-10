@@ -213,10 +213,17 @@ func (l *Latency) choose(s State, preds []costmodel.Prediction, sigma []float64,
 	// σ della differenza tra le due previsioni: i due rumori si sommano.
 	sd := math.Hypot(sigma[cur], sigma[best])
 	margin := l.margin(preds[cur], preds[best], sd)
-	// Stesso split point del migliore ma finestra diversa: l'isteresi è sulla
-	// finestra. Entro lo slack dal migliore (più il margine) si cambia solo per
-	// abbastanza frame/s in più; oltre, per il valore.
-	if win != best && sameSplit(preds[cur], preds[best]) {
+	// Allo split point del migliore l'isteresi è sulla finestra. Entro lo
+	// slack dal migliore (più il margine) si cambia solo per abbastanza
+	// frame/s in più; oltre, per il valore.
+	//
+	// Vale anche con win == best (campagna 4.2, R1): a finestra 2 (p95 175)
+	// con la 1 a 140, 175/140 = 1,26 è fuori slack e fastestWindow dà la 1;
+	// l'isteresi sul valore (35 ms > margine 18) riportava a finestra 1, dove
+	// il p95 previsto tornava a 150 e dopo 10 s si tornava alla 2. Con
+	// win == best moreFPS(best, cur) è falso se best ha meno frame/s: si resta.
+	// Con P95Slack 0 resta la regola di prima.
+	if l.cfg.P95Slack > 0 && sameSplit(preds[cur], preds[best]) {
 		inSlack := l.value(preds[cur]) <= (1+l.cfg.P95Slack)*l.value(preds[best])+margin
 		switch {
 		case !inSlack:
@@ -227,8 +234,8 @@ func (l *Latency) choose(s State, preds []costmodel.Prediction, sigma []float64,
 		keep.Reason = ReasonHysteresis
 		return keep
 	}
-	// Su un altro split point (o win == best): l'isteresi sul valore, contro
-	// il migliore.
+	// Su un altro split point, o con P95Slack 0: l'isteresi sul valore,
+	// contro il migliore.
 	if l.value(preds[cur])-l.value(preds[best]) <= margin {
 		keep.Reason = ReasonHysteresis
 		return keep

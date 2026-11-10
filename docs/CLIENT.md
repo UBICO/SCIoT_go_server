@@ -129,11 +129,16 @@ does not count them in the rest of the cycle; the CSV has the wait after the
 prefix of each frame (`wait_ms`, part of its latency).
 
 **Answer time.** `send` marks a frame sent with no other frame in flight
-(`Pending.alone`); for those results the pipeline records `rtt − receive_ms −
+(`Pending.alone`) and clears the mark of the frames still in flight, so only
+the frames that travelled alone keep it; for those results the pipeline records `rtt − receive_ms −
 server_ms` (floored at 0) and the heartbeat sends the window's mean as
 `answer_ms` (phase 4.2, [COSTMODEL.md](COSTMODEL.md#answer-time-measured-by-the-client-phase-42)):
 on a Raspberry Pi ~11 ms, against ~0.5 ms on a MacBook. The other frames are
-left out because they also waited on the link behind an earlier one. The
+left out because they also waited on the link behind an earlier one, or
+their answer waited while the client sent the next frame (phase 4.2
+campaign, window 2: 66 ms instead of ~12, the receiver thread stalled while
+the loop sends 1.2 MB). At window 2 or more almost no frame travels alone:
+the server keeps the value measured at window 1. The
 field needs a server from phase 4.2 on (an older one rejects it).
 
 | Situation | What the device does |

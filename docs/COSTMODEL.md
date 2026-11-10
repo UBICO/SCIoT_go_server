@@ -278,9 +278,12 @@ up, the return of the answer and the client's time to receive it
 So ~9 ms on the Pi are the Python client's. At window 3 the same difference
 is 130 ms (W1_new): the frame also waited on the link behind the previous
 one, which the simulation models itself. The client therefore sends
-`answer_ms`, the mean over the window of the frames sent with no other frame
-in flight (stricter than "link free": the client cannot see bytes still in
-the kernel's buffer), absent without such a frame; the server keeps a moving
+`answer_ms`, the mean over the window of the frames that travelled alone:
+no other frame in flight when sent (stricter than "link free": the client
+cannot see bytes still in the kernel's buffer) and none sent before the
+answer, which the client's own send of the next frame delays (campaign R2,
+window 2: one such sample, 66 ms, kept for the whole run and frames/s
+predicted −7%); absent without such a frame; the server keeps a moving
 average (`device.Store`, τ of the segments, recorded in the heartbeat) and
 the simulation returns an answer after `answer_ms − latency`, at least 1 ms.
 A device at a large window for a long time keeps the value it had.

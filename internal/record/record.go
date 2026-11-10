@@ -55,7 +55,7 @@ type Recorder struct {
 	opts Options
 
 	// mu protegge closed e la chiusura di ch: Record e Close possono essere
-	// chiamati da goroutine diverse (vedi TODO(1) e TODO(3)).
+	// chiamati da goroutine diverse.
 	mu     sync.RWMutex
 	closed bool
 	ch     chan Event

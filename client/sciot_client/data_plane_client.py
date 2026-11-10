@@ -112,8 +112,9 @@ class Pending:
     captured_at: str
     deadline_ms: float | None
     sent_at: float = field(default=0.0)  # time.perf_counter() when sent
-    # No other frame of this client in flight when it was sent: its rtt has no
-    # wait on the link behind an earlier frame (telemetry answer_ms).
+    # No other frame of this client in flight during its whole round trip: its
+    # rtt has no wait on the link behind an earlier frame, and its answer was
+    # not delayed by the client sending a later one (telemetry answer_ms).
     alone: bool = field(default=False)
 
 
@@ -250,6 +251,12 @@ class DataPlaneClient:
             # send() returns, and the receiver must find the frame.
             pending.sent_at = self._clock()
             pending.alone = not self._inflight
+            # The frames still in flight are no longer alone. Campaign 4.2, R2:
+            # the first frame after a pin to window 2 was sent alone, but its
+            # answer waited while the client sent the next 1.2 MB (66 ms
+            # instead of ~12), and the server kept that one sample for the run.
+            for other in self._inflight.values():
+                other.alone = False
             self._inflight[pending.sequence_id] = pending
 
         header: dict[str, Any] = {

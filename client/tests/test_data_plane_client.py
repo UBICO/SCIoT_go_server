@@ -396,5 +396,25 @@ def test_send_marks_frames_sent_alone(fake):
     client.open()
     first, second = pending(1), pending(2)
     assert client.send(first, b"\0" * 8) and client.send(second, b"\0" * 8)
-    assert first.alone and not second.alone
+    # The first stops being alone when the second is sent (see the next test).
+    assert not first.alone and not second.alone
+    client.close()
+
+
+def test_a_later_send_ends_alone(fake):
+    # Phase 4.2 campaign, R2: a frame sent alone stops being alone when another
+    # is sent before its answer (the client's send delays the answer).
+    def script(ws, srv):
+        ws.send(hello(max_inflight=2))
+        srv.next_frame(ws)
+        srv.next_frame(ws)
+        ws.recv()
+
+    rec = Recorder()
+    client = rec.client(fake(script))
+    client.open()
+    first = pending(1)
+    assert client.send(first, b"\0" * 8) and first.alone
+    assert client.send(pending(2), b"\0" * 8)
+    assert not first.alone, "another frame was sent during its round trip"
     client.close()
