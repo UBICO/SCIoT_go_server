@@ -238,6 +238,7 @@ predicted against measured (whole steady part):
 | Run | Window | frames/s | p95 ms | frames/s error | p95 error | mean error |
 |---|---|---|---|---|---|---|
 | A1 | 1 | 5.92 | 273 | +8% | −35% | −9% |
+| A2 | 1 | 6.70 | 154 | +10% | −9% | −11% |
 | A3 | 1 | 6.75 | 161 | +6% | −6% | −6% |
 | C1 (camera) | 1 | 6.91 | 184 | +8% | −25% (−8% without age and acquisition) | −20% (−7%) |
 | W1 | 3 | 11.42 | 271 | +1% | −3% | −3% |
@@ -249,7 +250,7 @@ Against the strategy-A runs above: 4.4 → 6.7–6.9 frames/s and p95 652 →
 - ~10 ms per round trip on the Pi client (`net_ms − recv_ms − 2 × latency`:
   framing and masking 1.2 MB in Python, the receiver thread), where the
   simulation has the 1 ms measured on a MacBook (`simMinAnswerMS`): frames/s
-  +6–8% at window 1; at window 3 the link hides it. The server cannot see it.
+  +6–10% at window 1; at window 3 the link hides it. The server cannot see it.
 - The camera frame's age (`age_ms`, p50 16 ms, waiting in `LatestFrame`) and
   acquisition: not in the predicted latency. Equal for every policy, LOCAL
   included, so they do not change a choice.
