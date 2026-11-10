@@ -170,7 +170,13 @@ func Predict(in Inputs, split, last int) Prediction {
 		if in.CycleMS != nil {
 			a = *in.CycleMS
 		}
-		p.FramesPerSec = rate(a + p.DeviceMS)
+		// Con un segmento mai misurato il ciclo è incompleto: frame/s 0 come
+		// in SPLIT con ingressi mancanti. Prima rate(0) dava +Inf (device
+		// tenuto a split −1 dall'admin: segmenti 0..k mai eseguiti), che il
+		// JSON della decisione non rappresenta (Fase 3.9).
+		if len(p.Missing) == 0 {
+			p.FramesPerSec = rate(a + p.DeviceMS)
+		}
 		p.Bound = BoundDevice
 		// Il server resta con il carico degli altri.
 		if q.Slots > 0 {

@@ -266,4 +266,9 @@ func TestPredictMissingInputs(t *testing.T) {
 	if p := Predict(Inputs{InputBytes: map[int]int{1: 1}}, 1, 2); !slices.Contains(p.Missing, "slots") {
 		t.Errorf("senza slot: Missing = %v", p.Missing)
 	}
+	// LOCAL senza i tempi del device e senza A (device tenuto in SPLIT
+	// dall'admin, Fase 3.9): frame/s 0, non +Inf, che il JSON non accetta.
+	if p := Predict(Inputs{DeviceMS: make([]*float64, 3)}, 2, 2); p.FramesPerSec != 0 || len(p.Missing) == 0 {
+		t.Errorf("LOCAL senza tempi: frame/s %v, Missing %v", p.FramesPerSec, p.Missing)
+	}
 }
