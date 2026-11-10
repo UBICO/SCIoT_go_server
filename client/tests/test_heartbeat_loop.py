@@ -40,7 +40,7 @@ class FakeClient:
             raise outcome
         return outcome
 
-    def register(self, model_hash, *, probe=False):
+    def register(self, model_hash, *, probe=False, wait_for_window=False):
         self.register_calls.append(model_hash)
         self.probe_flags.append(probe)
         return self._next(self.registers)
@@ -296,8 +296,8 @@ def test_thread_registers_and_stops_promptly():
     registered = threading.Event()
 
     class SignallingClient(FakeClient):
-        def register(self, model_hash, *, probe=False):
-            s = super().register(model_hash, probe=probe)
+        def register(self, model_hash, *, probe=False, wait_for_window=False):
+            s = super().register(model_hash, probe=probe, wait_for_window=wait_for_window)
             registered.set()
             return s
 
@@ -319,7 +319,7 @@ def test_thread_survives_unexpected_errors():
     count = {"n": 0}
 
     class BuggyClient(FakeClient):
-        def register(self, model_hash, *, probe=False):
+        def register(self, model_hash, *, probe=False, wait_for_window=False):
             count["n"] += 1
             if count["n"] >= 2:
                 calls.set()

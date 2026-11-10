@@ -84,7 +84,11 @@ need for the `config.json` of the run.
   ends, so on a slow device one window's value swings (Raspberry Pi: −43 to
   +143 ms per window, 15.8 ms over the run). Absent without a usable window,
   and in recordings before phase 3.9 (`sciot-replay` recomputes it from the
-  telemetry).
+  telemetry). The client's waits for a place in its window (telemetry
+  `wait_ms`) are subtracted: the simulation adds them itself.
+- `wait_for_window`: the device declared that capability (it waits for a
+  place in a full window, docs/CLIENT.md); absent = it finishes the frame at
+  once, as every client before phase 3.9.
 - `model_key`, `num_segments`: the device's model. `service` is the
   dispatcher's `S` per split point of that model (`split_point`, `mean_ms`,
   `std_ms`, `samples`, `source`), for every split point it can estimate:

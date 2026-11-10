@@ -130,7 +130,8 @@ not kept.
 ### Window
 
 The window decides how many frames the device sends and how many it
-finishes itself (full window: the client never waits), so how much load it
+finishes itself (full window: a client without `wait_for_window` never
+waits; one with it waits when that is cheaper), so how much load it
 brings. The right one depends on the split point, and the simulation
 predicts it: on the single-device recordings (yolo-small, 2 slots):
 

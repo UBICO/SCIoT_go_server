@@ -24,10 +24,13 @@ A prediction lists its missing inputs (a segment never run, no bandwidth, no
 
 ## Frames the device sends: simulation
 
-The client never waits for the server: with its window full (`max_inflight`
-frames in flight; the algorithm chooses the window with the split point,
-[OFFLOAD.md](OFFLOAD.md#window)), or a frame refused, it finishes the frame
-itself and goes on. So at a split
+A client without the capability `wait_for_window` never waits for the
+server: with its window full (`max_inflight` frames in flight; the algorithm
+chooses the window with the split point, [OFFLOAD.md](OFFLOAD.md#window)), or
+a frame refused, it finishes the frame itself and goes on. One with it
+(the Python client since phase 3.9) waits for a place in a full window when
+that costs less than finishing the frame ([CLIENT.md](CLIENT.md#window-full));
+a refused frame is still finished at once. So at a split
 point only part of the frames may reach the server (`share`). Value-average
 formulas got this badly wrong (3× too many frames to the server at split −1),
 because two behaviours depend on the exact order of events:
@@ -51,6 +54,7 @@ jump), with a fixed seed (the same inputs give the same prediction):
 |---|---|
 | device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it **in the background** and starts the next cycle (`ws.send` returns once the bytes are in the kernel's buffer) |
 | link | one per device, FIFO: a frame occupies it for `upload − latency` (bytes / bandwidth) after the frames sent before it, and reaches the server one latency later; the deadline counts from there. Shortcut: an unbounded kernel buffer, so `send` never blocks (on a slow link with a large window it does) |
+| device with `wait_for_window` | with the window full, before acquiring (after `drain`) it waits `W − A − prefix` and, with the frame ready, up to `device(k+1..last)` for a place, if `W < device(k+1..last)`; `W` = send time of its oldest frame in flight + its estimated round trip (EWMA of the simulated results, α 0.2, as the client) − now. An answer ends the wait at once; errors wait for the next `drain`. Without a round trip measured it does not wait. Recorded per heartbeat (`wait_for_window`), so a replay simulates each client with its own rule |
 | answer | returns after the network latency (at least 1 ms, measured) and frees the window when it arrives |
 | server | admission with `dispatch.PredictWait` (the dispatcher's own function) and the estimated `S`: refused when wait + `S` exceeds the deadline, the device's `device(k+1..last)`; FIFO queue, `c` slots; a frame that gets its slot after its deadline returns as an error |
 | other devices | every other device in `SPLIT` is a client with the same rules and its own times at its policy (prefix, suffix, upload, `A`, `S`, window: `costmodel.ClientFrom`); their frames are refused, expire and are drained like the device's, only the device's are counted. Fallback when some other device's inputs are incomplete (or in recordings replayed without them): a stream of frames, always admitted, at the others' measured rate (admitted frames only), with `ca`, `S` and `cs` (log-normal) |
@@ -186,6 +190,14 @@ network that does not limit the simulated upload is the latency only:
 using the server's measured read time per split point is left for a real
 network (phase 4).
 
+That split depended on noise. Since `A` is a smoothed ratio (phase 3.9) it
+is a steady 1.10 ms here, just above the 1 ms answer time: every refusal
+comes back before the next frame, the window is always free, and the same
+recording gives 14.8 refused and no full window (p95, mean, frames/s and
+share unchanged: −3%, −2%, +6%, 0%). A deterministic answer time decides a
+race the real system runs with a spread (0.85–1.25 ms); sampling it, with
+the transfer time's, is the fix (open).
+
 ### Verification on a Raspberry Pi over Wi-Fi (phase 3.9)
 
 Two Raspberry Pi (`client/results/phase39/`, `docs/RASPBERRY.md`), split −1,
@@ -216,6 +228,39 @@ every ~660 ms a window holds one or two bursts, so its per-window medians are
 biased on such a device (frames/s −13…−17%); use whole runs there. The
 phase 3.8 recordings (localhost) do not change: per band within 1–3% of
 before, and the bands that were far off before (noisy `A`) are gone.
+
+**With `wait_for_window`** (same Pi, 2026-11-10, 90 s per run). The
+algorithm, free, chose split −1 window 1 (predicted p95 151 against 263 for
+window 3; `min_fps_ratio` 1 only asks for LOCAL's 1.5 frames/s); one run was
+pinned at window 3. No frame was finished on the device. Measured, and
+predicted against measured (whole steady part):
+
+| Run | Window | frames/s | p95 ms | frames/s error | p95 error | mean error |
+|---|---|---|---|---|---|---|
+| A1 | 1 | 5.92 | 273 | +8% | −35% | −9% |
+| A2 | 1 | 6.70 | 154 | +10% | −9% | −11% |
+| A3 | 1 | 6.75 | 161 | +6% | −6% | −6% |
+| C1 (camera) | 1 | 6.91 | 184 | +8% | −25% (−8% without age and acquisition) | −20% (−7%) |
+| W1 | 3 | 11.42 | 271 | +1% | −3% | −3% |
+
+Against the strategy-A runs above: 4.4 → 6.7–6.9 frames/s and p95 652 →
+161–184 with the algorithm, 5.9 → 11.4 frames/s and p95 655 → 271 at window
+3. What the model misses:
+
+- ~10 ms per round trip on the Pi client (`net_ms − recv_ms − 2 × latency`:
+  framing and masking 1.2 MB in Python, the receiver thread), where the
+  simulation has the 1 ms measured on a MacBook (`simMinAnswerMS`): frames/s
+  +6–10% at window 1; at window 3 the link hides it. The server cannot see it.
+- The camera frame's age (`age_ms`, p50 16 ms, waiting in `LatestFrame`) and
+  acquisition: not in the predicted latency. Equal for every policy, LOCAL
+  included, so they do not change a choice.
+- Wi-Fi stalls (A1: a few frames read in up to 900 ms, none in A3): they set
+  that run's p95. Episodic, so a log-normal transfer time would fit them
+  badly; left open with the answer-time spread.
+- Found by these runs and fixed: at split −1 with every frame served the
+  device runs no segment, and the client did not send `segment_ms`, so the
+  server's `A` froze at its earlier value (29.8 ms, or 0). The client now
+  always sends them (all `null`/`0`).
 
 ## Mean or p95
 

@@ -389,6 +389,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Network:         network,
 		DeviceSegments:  segmentEstimates(res.Segments, s.now()),
 		CycleMS:         cycleMS(res.Cycle),
+		WaitForWindow:   res.Capabilities.WaitForWindow,
 		ModelKey:        res.Model.ModelKey,
 		NumSegments:     res.Model.NumLayers,
 		Service:         s.splitService(res.Model.ModelKey, res.Model.NumLayers),

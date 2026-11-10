@@ -170,6 +170,8 @@ type HeartbeatResult struct {
 	Segments []ewma.Stat
 	// Cycle è la stima di A dopo questo heartbeat (Cycle.MS).
 	Cycle Cycle
+	// Capabilities sono quelle della registrazione della sessione.
+	Capabilities api.Capabilities
 	// Model è il modello della sessione.
 	Model api.ModelInfo
 	// PolicySince e Pinned: vedi Device.
@@ -209,7 +211,7 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 	}
 	d.Cycle = d.Cycle.Update(t, float64(since.Microseconds())/1000, now, s.segmentTau)
 	s.devices[id] = d
-	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Cycle: d.Cycle, Model: d.Model,
+	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Cycle: d.Cycle, Capabilities: d.Capabilities, Model: d.Model,
 		PolicySince: d.PolicySince, Pinned: d.Pinned}, nil
 }
 

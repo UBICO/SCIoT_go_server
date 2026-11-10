@@ -38,6 +38,11 @@ const (
 type Capabilities struct {
 	// Probe: il client risponde a "probe_request" sullo stream.
 	Probe bool `json:"probe"`
+	// WaitForWindow: con la finestra piena il client aspetta un posto quando
+	// costa meno che finire il frame da sé (docs/CLIENT.md, "Window full",
+	// Fase 3.9); senza, lo finisce subito (strategia A). Il modello di costo
+	// simula la regola del client che ha davanti.
+	WaitForWindow bool `json:"wait_for_window,omitempty"`
 }
 
 // UnmarshalJSON decodifica le capability ignorando i nomi sconosciuti.
@@ -224,6 +229,12 @@ type Telemetry struct {
 	// segmenti del modello (lo controlla device.Store.Heartbeat).
 	SegmentMS    []*float64 `json:"segment_ms,omitempty"`
 	SegmentCount []int      `json:"segment_count,omitempty"`
+	// WaitMS è quanto il client ha atteso nella finestra un posto nella
+	// finestra dei frame in volo (Fase 3.9, regola della finestra piena).
+	// Assente = 0: un client che non lo invia non aspetta mai. Il server lo
+	// toglie dal resto del ciclo (device.Cycle), che la simulazione aggiunge
+	// già da sé.
+	WaitMS *float64 `json:"wait_ms,omitempty"`
 }
 
 // HeartbeatRequest è il corpo di POST /api/v1/heartbeat.

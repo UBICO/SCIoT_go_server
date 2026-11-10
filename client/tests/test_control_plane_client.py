@@ -159,7 +159,7 @@ def test_register_ok_sends_contract_payload():
         "device_id": "web_96",
         "device_type": "python",
         "model_hash": MODEL_HASH,
-        "capabilities": {"probe": True},
+        "capabilities": {"probe": True, "wait_for_window": False},
     }
 
 
@@ -416,9 +416,14 @@ def test_telemetry_segments():
     assert data["segment_count"] == [2, 2, 0]
 
 
-def test_telemetry_segments_omitted_without_model_or_runs():
+def test_telemetry_segments_without_runs_are_null():
+    # Split -1, every frame served: nothing ran here, and the server must know.
+    data = cpc.Telemetry(cpc.InferenceWindow().snapshot_and_reset(), num_segments=3).to_dict()
+    assert data["segment_ms"] == [None, None, None] and data["segment_count"] == [0, 0, 0]
+
+
+def test_telemetry_segments_omitted_without_model():
     w = cpc.InferenceWindow()
-    assert "segment_ms" not in cpc.Telemetry(w.snapshot_and_reset(), num_segments=3).to_dict()
     w.record_segments(0, [0.001])
     assert "segment_ms" not in cpc.Telemetry(w.snapshot_and_reset()).to_dict()
 

@@ -10,8 +10,9 @@ Protocol: docs/PROTOCOL.md of the Go server ("Data plane"). In short:
   inference-result.v1) or an ``error`` (text), possibly out of order;
 - it may also push a ``policy`` (text) when the policy changes.
 
-Threads: the inference loop calls ``send`` and never waits for an answer
-(frame N+1 is computed while N is on the server). A receiver thread reads the
+Threads: the inference loop calls ``send`` and does not wait for the answer
+(frame N+1 is computed while N is on the server); with the window full it may
+wait for a place (``wait_for_slot``, docs/CLIENT.md). A receiver thread reads the
 stream and hands every answer to a callback. Callbacks run on the receiver
 thread and must be quick: the Go client puts them in a queue that its main
 thread drains.
@@ -160,6 +161,9 @@ class DataPlaneClient:
         self.hello: Hello | None = None
         self._ws: Any = None
         self._lock = threading.Lock()
+        # Notified, under _lock, whenever a frame leaves the window (answer,
+        # error, close): wait_for_slot sleeps on it instead of polling.
+        self._slot = threading.Condition(self._lock)
         self._inflight: dict[int, Pending] = {}
         self._closed = False
         self._receiver: threading.Thread | None = None
@@ -237,10 +241,7 @@ class DataPlaneClient:
                 f"split point {pending.split_point}: {len(payload)} bytes, server expects {expected}"
             )
         with self._lock:
-            limit = (
-                self.hello.max_inflight if window is None else min(window, self.hello.max_inflight)
-            )
-            if self._closed or len(self._inflight) >= limit:
+            if self._closed or len(self._inflight) >= self._limit(window):
                 return False
             # In the window BEFORE sending: the answer can arrive before
             # send() returns, and the receiver must find the frame.
@@ -265,14 +266,47 @@ class DataPlaneClient:
             # close; this one was never sent, so it is taken back here.
             with self._lock:
                 self._inflight.pop(pending.sequence_id, None)
+                self._slot.notify_all()
             return False
         return True
+
+    def _limit(self, window: int | None) -> int:
+        """The window of send(): the policy's, capped by the hello's."""
+        assert self.hello is not None, "open() first"
+        return self.hello.max_inflight if window is None else min(window, self.hello.max_inflight)
+
+    def slot_eta_s(self, window: int | None, rtt_ms: float) -> float | None:
+        """Seconds until a place in the window is expected to free: the oldest
+        frame in flight is answered rtt_ms after it was sent. None if the
+        window is not full (or the stream is closed); <= 0 if overdue.
+
+        On this client's clock, the one sent_at uses.
+        """
+        with self._lock:
+            if self._closed or len(self._inflight) < self._limit(window):
+                return None
+            oldest = min(p.sent_at for p in self._inflight.values())
+            return oldest + rtt_ms / 1000 - self._clock()
+
+    def wait_for_slot(self, window: int | None, timeout_s: float) -> bool:
+        """Wait, up to timeout_s, until fewer than the window's frames are in
+        flight. True if a place is free (send() may still find the stream
+        closed), False on timeout or if the stream closed.
+        """
+        with self._slot:
+            self._slot.wait_for(
+                lambda: self._closed or len(self._inflight) < self._limit(window),
+                timeout=timeout_s,
+            )
+            return not self._closed and len(self._inflight) < self._limit(window)
 
     # --- receiving -------------------------------------------------------
 
     def _take(self, sequence_id: int) -> Pending | None:
         with self._lock:
-            return self._inflight.pop(sequence_id, None)
+            pending = self._inflight.pop(sequence_id, None)
+            self._slot.notify_all()
+            return pending
 
     def _receive(self) -> None:
         code: int | None = None
@@ -294,6 +328,7 @@ class DataPlaneClient:
                 self._closed = True
                 lost = list(self._inflight.values())
                 self._inflight.clear()
+                self._slot.notify_all()
             for pending in lost:
                 self._on_error(FrameError(pending, STREAM_CLOSED, f"stream closed ({code})"))
             self._on_closed(code)

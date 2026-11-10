@@ -221,6 +221,9 @@ class WindowStats:
     max_ms: float | None  # None when count == 0
     # Per segment index: (sum of ms, runs) of the window; only segments run.
     segments: dict[int, tuple[float, int]] = field(default_factory=dict)
+    # Time the SplitPipeline waited for a place in the window of frames in
+    # flight (docs/CLIENT.md, "Window full"); sent as wait_ms when > 0.
+    wait_ms: float = 0.0
 
 
 class InferenceWindow:
@@ -241,6 +244,7 @@ class InferenceWindow:
         self._sum_ms = 0.0
         self._max_ms = 0.0
         self._segments: dict[int, tuple[float, int]] = {}
+        self._wait_ms = 0.0
 
     def record(self, inference_time_ms: float) -> None:
         """Add one inference to the current window."""
@@ -266,6 +270,13 @@ class InferenceWindow:
                 total, runs = self._segments.get(first + offset, (0.0, 0))
                 self._segments[first + offset] = (total + m, runs + 1)
 
+    def record_wait(self, ms: float) -> None:
+        """Add a wait for a place in the window of frames in flight."""
+        if not math.isfinite(ms) or ms < 0:
+            raise ValueError(f"invalid wait: {ms}")
+        with self._lock:
+            self._wait_ms += ms
+
     def snapshot_and_reset(self) -> WindowStats:
         """Return the stats of the current window and start a new one.
 
@@ -276,13 +287,14 @@ class InferenceWindow:
         with self._lock:
             count, sum_ms, max_ms = self._count, self._sum_ms, self._max_ms
             segments, self._segments = self._segments, {}
+            wait_ms, self._wait_ms = self._wait_ms, 0.0
             self._count = 0
             self._sum_ms = 0.0
             self._max_ms = 0.0
         # Outside the lock: no need to block the inference loop for arithmetic.
         if count == 0:
-            return WindowStats(0, None, None, segments)
-        return WindowStats(count, sum_ms / count, max_ms, segments)
+            return WindowStats(0, None, None, segments, wait_ms)
+        return WindowStats(count, sum_ms / count, max_ms, segments, wait_ms)
 
 
 @dataclass(frozen=True)
@@ -317,12 +329,20 @@ class Telemetry:
         if self.memory_available_bytes is not None:
             data["memory_available_bytes"] = self.memory_available_bytes
         segments = self.window.segments
-        if self.num_segments is not None and segments:
-            if max(segments) >= self.num_segments or min(segments) < 0:
+        # Sent whenever the model is known, all null/0 if no segment ran: at
+        # split -1 with every frame served the device runs none, and without
+        # the arrays the server could not tell "nothing to compute" from "not
+        # measured" and would keep its estimate of A (device.Cycle) frozen
+        # (phase 3.9).
+        if self.num_segments is not None:
+            if segments and (max(segments) >= self.num_segments or min(segments) < 0):
                 raise ValueError(f"segment {max(segments)} outside the model's {self.num_segments}")
             runs = [segments.get(i, (0.0, 0)) for i in range(self.num_segments)]
             data["segment_ms"] = [total / n if n else None for total, n in runs]
             data["segment_count"] = [n for _, n in runs]
+        # Absent = 0 by contract (a client that never waits): sent only when > 0.
+        if self.window.wait_ms > 0:
+            data["wait_ms"] = self.window.wait_ms
         return data
 
 
@@ -354,12 +374,16 @@ class ControlPlaneClient:
         self.http = http if http is not None else requests.Session()
         self.timeout = timeout
 
-    def register(self, model_hash: str, *, probe: bool = False) -> Session:
+    def register(
+        self, model_hash: str, *, probe: bool = False, wait_for_window: bool = False
+    ) -> Session:
         """Register this device and return the session assigned by the server.
 
         ``probe``: declare the capability (this client answers probe_request
-        on the stream). Declare only what the code does: the server asks for
-        nothing that is not declared.
+        on the stream). ``wait_for_window``: with its window full this client
+        waits for a place (docs/CLIENT.md, "Window full"); the server's cost
+        model simulates that rule. Declare only what the code does: the server
+        asks for nothing that is not declared.
 
         Raises:
             ServerUnreachable: network error or timeout.
@@ -371,7 +395,7 @@ class ControlPlaneClient:
             "device_id": self.device_id,
             "device_type": self.device_type,
             "model_hash": model_hash,
-            "capabilities": {"probe": probe},
+            "capabilities": {"probe": probe, "wait_for_window": wait_for_window},
         }
         return Session.from_dict(self._post_json(REGISTER_PATH, payload))
 

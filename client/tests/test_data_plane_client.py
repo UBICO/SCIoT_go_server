@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 from collections.abc import Callable
 
 import pytest
@@ -249,6 +250,31 @@ def test_error_frees_the_window(fake):
     assert client.send(pending(2), b"\0" * 8), "l'errore libera il posto nella finestra"
     assert rec.results.get(timeout=5).pending.sequence_id == 2
     client.close()
+
+
+def test_wait_for_slot_wakes_on_the_answer(fake):
+    release = threading.Event()
+
+    def script(ws, srv):
+        ws.send(hello(max_inflight=1))
+        header, _ = srv.next_frame(ws)
+        release.wait(5)
+        ws.send(result(header["sequence_id"]))
+        ws.recv()
+
+    rec = Recorder()
+    client = rec.client(fake(script))
+    client.open()
+    assert client.send(pending(1), b"\0" * 8)
+    assert client.slot_eta_s(None, 1000.0) == pytest.approx(1.0, abs=0.2), "full: ~1 s left"
+    assert not client.wait_for_slot(None, 0.05), "nothing answered: timeout"
+    threading.Timer(0.05, release.set).start()
+    start = time.monotonic()
+    assert client.wait_for_slot(None, 5.0), "the answer frees the place"
+    assert time.monotonic() - start < 2, "woken by the answer, not by the timeout"
+    assert client.slot_eta_s(None, 1000.0) is None, "not full any more"
+    client.close()
+    assert not client.wait_for_slot(None, 1.0), "closed: no place to wait for"
 
 
 def test_policy_push(fake):

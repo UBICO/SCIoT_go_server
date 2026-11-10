@@ -12,7 +12,7 @@ import (
 // background), gestione delle risposte; con una camera anche l'attesa del
 // frame. Non è nella telemetria: si ricava dalle finestre degli heartbeat,
 //
-//	A = Σ (durata − Σ segment_ms·segment_count) / Σ inference_count
+//	A = Σ (durata − Σ segment_ms·segment_count − wait_ms) / Σ inference_count
 //
 // pesando le finestre sul tempo (internal/ewma, costante di tempo tau).
 //
@@ -49,9 +49,15 @@ func (c Cycle) Update(t api.Telemetry, gapMS float64, at time.Time, tau time.Dur
 		}
 		compute += *t.SegmentMS[i] * float64(n)
 	}
+	// Le attese del client per un posto nella finestra non sono A: la
+	// simulazione le aggiunge da sé (sim.go). Assenti = 0.
+	wait := 0.0
+	if t.WaitMS != nil {
+		wait = *t.WaitMS
+	}
 	// Nessun max(0, ·): gli scarti negativi compensano quelli positivi.
 	// c è una copia (receiver per valore): il chiamante riceve la nuova dal return.
-	c.rest.Update(at, gapMS-compute, tau)
+	c.rest.Update(at, gapMS-compute-wait, tau)
 	c.frames.Update(at, float64(t.InferenceCount), tau)
 	return c
 }
