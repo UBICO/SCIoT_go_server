@@ -19,6 +19,12 @@ func TestClientFrom(t *testing.T) {
 		t.Error("WaitForWindow non arriva al client simulato")
 	}
 	in.WaitForWindow = false
+	// Anche answer_ms (Fase 4.2); senza resta 0 (sconosciuto), non manca.
+	in.AnswerMS = f(11)
+	if c, _ := ClientFrom(in, 1, 3, 2); c.AnswerMS != 11 {
+		t.Errorf("AnswerMS = %v, atteso 11", c.AnswerMS)
+	}
+	in.AnswerMS = nil
 	if _, ok := ClientFrom(in, 2, 3, 2); ok {
 		t.Error("LOCAL (split = last) accettato: non carica il server")
 	}

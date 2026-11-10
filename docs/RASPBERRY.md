@@ -47,8 +47,10 @@ ssh <user>@<pi> 'mkdir -p ~/sciot ~/sciot-models'
 rsync -av --exclude .venv --exclude results client/ <user>@<pi>:~/sciot/client/
 ```
 
-(Or `git clone` this repository on the Pi, on the branch you want.) On the
-Pi:
+(Or `git clone` this repository on the Pi, on the branch you want.) Run the
+client and the server from the same commit: the server rejects telemetry
+fields it does not know yet (`wait_ms` before phase 3.9, `answer_ms` before
+phase 4.2). On the Pi:
 
 ```bash
 cd ~/sciot/client

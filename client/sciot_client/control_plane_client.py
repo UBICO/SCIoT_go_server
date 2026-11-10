@@ -224,6 +224,10 @@ class WindowStats:
     # Time the SplitPipeline waited for a place in the window of frames in
     # flight (docs/CLIENT.md, "Window full"); sent as wait_ms when > 0.
     wait_ms: float = 0.0
+    # Mean of rtt - receive_ms - server_ms of the window's results sent with
+    # no other frame in flight (InferenceWindow.record_answer); None = no such
+    # result, answer_ms not sent.
+    answer_ms: float | None = None
 
 
 class InferenceWindow:
@@ -245,6 +249,8 @@ class InferenceWindow:
         self._max_ms = 0.0
         self._segments: dict[int, tuple[float, int]] = {}
         self._wait_ms = 0.0
+        self._answer_sum_ms = 0.0
+        self._answer_n = 0
 
     def record(self, inference_time_ms: float) -> None:
         """Add one inference to the current window."""
@@ -277,6 +283,15 @@ class InferenceWindow:
         with self._lock:
             self._wait_ms += ms
 
+    def record_answer(self, ms: float) -> None:
+        """Add one answer time (rtt - receive_ms - server_ms) of a frame sent
+        with no other frame in flight (telemetry answer_ms)."""
+        if not math.isfinite(ms) or ms < 0:
+            raise ValueError(f"invalid answer time: {ms}")
+        with self._lock:
+            self._answer_sum_ms += ms
+            self._answer_n += 1
+
     def snapshot_and_reset(self) -> WindowStats:
         """Return the stats of the current window and start a new one.
 
@@ -288,13 +303,17 @@ class InferenceWindow:
             count, sum_ms, max_ms = self._count, self._sum_ms, self._max_ms
             segments, self._segments = self._segments, {}
             wait_ms, self._wait_ms = self._wait_ms, 0.0
+            answer_sum, answer_n = self._answer_sum_ms, self._answer_n
+            self._answer_sum_ms = 0.0
+            self._answer_n = 0
             self._count = 0
             self._sum_ms = 0.0
             self._max_ms = 0.0
         # Outside the lock: no need to block the inference loop for arithmetic.
+        answer_ms = answer_sum / answer_n if answer_n else None
         if count == 0:
-            return WindowStats(0, None, None, segments, wait_ms)
-        return WindowStats(count, sum_ms / count, max_ms, segments, wait_ms)
+            return WindowStats(0, None, None, segments, wait_ms, answer_ms)
+        return WindowStats(count, sum_ms / count, max_ms, segments, wait_ms, answer_ms)
 
 
 @dataclass(frozen=True)
@@ -343,6 +362,8 @@ class Telemetry:
         # Absent = 0 by contract (a client that never waits): sent only when > 0.
         if self.window.wait_ms > 0:
             data["wait_ms"] = self.window.wait_ms
+        if self.window.answer_ms is not None:  # 0.0 is a value
+            data["answer_ms"] = self.window.answer_ms
         return data
 
 

@@ -464,6 +464,10 @@ class SplitPipeline:
         timing = r.result.get("timing", {})
         srv = timing.get("server_ms")
         net = None if srv is None else max(0.0, r.rtt_ms - srv)
+        recv = timing.get("receive_ms")
+        if p.alone and srv is not None and recv is not None:
+            # Floored at 0: rtt and the server times come from two clocks.
+            self.window.record_answer(max(0.0, r.rtt_ms - recv - srv))
         detections = r.result.get("detections")
         self._emit(
             frame,

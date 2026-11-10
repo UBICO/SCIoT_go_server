@@ -44,6 +44,10 @@ func StateFrom(hb record.Heartbeat, policyAge time.Duration) State {
 		a := *hb.CycleMS // una copia: lo State non condivide il puntatore con l'heartbeat
 		in.CycleMS = &a
 	}
+	if hb.AnswerMS != nil {
+		a := *hb.AnswerMS // una copia, come CycleMS
+		in.AnswerMS = &a
+	}
 	var cs, weight float64
 	for _, s := range hb.Service {
 		in.ServiceMS[s.SplitPoint] = s.MeanMS

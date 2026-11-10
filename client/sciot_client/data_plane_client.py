@@ -112,6 +112,9 @@ class Pending:
     captured_at: str
     deadline_ms: float | None
     sent_at: float = field(default=0.0)  # time.perf_counter() when sent
+    # No other frame of this client in flight when it was sent: its rtt has no
+    # wait on the link behind an earlier frame (telemetry answer_ms).
+    alone: bool = field(default=False)
 
 
 @dataclass(frozen=True)
@@ -246,6 +249,7 @@ class DataPlaneClient:
             # In the window BEFORE sending: the answer can arrive before
             # send() returns, and the receiver must find the frame.
             pending.sent_at = self._clock()
+            pending.alone = not self._inflight
             self._inflight[pending.sequence_id] = pending
 
         header: dict[str, Any] = {

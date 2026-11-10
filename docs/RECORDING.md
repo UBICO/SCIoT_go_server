@@ -86,6 +86,13 @@ need for the `config.json` of the run.
   and in recordings before phase 3.9 (`sciot-replay` recomputes it from the
   telemetry). The client's waits for a place in its window (telemetry
   `wait_ms`) are subtracted: the simulation adds them itself.
+- `answer_ms` is the server's estimate of the device's telemetry `answer_ms`
+  (latency up + return of the answer + the client's time to receive it):
+  moving average of the window values, time-weighted with the same τ as
+  `device_segments`; a window without it leaves the estimate as it was.
+  Absent before the first one, and in recordings before phase 4.2 (the
+  simulation then returns an answer after the network latency, at least
+  1 ms).
 - `wait_for_window`: the device declared that capability (it waits for a
   place in a full window, docs/CLIENT.md); absent = it finishes the frame at
   once, as every client before phase 3.9.

@@ -52,6 +52,11 @@ type Device struct {
 	// Cycle è la stima di A (cycle.go), con la stessa costante di tempo dei
 	// segmenti; si azzera con una nuova registrazione.
 	Cycle Cycle
+	// Answer è la stima di answer_ms (api.Telemetry.AnswerMS): media mobile
+	// delle medie per finestra, con la stessa costante di tempo dei segmenti;
+	// N() == 0 finché il device non ne manda. Si azzera con una nuova
+	// registrazione.
+	Answer ewma.Stat
 }
 
 // DefaultSegmentTau è la costante di tempo delle stime per segmento: un
@@ -170,6 +175,8 @@ type HeartbeatResult struct {
 	Segments []ewma.Stat
 	// Cycle è la stima di A dopo questo heartbeat (Cycle.MS).
 	Cycle Cycle
+	// Answer è la stima di answer_ms dopo questo heartbeat (Device.Answer).
+	Answer ewma.Stat
 	// Capabilities sono quelle della registrazione della sessione.
 	Capabilities api.Capabilities
 	// Model è il modello della sessione.
@@ -210,8 +217,13 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 		d.Segments = updateSegments(d.Segments, t.SegmentMS, now, s.segmentTau)
 	}
 	d.Cycle = d.Cycle.Update(t, float64(since.Microseconds())/1000, now, s.segmentTau)
+	// Nessun campione nella finestra (nil) non vuol dire ritorno 0: la stima
+	// resta com'è. d è una copia del Device: la riga sotto la rimette nella mappa.
+	if t.AnswerMS != nil {
+		d.Answer.Update(now, *t.AnswerMS, s.segmentTau)
+	}
 	s.devices[id] = d
-	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Cycle: d.Cycle, Capabilities: d.Capabilities, Model: d.Model,
+	return HeartbeatResult{Policy: d.Policy, SinceLastSeen: since, Segments: d.Segments, Cycle: d.Cycle, Answer: d.Answer, Capabilities: d.Capabilities, Model: d.Model,
 		PolicySince: d.PolicySince, Pinned: d.Pinned}, nil
 }
 

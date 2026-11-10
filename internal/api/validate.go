@@ -58,6 +58,10 @@ func (t Telemetry) Validate() error {
 		return fmt.Errorf("wait_ms must be >= 0, got %v", *t.WaitMS)
 	}
 
+	if t.AnswerMS != nil && *t.AnswerMS < 0 {
+		return fmt.Errorf("answer_ms must be >= 0, got %v", *t.AnswerMS)
+	}
+
 	return t.validateSegments()
 }
 

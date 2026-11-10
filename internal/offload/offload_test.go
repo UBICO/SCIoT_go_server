@@ -10,6 +10,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/api"
 	"github.com/UBICO/SCIoT_go_server/internal/costmodel"
 	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
+	"github.com/UBICO/SCIoT_go_server/internal/record"
 )
 
 func f(v float64) *float64 { return &v }
@@ -172,5 +173,21 @@ func TestRecordPredictionsAreValidJSON(t *testing.T) {
 	}
 	if _, err := json.Marshal(rp); err != nil {
 		t.Errorf("JSON: %v (un +Inf non è rappresentabile)", err)
+	}
+}
+
+// Fase 4.2: answer_ms dell'heartbeat arriva agli ingressi del modello, come
+// copia (lo State non condivide i puntatori con l'heartbeat registrato).
+func TestStateFromCopiesAnswer(t *testing.T) {
+	hb := record.Heartbeat{AnswerMS: f(11.4)}
+	st := StateFrom(hb, 0)
+	if st.Inputs.AnswerMS == nil || *st.Inputs.AnswerMS != 11.4 {
+		t.Fatalf("AnswerMS = %v, atteso 11.4", st.Inputs.AnswerMS)
+	}
+	if st.Inputs.AnswerMS == hb.AnswerMS {
+		t.Error("stesso puntatore dell'heartbeat: va copiato il valore")
+	}
+	if st := StateFrom(record.Heartbeat{}, 0); st.Inputs.AnswerMS != nil {
+		t.Errorf("senza answer_ms: %v, atteso nil", *st.Inputs.AnswerMS)
 	}
 }

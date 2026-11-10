@@ -29,6 +29,12 @@ type Inputs struct {
 	// segmenti (acquisizione, consegna del frame al socket, gestione delle
 	// risposte; con una camera anche l'attesa del frame). nil = sconosciuto.
 	CycleMS *float64
+	// AnswerMS è answer_ms misurato dal client (api.Telemetry.AnswerMS):
+	// latenza all'andata + ritorno della risposta + tempo del client per
+	// riceverla. nil = sconosciuto: la simulazione usa allora la latenza di
+	// rete (answerDelay in sim.go). Non è un ingresso mancante: i client
+	// precedenti alla Fase 4.2 non lo mandano.
+	AnswerMS *float64
 	// WaitForWindow: il device aspetta un posto nella finestra piena quando
 	// costa meno che finire il frame (capability wait_for_window); senza,
 	// lo finisce subito.
@@ -54,11 +60,12 @@ type Queue struct {
 
 // Client sono i tempi di un altro device in SPLIT alla sua policy attuale,
 // in millisecondi: prefisso P, suffisso X, invio U, ciclo A, servizio S
-// (al suo split point), ritorno della risposta DownMS, e la sua finestra.
+// (al suo split point), latenza di rete DownMS, answer_ms misurato AnswerMS
+// (0 = sconosciuto, Inputs.AnswerMS nil) e la sua finestra.
 type Client struct {
-	P, X, U, A, S, DownMS float64
-	Window                int
-	Waits                 bool // Inputs.WaitForWindow
+	P, X, U, A, S, DownMS, AnswerMS float64
+	Window                          int
+	Waits                           bool // Inputs.WaitForWindow
 }
 
 // ClientFrom ricava i tempi di un device dai suoi ingressi, alla policy
@@ -87,6 +94,9 @@ func ClientFrom(in Inputs, split, window, last int) (c Client, ok bool) {
 	}
 	if in.Network != nil && in.Network.LatencyMS != nil {
 		c.DownMS = *in.Network.LatencyMS
+	}
+	if in.AnswerMS != nil {
+		c.AnswerMS = *in.AnswerMS
 	}
 	if len(p.Missing) > 0 {
 		return Client{}, false
@@ -217,8 +227,12 @@ func Predict(in Inputs, split, last int) Prediction {
 	if in.Network != nil && in.Network.LatencyMS != nil {
 		down = *in.Network.LatencyMS
 	}
+	answer := 0.0 // 0 = sconosciuto (answerDelay)
+	if in.AnswerMS != nil {
+		answer = *in.AnswerMS
+	}
 	sp := simParams{
-		P: p.DeviceMS, X: p.SuffixMS, U: p.UploadMS, S: p.ServiceMS, A: *in.CycleMS, DownMS: down,
+		P: p.DeviceMS, X: p.SuffixMS, U: p.UploadMS, S: p.ServiceMS, A: *in.CycleMS, DownMS: down, AnswerMS: answer,
 		Window: in.MaxInflight, Waits: in.WaitForWindow, Slots: q.Slots, CS: q.CS, CA: q.CA,
 	}
 	switch {

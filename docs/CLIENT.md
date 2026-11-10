@@ -128,6 +128,14 @@ finishing at once kept one frame in (window + 1) local and set the p95 at
 does not count them in the rest of the cycle; the CSV has the wait after the
 prefix of each frame (`wait_ms`, part of its latency).
 
+**Answer time.** `send` marks a frame sent with no other frame in flight
+(`Pending.alone`); for those results the pipeline records `rtt − receive_ms −
+server_ms` (floored at 0) and the heartbeat sends the window's mean as
+`answer_ms` (phase 4.2, [COSTMODEL.md](COSTMODEL.md#answer-time-measured-by-the-client-phase-42)):
+on a Raspberry Pi ~11 ms, against ~0.5 ms on a MacBook. The other frames are
+left out because they also waited on the link behind an earlier one. The
+field needs a server from phase 4.2 on (an older one rejects it).
+
 | Situation | What the device does |
 |---|---|
 | window full | waits, as above, or finishes the frame `LOCAL` |

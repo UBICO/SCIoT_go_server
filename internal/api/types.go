@@ -235,6 +235,14 @@ type Telemetry struct {
 	// toglie dal resto del ciclo (device.Cycle), che la simulazione aggiunge
 	// già da sé.
 	WaitMS *float64 `json:"wait_ms,omitempty"`
+	// AnswerMS è la media nella finestra di rtt − receive_ms − server_ms dei
+	// frame inviati senza altri frame del device in volo (Fase 4.2): la
+	// latenza del primo byte all'andata, il ritorno della risposta e il
+	// tempo del client per riceverla. Gli altri frame non contano: avrebbero
+	// anche l'attesa sul link dietro il frame precedente, che la simulazione
+	// modella da sé. Assente = nessun campione nella finestra (il server
+	// tiene la stima che aveva).
+	AnswerMS *float64 `json:"answer_ms,omitempty"`
 }
 
 // HeartbeatRequest è il corpo di POST /api/v1/heartbeat.

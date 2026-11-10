@@ -389,6 +389,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Network:         network,
 		DeviceSegments:  segmentEstimates(res.Segments, s.now()),
 		CycleMS:         cycleMS(res.Cycle),
+		AnswerMS:        answerMS(res.Answer),
 		WaitForWindow:   res.Capabilities.WaitForWindow,
 		ModelKey:        res.Model.ModelKey,
 		NumSegments:     res.Model.NumLayers,
@@ -770,6 +771,16 @@ func segmentEstimates(stats []ewma.Stat, now time.Time) []*ewma.Estimate {
 		}
 	}
 	return out
+}
+
+// answerMS espone la stima di answer_ms del device; nil senza campioni
+// (assente ≠ 0).
+func answerMS(s ewma.Stat) *float64 {
+	if s.N() == 0 {
+		return nil
+	}
+	m := s.Mean()
+	return &m
 }
 
 // cycleMS espone la stima di A del device; nil senza stima (assente ≠ 0).
