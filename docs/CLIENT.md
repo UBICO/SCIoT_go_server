@@ -100,13 +100,37 @@ loop handles them at the start of the next cycle (`SplitPipeline.drain`), so
 compute and printing stay on one thread. Results may come back out of order:
 they are matched by `sequence_id`.
 
-**The device never waits for the server.** Every frame the server does not
-take is finished by the device itself, from the activation it kept (segments
-`k+1..last`): the work already done is not lost.
+**The device waits for the server at most as long as finishing alone.**
+Every frame the server does not take is finished by the device itself, from
+the activation it kept (segments `k+1..last`): the work already done is not
+lost.
+
+<a id="window-full"></a>**Window full** (the policy's `max_inflight` frames
+in flight, or the hello's when the policy has none). The device estimates
+when a place frees: `W` = send time of the oldest frame in flight + the mean
+round trip of its results (EWMA, α 0.2) − now. With `X` the time to finish
+the frame alone (its deadline, below), `A` the mean acquisition and `P` the
+prefix `0..k`:
+
+1. **before the capture**, if `W < X`, it waits up to `W − A − P` (less if a
+   place frees earlier), so that the frame is ready when the place frees and
+   is fresh: at split −1 (`P` ≈ 0) it waits almost all of `W`, at a high
+   split the prefix runs while the window is full;
+2. **after the prefix**, if the window is still full and `W < X`, it waits for
+   a place, at most `X`, then sends; otherwise, or past `X`, it finishes the
+   frame locally.
+
+Without a measured round trip or `X` it does not wait (as before phase 3.9).
+Phase 3.9 on a Raspberry Pi (636 ms to finish a frame, ~200 ms for an answer):
+finishing at once kept one frame in (window + 1) local and set the p95 at
+~655 ms whatever the window. While waiting, answers stay queued for the next
+`drain`. The waits are sent in the telemetry (`wait_ms`), so that the server
+does not count them in the rest of the cycle; the CSV has the wait after the
+prefix of each frame (`wait_ms`, part of its latency).
 
 | Situation | What the device does |
 |---|---|
-| window full (the policy's `max_inflight` frames in flight, or the hello's when the policy has none) | runs that frame `LOCAL` at once: the device keeps its pace, a slow server does not stop the acquisition |
+| window full | waits, as above, or finishes the frame `LOCAL` |
 | `server_busy`, `deadline_exceeded`, `worker_unavailable` | finishes the frame locally |
 | stream closed with frames in flight | finishes each of them locally |
 | no stream (refused, unreachable) | finishes frames locally; retries the stream after 1, 2, 4… up to 30 s |

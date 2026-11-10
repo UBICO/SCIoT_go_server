@@ -159,7 +159,7 @@ def test_register_ok_sends_contract_payload():
         "device_id": "web_96",
         "device_type": "python",
         "model_hash": MODEL_HASH,
-        "capabilities": {"probe": True},
+        "capabilities": {"probe": True, "wait_for_window": False},
     }
 
 

@@ -9,9 +9,11 @@ loop at the start of every cycle, handles them on the main thread.
 
 Choices (docs/GO_CONTROL_PLANE.md, "Data plane (SPLIT)"):
 
-- never wait for the server: a full window, a missing stream or a refused
-  frame all mean the device finishes the frame itself, from the activation
-  it kept (segments k+1..last);
+- wait for the server at most as long as finishing alone: with the window
+  full the device waits for a place only when the expected wait is shorter
+  (docs/CLIENT.md, "Window full"); otherwise a full window, a missing stream
+  or a refused frame all mean the device finishes the frame itself, from the
+  activation it kept (segments k+1..last);
 - the deadline of a frame is the time the device would need to finish it
   alone (mean time of segments k+1..last on this device): a later result is
   worse than running LOCAL. Unknown until those segments ran here once.
@@ -102,6 +104,10 @@ class FrameRecord:
     # if it arrived while acquire() waited for it; 0 for the static image.
     age_ms: float
     dev_ms: float  # device compute: prefix, plus the completion if finished here
+    # Waited after the prefix for a place in the window (docs/CLIENT.md,
+    # "Window full"); part of latency_ms. The wait before the capture is not:
+    # the frame did not exist yet.
+    wait_ms: float
     srv_ms: float | None
     # The server's reading of the frame, first to last byte (timing.receive_ms):
     # the upload without the latency, possibly underestimated (TCP buffering).
@@ -190,6 +196,14 @@ class _Device:
     sent_bytes: int
     captured: float  # clock() when the frame was captured
     age_ms: float = 0.0  # see FrameRecord.age_ms
+    wait_ms: float = 0.0  # see FrameRecord.wait_ms
+
+
+EWMA_ALPHA = 0.2  # as SegmentTimes
+
+
+def _ewma(prev: float | None, sample: float) -> float:
+    return sample if prev is None else EWMA_ALPHA * sample + (1 - EWMA_ALPHA) * prev
 
 
 class SplitPipeline:
@@ -208,6 +222,7 @@ class SplitPipeline:
         deadline_ms: float | None = None,
         client_factory: Callable[..., DataPlaneClient] = DataPlaneClient,
         clock: Callable[[], float] = time.monotonic,
+        window: InferenceWindow | None = None,
     ) -> None:
         self.server = server
         self.device_id = device_id
@@ -219,6 +234,12 @@ class SplitPipeline:
         self.fixed_deadline_ms = deadline_ms
         self.client_factory = client_factory
         self.clock = clock
+        # Receives the waits for a place in the window (telemetry wait_ms).
+        self.window = window
+        # EWMAs for the full-window rule: round trip of the results, and
+        # acquisition time; None until measured (then no waiting).
+        self._rtt_ms: float | None = None
+        self._acq_ms: float | None = None
 
         self.counts: Counter[str] = Counter()
         self._started = clock()
@@ -248,6 +269,7 @@ class SplitPipeline:
         (FrameRecord.age_ms); the latency starts at the capture, not at acquire().
         """
         version = policy.policy_version
+        self._acq_ms = _ewma(self._acq_ms, acq_ms)
         # The frame was captured age_ms + acq_ms + dev_ms ago: the loop calls
         # this right after computing.
         captured = self.clock() - (age_ms + acq_ms + dev_ms) / 1000
@@ -284,12 +306,70 @@ class SplitPipeline:
         pending = Pending(self._seq, layer, policy.policy_version, output, captured_at, deadline)
         payload = np.ascontiguousarray(output, dtype=np.float32).tobytes()
         if not client.send(pending, payload, window=policy.max_inflight):
-            self.counts["window_full"] += 1
-            self._finish_locally(layer, output, captured_at, version, frame, "window_full")
-            return
+            # Rule 2 of docs/CLIENT.md "Window full": wait for a place if it
+            # frees before the frame could be finished here.
+            x = self._x_ms(layer)
+            w = self._slot_wait_ms(client, policy.max_inflight)
+            sent = False
+            if x is not None and w is not None and w < x:
+                free, frame.wait_ms = self._wait_for_slot(client, policy.max_inflight, x / 1000)
+                sent = free and client.send(pending, payload, window=policy.max_inflight)
+                if sent:
+                    self.counts["sent_after_wait"] += 1
+            if not sent:
+                self.counts["window_full"] += 1
+                self._finish_locally(layer, output, captured_at, version, frame, "window_full")
+                return
         self.counts["sent"] += 1
         frame.sent_bytes = len(payload)
         self._device[pending.sequence_id] = frame
+
+    def before_acquire(self, policy: Policy, layer: int) -> None:
+        """Before the capture: with the window full, wait so that the next
+        frame is ready when a place frees (rule 1 of docs/CLIENT.md, "Window
+        full"). Never opens the stream: handle_output does."""
+        client = self._client
+        if policy.mode == MODE_LOCAL or layer >= self.last_layer or client is None or client.closed:
+            return
+        x = self._x_ms(layer)
+        w = self._slot_wait_ms(client, policy.max_inflight)
+        p = self._prefix_ms(layer)
+        if x is None or w is None or p is None or w >= x:
+            return
+        pre = w - (self._acq_ms or 0.0) - p
+        if pre > 0:
+            self._wait_for_slot(client, policy.max_inflight, pre / 1000)
+
+    def _x_ms(self, layer: int) -> float | None:
+        """Time to finish a frame of split layer here: its deadline."""
+        if self.fixed_deadline_ms is not None:
+            return self.fixed_deadline_ms
+        return self.segment_times.remaining_ms(layer, self.last_layer)
+
+    def _prefix_ms(self, layer: int) -> float | None:
+        """Time of segments 0..layer here; 0 at split -1 (nothing to run)."""
+        return 0.0 if layer < 0 else self.segment_times.remaining_ms(-1, layer)
+
+    def _slot_wait_ms(self, client: DataPlaneClient, window: int | None) -> float | None:
+        """Expected wait for a place: None if the window is not full or the
+        round trip was never measured; 0 if overdue."""
+        if self._rtt_ms is None:
+            return None
+        eta = client.slot_eta_s(window, self._rtt_ms)
+        return None if eta is None else max(0.0, eta * 1000)
+
+    def _wait_for_slot(
+        self, client: DataPlaneClient, window: int | None, timeout_s: float
+    ) -> tuple[bool, float]:
+        """Wait for a place (client.wait_for_slot) and account for it: the
+        wait goes to the telemetry (wait_ms). Returns (free, waited ms)."""
+        start = self.clock()
+        free = client.wait_for_slot(window, timeout_s)
+        waited = (self.clock() - start) * 1000
+        self.counts["waits"] += 1
+        if self.window is not None:
+            self.window.record_wait(waited)
+        return free, waited
 
     def drain(self) -> None:
         """Handle every answer received so far (main thread)."""
@@ -378,6 +458,7 @@ class SplitPipeline:
 
     def _handle_result(self, r: FrameResult) -> None:
         self.counts["result"] += 1
+        self._rtt_ms = _ewma(self._rtt_ms, r.rtt_ms)
         p = r.pending
         frame = self._device.pop(p.sequence_id, None) or self._unknown()
         timing = r.result.get("timing", {})
@@ -399,7 +480,7 @@ class SplitPipeline:
             outcome="result",
             # At ARRIVAL (the receiver measured rtt), not now: this thread may
             # have been busy finishing another frame locally meanwhile.
-            latency_ms=frame.age_ms + frame.acq_ms + frame.dev_ms + r.rtt_ms,
+            latency_ms=frame.age_ms + frame.acq_ms + frame.dev_ms + frame.wait_ms + r.rtt_ms,
         )
 
     def _handle_error(self, e: FrameError) -> None:
@@ -477,6 +558,7 @@ class SplitPipeline:
             acq_ms=frame.acq_ms,
             age_ms=frame.age_ms,
             dev_ms=frame.dev_ms,
+            wait_ms=frame.wait_ms,
             sent_bytes=frame.sent_bytes,
             **{"latency_ms": (now - frame.captured) * 1000, **fields},
         )

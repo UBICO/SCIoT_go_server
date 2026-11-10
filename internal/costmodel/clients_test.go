@@ -13,6 +13,12 @@ func TestClientFrom(t *testing.T) {
 	if !ok || c != want {
 		t.Errorf("ClientFrom = %+v, %v; atteso %+v", c, ok, want)
 	}
+	// La regola della finestra piena dell'altro device viaggia con lui.
+	in.WaitForWindow = true
+	if c, _ := ClientFrom(in, 1, 3, 2); !c.Waits {
+		t.Error("WaitForWindow non arriva al client simulato")
+	}
+	in.WaitForWindow = false
 	if _, ok := ClientFrom(in, 2, 3, 2); ok {
 		t.Error("LOCAL (split = last) accettato: non carica il server")
 	}

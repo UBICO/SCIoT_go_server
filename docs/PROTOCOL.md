@@ -151,6 +151,7 @@ A capability says the client can do something the server may ask for. Rules:
 | Capability | Meaning |
 |---|---|
 | `probe` | the client answers `probe_request` on the stream ([Probe](#probe)) |
+| `wait_for_window` | with its window full, the client waits for a place when that costs less than finishing the frame itself ([CLIENT.md](CLIENT.md#window-full)); without it, it finishes the frame at once. The server's cost model simulates the rule the client declares |
 
 `raw_input_split` (sent by earlier clients) is no longer defined: every client
 can be told split `-1`; servers ignore it.
@@ -198,6 +199,7 @@ Request:
   | `memory_available_bytes` | no | `>= 0` |
   | `segment_ms` | no, with `segment_count` | per segment `0..last` of the model, the mean compute time of the window on the device; `null` for a segment not run in the window |
   | `segment_count` | with `segment_ms` | per segment, how many times it ran in the window, `>= 0`; `0` if and only if `segment_ms` is `null` there |
+  | `wait_ms` | no | total time the client waited in the window for a place in its window of frames in flight (see [CLIENT.md](CLIENT.md#window-full)), `>= 0`; absent = `0` (a client that never waits) |
 
   Optional fields are omitted when unknown: `0` is a value, not "absent".
   `segment_ms` and `segment_count` have one entry per segment of the

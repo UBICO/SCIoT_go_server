@@ -32,6 +32,19 @@ import (
 //     1: il frame occupa il link del device per byte/banda dopo quelli già
 //     inviati e arriva al server una latenza dopo.
 //
+// Un client con la capability wait_for_window (Client.Waits, Fase 3.9,
+// docs/CLIENT.md "Window full") con la finestra piena aspetta invece un
+// posto quando costa meno di X. W = invio del frame in volo più vecchio + rtt
+// stimato − adesso, con la stima del client (media mobile dei rtt dei
+// risultati), non l'istante vero della risposta:
+//
+//   - prima dell'acquisizione (dopo il drain): aspetta W − A − P, se W < X;
+//   - al punto 4: aspetta un posto, al massimo X, se W < X; poi invia, o
+//     finisce il frame se il posto non si è liberato.
+//
+// Ogni risposta che libera un posto (risultato o errore) termina l'attesa
+// subito; gli errori restano per il drain successivo, come nel client.
+//
 // La risposta (risultato o errore) torna dopo la latenza di rete e libera la
 // finestra quando arriva, non al drain. Scadenza di un frame = X.
 //
@@ -95,6 +108,7 @@ type simParams struct {
 	P, X, U, S, A float64 // prefisso, suffisso, invio, servizio, ciclo
 	DownMS        float64 // ritorno della risposta: latenza di rete
 	Window, Slots int
+	Waits         bool    // regola della finestra piena (Client.Waits)
 	CS            float64 // variabilità di S (anche per gli altri)
 
 	// Altri device come client (Fase 3.8); vuoto = il flusso qui sotto.
@@ -116,7 +130,28 @@ type client struct {
 	// linkFree è quando il link del client finisce di trasmettere i frame già
 	// inviati: un frame nuovo parte solo dopo (FIFO, come il buffer TCP).
 	linkFree float64
+
+	// Regola della finestra piena (Client.Waits): i frame in volo (per il più
+	// vecchio), la stima del rtt come la tiene il client, l'attesa in corso e
+	// il suo gettone: un risveglio con un gettone vecchio è di un'attesa già
+	// finita (una risposta è arrivata prima) e si ignora.
+	flight  []*job
+	rtt     float64
+	rttSeen bool
+	wait    int // waitNone, waitCapture, waitSend
+	waitTok int
 }
+
+// Attese del client con la finestra piena.
+const (
+	waitNone    = iota
+	waitCapture // prima dell'acquisizione
+	waitSend    // dopo il prefisso, il frame è pronto
+)
+
+// clientRTTAlpha è il peso del rtt nuovo nella stima del client
+// (split_pipeline.EWMA_ALPHA).
+const clientRTTAlpha = 0.2
 
 // simResult è ciò che la simulazione ha contato sui frame del device nati
 // nella finestra di misura.
@@ -135,13 +170,15 @@ const (
 	evOthers            // arriva un frame di un altro device
 	evFinish            // un job termina il servizio
 	evAnswer            // una risposta arriva al device
+	evWake              // finisce l'attesa di un client (event.tok)
 )
 
 type event struct {
 	at   float64
 	kind int
 	job  *job    // evArrive, evFinish, evAnswer
-	cl   *client // evDrain, evPrefixDone
+	cl   *client // evDrain, evPrefixDone, evWake
+	tok  int     // evWake: il gettone dell'attesa
 	seq  int     // ordine di inserimento: a pari istante, prima chi è entrato prima
 }
 
@@ -171,6 +208,7 @@ type job struct {
 	deadline float64 // istante oltre cui il risultato non serve più
 	sEst     float64 // S stimata dal dispatcher
 	sActual  float64 // S vera di questa esecuzione
+	sent     float64 // quando il client l'ha inviato (rtt del client)
 	arrived  float64
 	started  float64
 	failed   bool // la risposta è un errore: il device lo finirà al drain
@@ -219,7 +257,7 @@ func (s *sim) scheduleClient(at float64, kind int, c *client) {
 func simulate(p simParams) simResult {
 	s := &sim{p: p, rng: rand.New(rand.NewPCG(simSeed, uint64(p.Slots)))}
 	s.warmupMS, s.measureMS, s.tailMS = simWindows(p)
-	s.clients = []*client{{p: Client{P: p.P, X: p.X, U: p.U, A: p.A, S: p.S, DownMS: p.DownMS, Window: p.Window}, own: true}}
+	s.clients = []*client{{p: Client{P: p.P, X: p.X, U: p.U, A: p.A, S: p.S, DownMS: p.DownMS, Window: p.Window, Waits: p.Waits}, own: true}}
 	for _, o := range p.Others {
 		s.clients = append(s.clients, &client{p: o})
 	}
@@ -253,6 +291,8 @@ func simulate(p simParams) simResult {
 			s.finish(e.job)
 		case evAnswer:
 			s.answer(e.job)
+		case evWake:
+			s.wake(e.cl, e.tok)
 		}
 	}
 	return s.summary()
@@ -271,6 +311,14 @@ func (s *sim) drain(c *client) {
 		s.scheduleClient(s.after(c.p.X), evDrain, c)
 		return
 	}
+	if c.p.Waits && s.waitBeforeCapture(c) {
+		return
+	}
+	s.capture(c)
+}
+
+// capture: il client acquisisce un frame (A) e ne calcola il prefisso (P).
+func (s *sim) capture(c *client) {
 	c.captured = s.now + c.p.A
 	s.scheduleClient(s.after(c.p.A+c.p.P), evPrefixDone, c)
 }
@@ -278,12 +326,107 @@ func (s *sim) drain(c *client) {
 // prefixDone: il prefisso è pronto; il client invia il frame o lo finisce.
 func (s *sim) prefixDone(c *client) {
 	if c.inflight >= c.p.Window {
-		if c.own {
-			s.done = append(s.done, outcome{captured: c.captured, done: s.now + c.p.X, windowFull: true})
+		if c.p.Waits && s.waitAfterPrefix(c) {
+			return
 		}
-		s.scheduleClient(s.after(c.p.X), evDrain, c)
+		s.finishWindowFull(c)
 		return
 	}
+	s.send(c)
+}
+
+// finishWindowFull: il client finisce da sé il frame pronto, X ms, poi
+// ricomincia il ciclo.
+func (s *sim) finishWindowFull(c *client) {
+	if c.own {
+		s.done = append(s.done, outcome{captured: c.captured, done: s.now + c.p.X, windowFull: true})
+	}
+	s.scheduleClient(s.after(c.p.X), evDrain, c)
+}
+
+// eta è W, l'attesa che il client prevede per un posto: invio del frame in
+// volo più vecchio + rtt stimato − adesso, mai sotto 0 (in ritardo). ok =
+// false con la finestra libera o senza un rtt misurato (il client allora non
+// aspetta).
+func (s *sim) eta(c *client) (float64, bool) {
+	if !c.rttSeen || c.inflight < c.p.Window || len(c.flight) == 0 {
+		return 0, false
+	}
+	oldest := c.flight[0].sent
+	for _, j := range c.flight[1:] {
+		oldest = min(oldest, j.sent)
+	}
+	return max(0, oldest+c.rtt-s.now), true
+}
+
+// waitBeforeCapture applica la regola prima dell'acquisizione; true se il
+// client aspetta (il ciclo riprende con wake o con una risposta).
+func (s *sim) waitBeforeCapture(c *client) bool {
+	w, ok := s.eta(c)
+	if !ok || w >= c.p.X {
+		return false
+	}
+	pre := w - c.p.A - c.p.P
+	if pre <= 0 {
+		return false
+	}
+	c.wait = waitCapture
+	c.waitTok++
+	s.scheduleWake(s.now+pre, c)
+	return true
+}
+
+// waitAfterPrefix applica la regola al frame pronto con la finestra piena;
+// true se il client aspetta un posto (al massimo X).
+func (s *sim) waitAfterPrefix(c *client) bool {
+	w, ok := s.eta(c)
+	if !ok || w >= c.p.X {
+		return false
+	}
+	c.wait = waitSend
+	c.waitTok++
+	s.scheduleWake(s.now+c.p.X, c)
+	return true
+}
+
+// wake: è passato il tempo di un'attesa senza che una risposta la
+// terminasse.
+func (s *sim) wake(c *client, tok int) {
+	if tok != c.waitTok || c.wait == waitNone {
+		return
+	}
+	was := c.wait
+	c.wait = waitNone
+	if was == waitCapture {
+		s.capture(c)
+	} else {
+		s.finishWindowFull(c)
+	}
+}
+
+// wakeOnAnswer: una risposta ha liberato un posto; un'attesa in corso finisce
+// subito.
+func (s *sim) wakeOnAnswer(c *client) {
+	if c.wait == waitNone {
+		return
+	}
+	was := c.wait
+	c.waitTok++ // invalida il risveglio già in coda
+	c.wait = waitNone
+	if was == waitCapture {
+		s.capture(c)
+	} else {
+		s.send(c)
+	}
+}
+
+func (s *sim) scheduleWake(at float64, c *client) {
+	s.seq++
+	heap.Push(&s.q, &event{at: at, kind: evWake, cl: c, tok: c.waitTok, seq: s.seq})
+}
+
+// send: il client invia il frame pronto, in background.
+func (s *sim) send(c *client) {
 	c.inflight++
 	// Invio in background (Fase 3.9): ws.send ritorna quando i byte sono nel
 	// buffer del kernel, il client riprende subito; il link trasmette i frame
@@ -300,7 +443,8 @@ func (s *sim) prefixDone(c *client) {
 	c.linkFree = start + transfer
 	arrival := c.linkFree + c.p.DownMS
 	// La scadenza conta da quando il server legge il frame.
-	j := &job{cl: c, captured: c.captured, deadline: arrival + c.p.X, sEst: c.p.S, sActual: s.sample(c.p.S, s.p.CS)}
+	j := &job{cl: c, captured: c.captured, deadline: arrival + c.p.X, sEst: c.p.S, sActual: s.sample(c.p.S, s.p.CS), sent: s.now}
+	c.flight = append(c.flight, j)
 	s.schedule(arrival, evArrive, j)
 	s.scheduleClient(s.after(0), evDrain, c)
 }
@@ -374,6 +518,18 @@ func (s *sim) finish(j *job) {
 func (s *sim) answer(j *job) {
 	c := j.cl
 	c.inflight--
+	c.flight = slices.DeleteFunc(c.flight, func(f *job) bool { return f == j })
+	// Il client stima il rtt dai risultati, non dagli errori.
+	if !j.failed {
+		rtt := s.now - j.sent
+		if c.rttSeen {
+			rtt = clientRTTAlpha*rtt + (1-clientRTTAlpha)*c.rtt
+		}
+		c.rtt, c.rttSeen = rtt, true
+	}
+	if c.p.Waits {
+		s.wakeOnAnswer(c)
+	}
 	if j.failed {
 		c.errors = append(c.errors, j)
 		return

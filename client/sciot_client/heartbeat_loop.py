@@ -188,7 +188,11 @@ class HeartbeatLoop:
 
     def _register(self) -> None:
         try:
-            session = self.client.register(self.model_hash, probe=self.probe)
+            # A client that executes SPLIT runs the SplitPipeline, which waits
+            # for a place in a full window.
+            session = self.client.register(
+                self.model_hash, probe=self.probe, wait_for_window=self.split_supported
+            )
         except ModelNotFound:
             logger.warning("server does not know model %s: LOCAL-only", self.model_hash)
             self.local_only = True

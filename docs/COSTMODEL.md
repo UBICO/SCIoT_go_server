@@ -24,10 +24,13 @@ A prediction lists its missing inputs (a segment never run, no bandwidth, no
 
 ## Frames the device sends: simulation
 
-The client never waits for the server: with its window full (`max_inflight`
-frames in flight; the algorithm chooses the window with the split point,
-[OFFLOAD.md](OFFLOAD.md#window)), or a frame refused, it finishes the frame
-itself and goes on. So at a split
+A client without the capability `wait_for_window` never waits for the
+server: with its window full (`max_inflight` frames in flight; the algorithm
+chooses the window with the split point, [OFFLOAD.md](OFFLOAD.md#window)), or
+a frame refused, it finishes the frame itself and goes on. One with it
+(the Python client since phase 3.9) waits for a place in a full window when
+that costs less than finishing the frame ([CLIENT.md](CLIENT.md#window-full));
+a refused frame is still finished at once. So at a split
 point only part of the frames may reach the server (`share`). Value-average
 formulas got this badly wrong (3× too many frames to the server at split −1),
 because two behaviours depend on the exact order of events:
@@ -51,6 +54,7 @@ jump), with a fixed seed (the same inputs give the same prediction):
 |---|---|
 | device, each cycle | `drain`: every error received (refused, expired) is finished on the device, `device(k+1..last)` ms each; then `A` (acquisition and the rest), the frame is born; then the prefix `device(0..k)`; with the window full the device finishes the frame at once, otherwise it sends it **in the background** and starts the next cycle (`ws.send` returns once the bytes are in the kernel's buffer) |
 | link | one per device, FIFO: a frame occupies it for `upload − latency` (bytes / bandwidth) after the frames sent before it, and reaches the server one latency later; the deadline counts from there. Shortcut: an unbounded kernel buffer, so `send` never blocks (on a slow link with a large window it does) |
+| device with `wait_for_window` | with the window full, before acquiring (after `drain`) it waits `W − A − prefix` and, with the frame ready, up to `device(k+1..last)` for a place, if `W < device(k+1..last)`; `W` = send time of its oldest frame in flight + its estimated round trip (EWMA of the simulated results, α 0.2, as the client) − now. An answer ends the wait at once; errors wait for the next `drain`. Without a round trip measured it does not wait. Recorded per heartbeat (`wait_for_window`), so a replay simulates each client with its own rule |
 | answer | returns after the network latency (at least 1 ms, measured) and frees the window when it arrives |
 | server | admission with `dispatch.PredictWait` (the dispatcher's own function) and the estimated `S`: refused when wait + `S` exceeds the deadline, the device's `device(k+1..last)`; FIFO queue, `c` slots; a frame that gets its slot after its deadline returns as an error |
 | other devices | every other device in `SPLIT` is a client with the same rules and its own times at its policy (prefix, suffix, upload, `A`, `S`, window: `costmodel.ClientFrom`); their frames are refused, expire and are drained like the device's, only the device's are counted. Fallback when some other device's inputs are incomplete (or in recordings replayed without them): a stream of frames, always admitted, at the others' measured rate (admitted frames only), with `ca`, `S` and `cs` (log-normal) |
@@ -185,6 +189,14 @@ devices do not change. The real time grows with the bytes sent, while on a
 network that does not limit the simulated upload is the latency only:
 using the server's measured read time per split point is left for a real
 network (phase 4).
+
+That split depended on noise. Since `A` is a smoothed ratio (phase 3.9) it
+is a steady 1.10 ms here, just above the 1 ms answer time: every refusal
+comes back before the next frame, the window is always free, and the same
+recording gives 14.8 refused and no full window (p95, mean, frames/s and
+share unchanged: −3%, −2%, +6%, 0%). A deterministic answer time decides a
+race the real system runs with a spread (0.85–1.25 ms); sampling it, with
+the transfer time's, is the fix (open).
 
 ### Verification on a Raspberry Pi over Wi-Fi (phase 3.9)
 

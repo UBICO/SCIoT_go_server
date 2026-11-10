@@ -180,6 +180,37 @@ func TestSimBackgroundSendOnSlowDevice(t *testing.T) {
 	}
 }
 
+// Lo stesso Raspberry Pi con la regola della finestra piena (capability
+// wait_for_window): aspettare un posto (~150 ms) costa meno che finire il
+// frame (636 ms), quindi a regime nessun frame finisce sul device. Il limite
+// diventa il link, un frame ogni 85 ms; con la finestra 3 i frame aspettano
+// di più sul link, a pari frame/s: la finestra 2 è meglio.
+func TestSimSlowDeviceWaitsForAPlace(t *testing.T) {
+	bw, lat := 1228800/0.085, 2.0
+	in := inputs()
+	in.DeviceMS = []*float64{f(200), f(200), f(236)}
+	in.Network = &netmeasure.State{BandwidthBps: &bw, LatencyMS: &lat}
+	in.InputBytes[-1] = 1228800
+	in.ServiceMS[-1] = 50
+	in.Queue.CS = 0
+	in.WaitForWindow = true
+	p95 := map[int]float64{}
+	for _, window := range []int{2, 3} {
+		in.MaxInflight = window
+		p := Predict(in, -1, 2)
+		if !within(p.FramesPerSec, 1000.0/85, 0.1) || p.WindowFullPerSec > 0.5 || p.RejectedPerSec != 0 {
+			t.Errorf("finestra %d = %+v: attesi ~11.8 frame/s (link), nessun frame finito sul device", window, p)
+		}
+		if !(p.P95MS < 320) {
+			t.Errorf("finestra %d: p95 %.0f ms, atteso sotto 320 (nessun frame da 636)", window, p.P95MS)
+		}
+		p95[window] = p.P95MS
+	}
+	if !(p95[3] > p95[2]) {
+		t.Errorf("p95 finestra 3 %.0f, finestra 2 %.0f: con la 3 i frame aspettano di più sul link", p95[3], p95[2])
+	}
+}
+
 func TestSimSelfQueueing(t *testing.T) {
 	// Il caso misurato (docs/COSTMODEL.md): split −1 in localhost, S = 37 ms
 	// su 2 slot, finestra di 3. Il terzo frame in volo trova gli slot occupati

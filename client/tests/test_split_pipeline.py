@@ -68,12 +68,32 @@ class FakeClient:
         self.windows: list[int | None] = []  # the window passed to each send
         self.closed = False
         self.close_calls = 0
+        self.waits: list[float] = []  # timeout of every wait_for_slot
         FakeClient.instances.append(self)
 
     def open(self):
         if self.fail_open:
             raise OSError("connection refused")
         return dpc.Hello(3, 1 << 20, cpc.Policy("SPLIT", 4, 5), {4: 16})
+
+    # Window-full rule: the test sets eta (seconds to a free place) and
+    # free_at (test clock time the place frees; None = never). wait_for_slot
+    # advances the test clock like a real wait.
+    clock = None
+    eta: float | None = None
+    free_at: float | None = None
+
+    def slot_eta_s(self, window, rtt_ms):
+        return None if self.accept else self.eta
+
+    def wait_for_slot(self, window, timeout_s):
+        self.waits.append(timeout_s)
+        if self.free_at is not None and self.clock.t + timeout_s >= self.free_at:
+            self.clock.t = max(self.clock.t, self.free_at)
+            self.accept, self.free_at = True, None
+            return True
+        self.clock.t += timeout_s
+        return False
 
     def send(self, pending, payload, window=None):
         if not self.accept:
@@ -111,6 +131,7 @@ def make(hb=None, *, accept=True, fail_open=False, deadline_ms=None, clock=None)
         return FakeClient(*args, accept=accept, fail_open=fail_open, **kwargs)
 
     out = io.StringIO()
+    FakeClient.clock = clock = clock or Clock()
     p = SplitPipeline(
         server="http://srv",
         device_id="web_96",
@@ -121,7 +142,8 @@ def make(hb=None, *, accept=True, fail_open=False, deadline_ms=None, clock=None)
         outputs=[FrameTable(out)],
         deadline_ms=deadline_ms,
         client_factory=factory,
-        clock=clock or Clock(),
+        clock=clock,
+        window=cpc.InferenceWindow(),
     )
     return p, runs, out
 
@@ -314,6 +336,7 @@ def record(seq=1, **kw):
         "acq_ms": 1.0,
         "age_ms": 0.0,
         "dev_ms": 10.0,
+        "wait_ms": 0.0,
         "srv_ms": 8.0,
         "recv_ms": 3.2,
         "net_ms": 4.5,
@@ -460,3 +483,88 @@ def test_the_policy_window_reaches_send():
     p.handle_output(cpc.Policy("SPLIT", 4, 3, 2), 4, x, "T", 1.0, 0.0)
     p.handle_output(cpc.Policy("SPLIT", 4, 4), 4, x, "T", 1.0, 0.0)
     assert FakeClient.instances[0].windows == [2, None], "None: the hello's maximum"
+
+
+# --- window full: wait for a place (docs/CLIENT.md, "Window full") ---------------
+
+
+def slow_device(rtt_ms=200.0):
+    """A pipeline whose device takes 10 ms per segment 0..4 and 100 ms per
+    segment 5..7 (X = 300 ms at split 4), with one result of rtt_ms seen, and
+    the window now full."""
+    p, runs, out = make()
+    p.segment_times.record(0, [0.01] * 5 + [0.1] * 3)
+    p.handle_output(SPLIT, 4, ACT, "T", 10.0, 50.0)  # acq 10 ms
+    client = FakeClient.instances[0]
+    client.on_result(dpc.FrameResult(client.sent[0][0], {"timing": {"server_ms": 50.0}}, rtt_ms))
+    p.drain()
+    p.window.snapshot_and_reset()
+    client.accept = False
+    return p, runs, out, client
+
+
+def test_full_window_waits_after_the_prefix_when_shorter(tmp_path):
+    p, runs, _out, client = slow_device()
+    path = tmp_path / "frames.csv"
+    p.outputs.append(FrameCSV(path))
+    client.eta, client.free_at = 0.1, p.clock() + 0.1  # a place in 100 ms < X 300
+    p.handle_output(SPLIT, 4, ACT, "T", 10.0, 50.0)
+    assert len(client.sent) == 2 and not runs, "sent after the wait, not finished here"
+    assert p.counts["sent_after_wait"] == 1 and p.counts["window_full"] == 0
+    assert client.waits == [pytest.approx(0.3)], "waits at most X"
+    assert p.window.snapshot_and_reset().wait_ms == pytest.approx(100.0)
+    client.on_result(dpc.FrameResult(client.sent[1][0], {"timing": {"server_ms": 50.0}}, 200.0))
+    p.drain()
+    p.outputs[-1].close()
+    (row,) = csv.DictReader(path.open())
+    assert float(row["wait_ms"]) == pytest.approx(100.0)
+    # Latency: acq 10 + prefix 50 + wait 100 + rtt 200.
+    assert float(row["latency_ms"]) == pytest.approx(360.0)
+
+
+def test_full_window_finishes_locally_when_the_wait_is_longer():
+    p, runs, _out, client = slow_device()
+    client.eta, client.free_at = 0.5, p.clock() + 0.5  # 500 ms >= X 300
+    p.handle_output(SPLIT, 4, ACT, "T", 10.0, 50.0)
+    assert not client.waits and runs == [(5, LAST)] and p.counts["window_full"] == 1
+
+
+def test_full_window_wait_past_x_finishes_locally():
+    p, runs, _out, client = slow_device()
+    client.eta, client.free_at = 0.1, None  # expected in 100 ms, never answered
+    p.handle_output(SPLIT, 4, ACT, "T", 10.0, 50.0)
+    assert client.waits == [pytest.approx(0.3)] and runs == [(5, LAST)]
+    assert p.counts["window_full"] == 1
+    assert p.window.snapshot_and_reset().wait_ms == pytest.approx(300.0)
+
+
+def test_no_wait_without_a_measured_round_trip():
+    p, runs, _out = make(accept=False)
+    p.segment_times.record(0, [0.01] * 5 + [0.1] * 3)
+    p.handle_output(SPLIT, 4, ACT, "T", 10.0, 50.0)
+    p.before_acquire(SPLIT, 4)
+    assert not FakeClient.instances[0].waits and runs == [(5, LAST)]
+
+
+def test_before_acquire_waits_until_the_frame_would_be_ready():
+    p, _runs, _out, client = slow_device()
+    client.eta, client.free_at = 0.2, p.clock() + 0.2  # place in 200 ms
+    p.before_acquire(SPLIT, 4)
+    # W − A − P = 200 − 10 − 50 = 140 ms: the next frame is ready when the place frees.
+    assert client.waits == [pytest.approx(0.14)]
+    assert p.window.snapshot_and_reset().wait_ms == pytest.approx(140.0)
+
+
+def test_before_acquire_returns_early_when_a_place_frees():
+    p, _runs, _out, client = slow_device()
+    client.eta, client.free_at = 0.2, p.clock() + 0.05  # answered earlier than expected
+    p.before_acquire(SPLIT, 4)
+    assert p.window.snapshot_and_reset().wait_ms == pytest.approx(50.0)
+
+
+def test_before_acquire_does_not_wait_in_local_or_when_longer_than_x():
+    p, _runs, _out, client = slow_device()
+    client.eta = 0.5  # 500 ms >= X 300: the frame will be finished here anyway
+    p.before_acquire(SPLIT, 4)
+    p.before_acquire(LOCAL, LAST)
+    assert not client.waits

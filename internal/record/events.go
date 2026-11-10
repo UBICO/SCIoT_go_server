@@ -73,6 +73,10 @@ type Heartbeat struct {
 	// finestra utile, e nelle registrazioni precedenti alla Fase 3.9 (il
 	// replay la ricalcola dalla telemetria).
 	CycleMS *float64 `json:"cycle_ms,omitempty"`
+	// WaitForWindow: il device ha dichiarato la capability wait_for_window
+	// (la sua regola della finestra piena). Assente nelle registrazioni
+	// precedenti alla Fase 3.9, i cui client non aspettavano mai.
+	WaitForWindow bool `json:"wait_for_window,omitempty"`
 
 	// Il resto dello stato che un algoritmo vede per questo device, così il
 	// replay (cmd/sciot-replay algo) gli dà esattamente gli stessi ingressi:

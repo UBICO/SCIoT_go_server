@@ -39,6 +39,7 @@ func StateFrom(hb record.Heartbeat, policyAge time.Duration) State {
 	// La finestra della policy attuale: PredictAll la cambia per ogni
 	// candidato.
 	in.MaxInflight = st.Window()
+	in.WaitForWindow = hb.WaitForWindow
 	if hb.CycleMS != nil {
 		a := *hb.CycleMS // una copia: lo State non condivide il puntatore con l'heartbeat
 		in.CycleMS = &a

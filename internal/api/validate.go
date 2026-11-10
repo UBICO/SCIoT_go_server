@@ -54,6 +54,10 @@ func (t Telemetry) Validate() error {
 		return fmt.Errorf("memory_available_bytes must be >= 0, got %v", *t.MemoryAvailableBytes)
 	}
 
+	if t.WaitMS != nil && *t.WaitMS < 0 {
+		return fmt.Errorf("wait_ms must be >= 0, got %v", *t.WaitMS)
+	}
+
 	return t.validateSegments()
 }
 

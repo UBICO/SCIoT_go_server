@@ -58,6 +58,17 @@ func TestCycleIgnoresUselessWindows(t *testing.T) {
 	}
 }
 
+func TestCycleExcludesTheClientWaits(t *testing.T) {
+	// 4 frame, 1 locale, 300 ms di attesa per un posto nella finestra:
+	// (1000 − 636 − 300) / 4 = 16 ms.
+	w := window(4, 1)
+	w.WaitMS = ptr(300.0)
+	c := Cycle{}.Update(w, 1000, time.Unix(1000, 0), time.Hour)
+	if a, ok := c.MS(); !ok || math.Abs(a-16) > 1e-9 {
+		t.Errorf("A = %v, %v; attesi 16 ms", a, ok)
+	}
+}
+
 func TestCycleNeverBelowZero(t *testing.T) {
 	// Orologi diversi: più calcolo della durata in ogni finestra.
 	c := Cycle{}.Update(window(2, 2), 1000, time.Unix(1000, 0), time.Hour)

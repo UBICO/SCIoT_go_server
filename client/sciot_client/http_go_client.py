@@ -89,6 +89,7 @@ def run_loop(
     clock: Callable[[], float] = time.perf_counter,
     on_cycle: Callable[[int, float, float], None] | None = None,
     before_cycle: Callable[[], None] | None = None,
+    before_acquire: Callable[[Policy, int], None] | None = None,
     on_output: Callable[[Policy, int, Any, str, float, float, float], None] | None = None,
 ) -> int:
     """Run inferences until ``stop`` is set or ``max_cycles`` is reached.
@@ -112,6 +113,9 @@ def run_loop(
 
     ``before_cycle`` runs first in every cycle: the SplitPipeline handles the
     answers received meanwhile (on this thread, not the receiver's).
+    ``before_acquire(policy, layer)`` runs after the policy is read and before
+    acquire(): with the window full the SplitPipeline may wait there for a
+    place (docs/CLIENT.md, "Window full"), outside the acquisition time.
 
     Returns the number of completed inferences. The dependencies are
     parameters (not globals) so the loop can be tested without TensorFlow, a
@@ -125,6 +129,8 @@ def run_loop(
         # if the heartbeat thread changes it meanwhile.
         policy = get_policy()
         layer = stop_layer_for(policy, last_layer)
+        if before_acquire is not None:
+            before_acquire(policy, layer)
 
         # acquire/infer exceptions are NOT caught: a broken camera or model
         # must stop the client (the camera retries transient errors itself).
@@ -283,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             if o is not None
         ],
         deadline_ms=args.deadline_ms,
+        window=window,
     )
 
     # Last thing before hb.start(): a camera that does not open stops the client
@@ -327,6 +334,7 @@ def main(argv: list[str] | None = None) -> int:
             stop=stop,
             max_cycles=args.cycles,
             before_cycle=pipeline.drain,
+            before_acquire=pipeline.before_acquire,
             on_output=pipeline.handle_output,
         )
     except KeyboardInterrupt:

@@ -42,6 +42,8 @@ func TestTelemetryValidate(t *testing.T) {
 		{"cpu_load negativo", Telemetry{CPULoad: f64(-0.1)}, true},
 		{"rtt negativo", Telemetry{RTTMS: f64(-3)}, true},
 		{"memoria negativa", Telemetry{MemoryAvailableBytes: i64(-1)}, true},
+		{"attesa nulla", Telemetry{WaitMS: f64(0)}, false},
+		{"attesa negativa", Telemetry{WaitMS: f64(-1)}, true},
 		{"segmenti validi", Telemetry{SegmentMS: []*float64{f64(0.5), f64(0), nil}, SegmentCount: []int{3, 1, 0}}, false},
 		{"segment_ms senza segment_count", Telemetry{SegmentMS: []*float64{f64(1)}}, true},
 		{"segment_count senza segment_ms", Telemetry{SegmentCount: []int{1}}, true},

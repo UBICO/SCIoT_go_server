@@ -29,6 +29,10 @@ type Inputs struct {
 	// segmenti (acquisizione, consegna del frame al socket, gestione delle
 	// risposte; con una camera anche l'attesa del frame). nil = sconosciuto.
 	CycleMS *float64
+	// WaitForWindow: il device aspetta un posto nella finestra piena quando
+	// costa meno che finire il frame (capability wait_for_window); senza,
+	// lo finisce subito.
+	WaitForWindow bool
 }
 
 // Queue è il carico del server SENZA il device di cui si prevede il costo.
@@ -54,6 +58,7 @@ type Queue struct {
 type Client struct {
 	P, X, U, A, S, DownMS float64
 	Window                int
+	Waits                 bool // Inputs.WaitForWindow
 }
 
 // ClientFrom ricava i tempi di un device dai suoi ingressi, alla policy
@@ -68,7 +73,7 @@ func ClientFrom(in Inputs, split, window, last int) (c Client, ok bool) {
 	var p Prediction // raccoglie solo Missing
 	c = Client{
 		P: deviceMS(in, 0, split, &p), X: deviceMS(in, split+1, last, &p),
-		U: uploadMS(in, split, &p), Window: window,
+		U: uploadMS(in, split, &p), Window: window, Waits: in.WaitForWindow,
 	}
 	if s, ok := in.ServiceMS[split]; ok {
 		c.S = s
@@ -214,7 +219,7 @@ func Predict(in Inputs, split, last int) Prediction {
 	}
 	sp := simParams{
 		P: p.DeviceMS, X: p.SuffixMS, U: p.UploadMS, S: p.ServiceMS, A: *in.CycleMS, DownMS: down,
-		Window: in.MaxInflight, Slots: q.Slots, CS: q.CS, CA: q.CA,
+		Window: in.MaxInflight, Waits: in.WaitForWindow, Slots: q.Slots, CS: q.CS, CA: q.CA,
 	}
 	switch {
 	case len(q.Clients) > 0:
