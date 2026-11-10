@@ -42,7 +42,12 @@ At every heartbeat, in order:
    (default) or `total_ms` (`objective: mean`); at equal value, the one with
    more segments on the device, then the smaller window (less load on the
    server; [Ties](#ties)). Why both exist:
-   [COSTMODEL.md](COSTMODEL.md#mean-or-p95).
+   [COSTMODEL.md](COSTMODEL.md#mean-or-p95). Then the window (phase 4.2):
+   at the best's split point, the admitted window with the most frames per
+   second among those within `p95_slack` of the best's value (default:
+   up to 25% above it); one replaces another only with at least
+   `margin_rel` more frames per second. The split point itself stays chosen
+   by the value ([Window](#window)).
 5. **Hysteresis**: the best replaces the current one only if it is better
    by more than a margin (`hysteresis` otherwise):
 
@@ -57,16 +62,23 @@ At every heartbeat, in order:
      instead of split 6, 26% faster at ρ = 0.69;
    - `σ` is the noise of the two predictions' difference (below).
 
+   At the best's split point with another window than the chosen one, the
+   hysteresis is on the window instead: the device keeps its window if its
+   value is within `(1 + p95_slack)` × the best's plus the margin and the
+   chosen window does not give `margin_rel` more frames per second; it moves
+   for the frames per second (`fps`) or, beyond the slack, for the value
+   (`latency`).
+
    If the current candidate violates the constraints, the algorithm moves
-   to the best without margin (`infeasible`); the minimum duration still
-   applies. A best with fewer than 3 noise samples cannot replace the
-   current one (`few_samples`).
+   to the chosen one without margin (`infeasible`); the minimum duration
+   still applies. A chosen candidate with fewer than 3 noise samples cannot
+   replace the current one (`few_samples`).
 
 A change of split point or of window gives the device a new policy version,
 on the stream as soon as it is decided and in the answer to its next
 heartbeat (the answer to the heartbeat that triggered the decision carries
 the current policy: see [Cost](#cost)); the recording gets a
-`policy` event with the reason (`latency` or `infeasible`) and, at every
+`policy` event with the reason (`latency`, `fps` or `infeasible`) and, at every
 heartbeat, a `decision` event with every prediction, the reserved load it
 saw and the reason.
 
@@ -94,7 +106,10 @@ average and the frames per second triple. This is accepted (decided
 2026-11-04, confirmed by the test below): the objective is the stability of
 the latency, which does not get worse, and frames per second are a
 constraint, not a goal; staying `LOCAL` also leaves the server to the
-device already in `SPLIT`.
+device already in `SPLIT`. Phase 4.2 makes frames per second a goal only
+for the window at the split point the p95 chose ([Window](#window)): from
+`LOCAL` to split −1 is still a p95 decision, for the reason below (option
+b).
 
 The tie rule alone would not change this: a tie is a gain of 0, never
 beyond the margin, so the device keeps its policy whatever the rule (the
@@ -150,6 +165,23 @@ hello carries it, the server refuses only frames beyond it, and the
 `static` algorithm and the admin without `max_inflight` leave it in force.
 Later: a maximum computed per device from its network, with a cap in
 `config.json` for memory.
+
+**Frames per second for the window (phase 4.2, `p95_slack`).** In flight,
+frames per second and latency grow together (Little: frames in flight =
+frames/s × latency), until a resource saturates. A Raspberry Pi at split −1
+sends 1.2 MB a frame over Wi-Fi (~98 ms on the link): window 1 gives 6.8
+frames/s at p95 ~170 ms, window 3 11.4 at 271, and window 2, predicted
+11.7 at 175–183 against 140–160 for window 1, is the knee. With the p95
+alone the algorithm took window 1. So at the split point the value chose,
+the window with the most frames per second within `p95_slack` (0.25) of the
+best value wins, if it gives at least `margin_rel` (10%) more: below the
+simulation's noise (~3%) a few frames per second would buy up to 25% of
+p95. Only the window: applied to every candidate, it would repeat option b
+([Ties](#ties)), devices leaving `LOCAL` for frames per second at an equal
+p95 and filling the server. Replay: every rule-c run of the Pi (with
+`answer_ms`) goes to window 2; the phase 3.8 runs with free devices (B, B2)
+do not change a single decision. `p95_slack: 0` is the rule before phase
+4.2. Applies with `objective: mean` too (the slack is on the value).
 
 ### Reservations
 
@@ -256,6 +288,7 @@ otherwise). A new registration starts unpinned.
 | `offload.algorithm` | `static` | `static` or `latency` |
 | `offload.objective` | `p95` | `p95` or `mean` |
 | `offload.min_fps_ratio` | 1 | 0–10: a candidate must give at least LOCAL's frames per second times this |
+| `offload.p95_slack` | 0.25 | 0–10: at the best's split point, a window within this share above the best value wins with `margin_rel` more frames per second ([Window](#window)); 0 = the lowest value only |
 | `offload.max_reject_share` | 0.1 | 0–1: a candidate must not have more than this share of its frames refused by the server |
 | `offload.min_hold_ms` | 10000 | 0–3600000: no change before the policy has been in force this long |
 | `offload.margin_min_ms` | 2 | 0–1000: the smallest gain (ms) that replaces the current policy (the hysteresis base, step 5 of [`latency`](#latency)) |

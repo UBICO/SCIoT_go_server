@@ -112,8 +112,9 @@ need for the `config.json` of the run.
 
 `device_id`, `session_id`, `policy` (the new one, with its window
 `max_inflight` when it has one), `reason`: `admin`, or the algorithm's
-`latency` (better beyond the margin) or `infeasible` (the current candidate
-broke the constraints); see [OFFLOAD.md](OFFLOAD.md).
+`latency` (better beyond the margin), `fps` (another window at the same
+split point, more frames per second within `p95_slack`) or `infeasible`
+(the current candidate broke the constraints); see [OFFLOAD.md](OFFLOAD.md).
 
 ### `frame` — the outcome of a SPLIT frame, admitted or not
 
@@ -258,7 +259,7 @@ decoder: a frame's own measures replace it as they arrive.
 
 Written by the server at every heartbeat when an algorithm is enabled
 (`offload.algorithm`), and by `sciot-replay algo -out`, in the same format.
-`reason` says why the decision is what it is (`latency`, `infeasible`,
+`reason` says why the decision is what it is (`latency`, `fps`, `infeasible`,
 `best`, `hysteresis`, `min_hold`, `current_unknown`, `no_candidate`,
 `few_samples`, `static`; see [OFFLOAD.md](OFFLOAD.md)). `max_inflight` is
 the chosen window, absent for `LOCAL` and for a policy without one.

@@ -214,3 +214,83 @@ func TestNoiseIgnoresASingleStep(t *testing.T) {
 		t.Errorf("dopo Forget: %d campioni", n[0])
 	}
 }
+
+// Fase 4.2: allo split point del migliore, la finestra con più frame/s tra
+// quelle con p95 entro P95Slack. Raspberry Pi allo split −1 (replay della
+// regola c): finestra 1 p95 140 a 7.4 frame/s, finestra 2 170 a 11.8,
+// finestra 3 257 a 11.7; LOCAL 636 a 1.5. In ordine: w3, w2, w1, LOCAL.
+func piWindows(w2p95, w2fps float64) []costmodel.Prediction {
+	w := func(win int, p95, fps float64) costmodel.Prediction {
+		p := pred(-1, p95, fps)
+		p.Window = win
+		return p
+	}
+	local := pred(2, 636, 1.5)
+	local.Local = true
+	return []costmodel.Prediction{w(3, 257, 11.7), w(2, w2p95, w2fps), w(1, 140, 7.4), local}
+}
+
+func onWindow(w int) State {
+	return State{DeviceID: "d", Last: 2, PolicyAge: time.Minute, MaxWindow: 3,
+		Policy: api.Policy{Mode: api.ModeSplit, SplitPoint: ip(-1), MaxInflight: ip(w)}}
+}
+
+func TestFastestWindow(t *testing.T) {
+	l := NewLatency(DefaultLatencyConfig()) // P95Slack 0.25: fino a 175 ms
+	cases := []struct {
+		name       string
+		p95, fps   float64
+		slack      float64
+		wantWindow int
+	}{
+		{"finestra 2 entro il 25% e +59% di frame/s", 170, 11.8, 0.25, 2},
+		{"finestra 2 oltre il 25%", 180, 11.8, 0.25, 1},
+		{"finestra 2 con meno del 10% di frame/s in più", 170, 8.0, 0.25, 1},
+		{"P95Slack 0: il p95 più basso, come prima", 170, 11.8, 0, 1},
+	}
+	for _, tc := range cases {
+		l.cfg.P95Slack = tc.slack
+		ps := piWindows(tc.p95, tc.fps)
+		best, ok := l.best(ps, ps[len(ps)-1])
+		if !ok || ps[best].Window != 1 {
+			t.Fatalf("%s: best = %d, %v; attesa la finestra 1 (p95 più basso)", tc.name, best, ok)
+		}
+		if got := ps[l.fastestWindow(ps, ps[len(ps)-1], best)].Window; got != tc.wantWindow {
+			t.Errorf("%s: finestra %d, attesa %d", tc.name, got, tc.wantWindow)
+		}
+	}
+}
+
+func TestLatencyMovesToTheFasterWindow(t *testing.T) {
+	l := NewLatency(DefaultLatencyConfig())
+	sigma, n := calm()
+	ps := piWindows(170, 11.8)
+	// Da finestra 1: più frame/s entro il 25% → finestra 2, motivo fps.
+	if d := l.choose(onWindow(1), ps, sigma, n); d.MaxInflight == nil || *d.MaxInflight != 2 || d.Reason != ReasonFPS {
+		t.Errorf("da finestra 1: %+v; attesa la 2 per i frame/s", d)
+	}
+	// Sulla 2: è la scelta.
+	if d := l.choose(onWindow(2), ps, sigma, n); d.Reason != ReasonBest {
+		t.Errorf("da finestra 2: %+v; attesa best", d)
+	}
+	// Da finestra 3: p95 257 oltre 175 + margine → finestra 2, motivo latency.
+	if d := l.choose(onWindow(3), ps, sigma, n); d.MaxInflight == nil || *d.MaxInflight != 2 || d.Reason != ReasonChange {
+		t.Errorf("da finestra 3: %+v; attesa la 2 per il p95", d)
+	}
+	// Da LOCAL: lo split point lo decide il p95 (140 contro 636), la finestra i frame/s.
+	if d := l.choose(State{DeviceID: "d", Last: 2, PolicyAge: time.Minute, MaxWindow: 3}, ps, sigma, n); d.Mode != api.ModeSplit || *d.MaxInflight != 2 || d.Reason != ReasonChange {
+		t.Errorf("da LOCAL: %+v; attesa split −1 finestra 2", d)
+	}
+}
+
+// Isteresi sulla finestra: entro P95Slack e senza abbastanza frame/s in più
+// non si cambia, anche se un'altra finestra ha il p95 più basso.
+func TestLatencyKeepsAWindowWithinSlack(t *testing.T) {
+	l := NewLatency(DefaultLatencyConfig())
+	sigma, n := calm()
+	ps := piWindows(160, 11.8)
+	ps[0].P95MS, ps[0].TotalMS, ps[0].FramesPerSec = 172, 172, 12.5 // w3: +6% di frame/s sulla 2
+	if d := l.choose(onWindow(3), ps, sigma, n); d.Reason != ReasonHysteresis || d.Changes(onWindow(3).Policy, 3) {
+		t.Errorf("da finestra 3 entro il 25%%: %+v; attesa hysteresis", d)
+	}
+}

@@ -81,6 +81,7 @@ type Offload struct {
 	Objective      string   `json:"objective,omitempty"`
 	MinFPSRatio    *float64 `json:"min_fps_ratio,omitempty"`
 	MaxRejectShare *float64 `json:"max_reject_share,omitempty"`
+	P95Slack       *float64 `json:"p95_slack,omitempty"`
 	MinHoldMS      *int     `json:"min_hold_ms,omitempty"`
 	MarginMinMS    *float64 `json:"margin_min_ms,omitempty"`
 	MarginRel      *float64 `json:"margin_rel,omitempty"`
@@ -408,6 +409,7 @@ func (f File) OffloadConfig() (string, offload.LatencyConfig, error) {
 	}{
 		{"offload.min_fps_ratio", o.MinFPSRatio, &cfg.MinFPSRatio, 0, 10},
 		{"offload.max_reject_share", o.MaxRejectShare, &cfg.MaxRejectShare, 0, 1},
+		{"offload.p95_slack", o.P95Slack, &cfg.P95Slack, 0, 10},
 		{"offload.margin_min_ms", o.MarginMinMS, &cfg.MarginMinMS, 0, 1000},
 		{"offload.margin_rel", o.MarginRel, &cfg.MarginRel, 0, 1},
 		{"offload.k_queue", o.KQueue, &cfg.KQueue, 0, 100},
