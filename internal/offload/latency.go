@@ -1,7 +1,9 @@
 package offload
 
 import (
+	"cmp"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 // guadagno oltre un margine che cresce vicino alla saturazione e con il
 // rumore delle previsioni (docs/OFFLOAD.md).
 //
-// Sceglie la coppia (split point, finestra) e prenota il carico che concede
+// Sceglie la coppia (split point, finestra): la finestra, allo split point
+// scelto, è quella con più frame/s entro P95Slack dal migliore (Fase 4.2).
+// Prenota il carico che concede
 // (reserve.go): i device che decidono subito dopo lo vedono prima che il
 // dispatcher lo misuri.
 //
@@ -47,6 +51,12 @@ type LatencyConfig struct {
 	// frame al secondo di LOCAL per questo fattore. MaxRejectShare: e se la
 	// quota dei suoi frame rifiutati dal server non supera questa.
 	MinFPSRatio, MaxRejectShare float64
+	// P95Slack (Fase 4.2): allo split point del migliore, la finestra con
+	// più frame/s tra quelle con valore ≤ (1 + P95Slack) × il migliore; più
+	// frame/s vuol dire almeno MarginRel in più. 0 = la finestra del valore
+	// più basso, come prima. Solo la finestra: lo split point resta deciso
+	// dal valore (docs/OFFLOAD.md, "Window").
+	P95Slack float64
 	// MinHold: nessun cambio prima che la policy sia in vigore da tanto.
 	MinHold time.Duration
 	// Margine: max(MarginMinMS, MarginRel × valore attuale) × (1 + KQueue ·
@@ -78,7 +88,7 @@ const (
 func DefaultLatencyConfig() LatencyConfig {
 	return LatencyConfig{
 		Objective:   ObjectiveP95,
-		MinFPSRatio: 1, MaxRejectShare: 0.1,
+		MinFPSRatio: 1, MaxRejectShare: 0.1, P95Slack: 0.25,
 		MinHold:     10 * time.Second,
 		MarginMinMS: 2, MarginRel: 0.1, KQueue: 1, KNoise: 1, QueueRhoFrom: 0.8,
 		NoiseTau: 10 * time.Second,
@@ -99,6 +109,7 @@ const maxRho = 0.99
 // Motivi di una decisione (Decision.Reason, evento decision).
 const (
 	ReasonChange     = "latency"         // cambio: il migliore batte l'attuale oltre il margine
+	ReasonFPS        = "fps"             // cambio di finestra: più frame/s con il valore entro P95Slack
 	ReasonInfeasible = "infeasible"      // cambio: l'attuale non rispetta i vincoli
 	ReasonBest       = "best"            // l'attuale è già il migliore
 	ReasonHysteresis = "hysteresis"      // il migliore non batte l'attuale oltre il margine
@@ -179,30 +190,93 @@ func (l *Latency) choose(s State, preds []costmodel.Prediction, sigma []float64,
 		return keep
 	}
 	best, ok := l.best(preds, local)
-	switch {
-	case !ok:
+	if !ok {
 		keep.Reason = ReasonNoChoice
 		return keep
-	case best == cur:
+	}
+	// La finestra con più frame/s allo split point del migliore (P95Slack);
+	// = best se nessuna ne dà abbastanza di più.
+	win := l.fastestWindow(preds, local, best)
+	if win == cur {
 		keep.Reason = ReasonBest
 		return keep
 	}
 	// L'attuale non rispetta i vincoli: si cambia senza margine (la durata
 	// minima vale comunque).
 	if !l.feasible(preds[cur], local) {
-		return l.move(preds, best, ReasonInfeasible)
+		return l.move(preds, win, ReasonInfeasible)
 	}
-	if samples[best] < minNoiseSamples {
+	if samples[win] < minNoiseSamples {
 		keep.Reason = ReasonFewSamples
 		return keep
 	}
 	// σ della differenza tra le due previsioni: i due rumori si sommano.
 	sd := math.Hypot(sigma[cur], sigma[best])
-	if l.value(preds[cur])-l.value(preds[best]) <= l.margin(preds[cur], preds[best], sd) {
+	margin := l.margin(preds[cur], preds[best], sd)
+	// Stesso split point del migliore ma finestra diversa: l'isteresi è sulla
+	// finestra. Entro lo slack dal migliore (più il margine) si cambia solo per
+	// abbastanza frame/s in più; oltre, per il valore.
+	if win != best && sameSplit(preds[cur], preds[best]) {
+		inSlack := l.value(preds[cur]) <= (1+l.cfg.P95Slack)*l.value(preds[best])+margin
+		switch {
+		case !inSlack:
+			return l.move(preds, win, ReasonChange)
+		case l.moreFPS(preds[win], preds[cur]):
+			return l.move(preds, win, ReasonFPS)
+		}
 		keep.Reason = ReasonHysteresis
 		return keep
 	}
-	return l.move(preds, best, ReasonChange)
+	// Su un altro split point (o win == best): l'isteresi sul valore, contro
+	// il migliore.
+	if l.value(preds[cur])-l.value(preds[best]) <= margin {
+		keep.Reason = ReasonHysteresis
+		return keep
+	}
+	return l.move(preds, win, ReasonChange)
+}
+
+// fastestWindow restituisce, tra le previsioni ammesse allo split point di best
+// (non LOCAL) con valore ≤ (1 + P95Slack) × value(best), quella con più
+// frame/s: in ordine di valore crescente, una sostituisce la scelta solo se
+// ne ha almeno (1 + MarginRel) volte i frame/s. Con P95Slack 0, o best
+// LOCAL, è best.
+func (l *Latency) fastestWindow(preds []costmodel.Prediction, local costmodel.Prediction, best int) int {
+	if l.cfg.P95Slack <= 0 || preds[best].Local {
+		return best
+	}
+	limit := (1 + l.cfg.P95Slack) * l.value(preds[best])
+	var cands []int
+	for i, p := range preds {
+		if v := l.value(p); i != best && sameSplit(p, preds[best]) && v <= limit && l.feasible(p, local) {
+			cands = append(cands, i) // v NaN: il confronto è falso, esclusa
+		}
+	}
+	slices.SortFunc(cands, func(a, b int) int {
+		if c := cmp.Compare(l.value(preds[a]), l.value(preds[b])); c != 0 {
+			return c
+		}
+		return cmp.Compare(b, a)
+	})
+	chosen := best
+	for _, i := range cands {
+		if l.moreFPS(preds[i], preds[chosen]) {
+			chosen = i
+		}
+	}
+	return chosen
+}
+
+// moreFPS dice se a fa abbastanza frame/s più di b: almeno (1 + MarginRel)
+// volte, oltre il rumore della simulazione (~3%).
+func (l *Latency) moreFPS(a, b costmodel.Prediction) bool {
+	return a.FramesPerSec > (1+l.cfg.MarginRel)*b.FramesPerSec
+}
+
+// sameSplit dice se a e b sono SPLIT allo stesso split point (finestre
+// qualunque).
+func sameSplit(a, b costmodel.Prediction) bool {
+	return !a.Local && !b.Local && a.Split == b.Split
 }
 
 // move è il cambio alla previsione di indice i (l'ultima = LOCAL).
