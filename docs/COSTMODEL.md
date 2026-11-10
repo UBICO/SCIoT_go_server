@@ -193,8 +193,10 @@ is a steady 1.10 ms here, just above the 1 ms answer time: every refusal
 comes back before the next frame, the window is always free, and the same
 recording gives 14.8 refused and no full window (p95, mean, frames/s and
 share unchanged: −3%, −2%, +6%, 0%). A deterministic answer time decides a
-race the real system runs with a spread (0.85–1.25 ms); sampling it, with
-the transfer time's, is the fix (open).
+race the real system runs with a spread (0.85–1.25 ms). Sampling the answer
+time, and the device's cycle, moves frames between the two only, never all
+the way (phase 4.2, [Variability](#variability-on-the-replay-phase-42)), and
+changes no p95, mean or frames/s: not modeled.
 
 ### Verification on a Raspberry Pi over Wi-Fi (phase 3.9)
 
@@ -219,8 +221,9 @@ Frames per second within +4%, p95 within −4%, share served exact, frames
 with the window full 1.6/s against 1.8. The mean is 12–17% low: the served
 frames' latency is 20–29% low, because the simulated link always takes the
 same time while the Wi-Fi has a tail (server read time p50 84 ms, p90 175).
-It does not move the p95 here (the frames finished on the device set it); a
-variable transfer time is left for when served frames set the p95.
+It does not move the p95 here (the frames finished on the device set it).
+With the served frames setting the p95 (rule c, below) a variable transfer
+time did not help either: see [Variability](#variability-on-the-replay-phase-42).
 `sciot-replay check` compares per heartbeat (1 s): with bursts of 2–4 frames
 every ~660 ms a window holds one or two bursts, so its per-window medians are
 biased on such a device (frames/s −13…−17%); use whole runs there. The
@@ -287,6 +290,35 @@ episode of 3–6 consecutive frames in 2–6 s, 3–9× the usual time (up to
 960 ms), 1–2% of the frames. Clustered, not independent noise per frame:
 not modeled. They also reach `answer_ms` (A2_new: p99 48 ms against a p50 of
 11); a window at 300 ms moves the average by ~29 ms for ~10 s.
+
+### Variability on the replay (phase 4.2)
+
+Transfer, answer and device cycle are deterministic in the simulation (only
+`S` and the fallback's arrivals are sampled, log-normal). Tried on the
+replay, each as a log-normal around its value: the rule-c runs of the Pi
+with `answer_ms` set from their CSV (W1_new, which has no frame sent
+alone, with the mean of A1–A3), predicted (median over the decisions of the
+steady part) against measured (whole steady part); and the 3.8 P4 run at
+window 3 (localhost), whose refused / window-full split is 7.9 / 7.0
+measured:
+
+| Variant | p95 error A1 / A2 / A3 / C1 / W1 | P4: refused / window full |
+|---|---|---|
+| none (`answer_ms` only) | −32 / −3 / −1 / −20 / −3% | 14.8 / 0 |
+| transfer, CV of the bandwidth (median 0.06) | −3 / +2 / +6 / −17 / +8% | 14.8 / 0 |
+| transfer, CV 0.45 (of `receive_ms`) | +11 / +59 / +52 / +32 / +41% | 14.8 / 0 |
+| answer, CV 0.1–0.4 | within ±3% of none | ~12.7 / 2.4 |
+| cycle CV 0.5 + answer CV 0.2 | — | 9.6 / 5.2 |
+
+Without variability, frames/s are within −1…+2% and the mean within −5% on
+the Pi (C1: −15%, the camera frame's age), and the p95 within −3% except A1
+(Wi-Fi stalls) and C1. The bandwidth's CV fixes A1 only because the stall
+is in the bandwidth's standard deviation (stalls are not modeled, above),
+and costs +5…+8% on the clean runs; 0.45 is far too much. Answer and cycle
+spreads move P4's frames between refused and window full (both finished on
+the device), never all the way, with p95, mean and frames/s unchanged
+(−2%, −1%, +6% in every variant). So none is modeled; to look at again with
+a slow network and several devices on other machines.
 
 ## Mean or p95
 
