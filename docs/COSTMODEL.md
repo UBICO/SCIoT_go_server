@@ -229,6 +229,38 @@ biased on such a device (frames/s −13…−17%); use whole runs there. The
 phase 3.8 recordings (localhost) do not change: per band within 1–3% of
 before, and the bands that were far off before (noisy `A`) are gone.
 
+**With `wait_for_window`** (same Pi, 2026-11-10, 90 s per run). The
+algorithm, free, chose split −1 window 1 (predicted p95 151 against 263 for
+window 3; `min_fps_ratio` 1 only asks for LOCAL's 1.5 frames/s); one run was
+pinned at window 3. No frame was finished on the device. Measured, and
+predicted against measured (whole steady part):
+
+| Run | Window | frames/s | p95 ms | frames/s error | p95 error | mean error |
+|---|---|---|---|---|---|---|
+| A1 | 1 | 5.92 | 273 | +8% | −35% | −9% |
+| A3 | 1 | 6.75 | 161 | +6% | −6% | −6% |
+| C1 (camera) | 1 | 6.91 | 184 | +8% | −25% (−8% without age and acquisition) | −20% (−7%) |
+| W1 | 3 | 11.42 | 271 | +1% | −3% | −3% |
+
+Against the strategy-A runs above: 4.4 → 6.7–6.9 frames/s and p95 652 →
+161–184 with the algorithm, 5.9 → 11.4 frames/s and p95 655 → 271 at window
+3. What the model misses:
+
+- ~10 ms per round trip on the Pi client (`net_ms − recv_ms − 2 × latency`:
+  framing and masking 1.2 MB in Python, the receiver thread), where the
+  simulation has the 1 ms measured on a MacBook (`simMinAnswerMS`): frames/s
+  +6–8% at window 1; at window 3 the link hides it. The server cannot see it.
+- The camera frame's age (`age_ms`, p50 16 ms, waiting in `LatestFrame`) and
+  acquisition: not in the predicted latency. Equal for every policy, LOCAL
+  included, so they do not change a choice.
+- Wi-Fi stalls (A1: a few frames read in up to 900 ms, none in A3): they set
+  that run's p95. Episodic, so a log-normal transfer time would fit them
+  badly; left open with the answer-time spread.
+- Found by these runs and fixed: at split −1 with every frame served the
+  device runs no segment, and the client did not send `segment_ms`, so the
+  server's `A` froze at its earlier value (29.8 ms, or 0). The client now
+  always sends them (all `null`/`0`).
+
 ## Mean or p95
 
 Every SPLIT prediction has both the mean latency of the device's frames

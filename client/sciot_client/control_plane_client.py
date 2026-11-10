@@ -329,8 +329,13 @@ class Telemetry:
         if self.memory_available_bytes is not None:
             data["memory_available_bytes"] = self.memory_available_bytes
         segments = self.window.segments
-        if self.num_segments is not None and segments:
-            if max(segments) >= self.num_segments or min(segments) < 0:
+        # Sent whenever the model is known, all null/0 if no segment ran: at
+        # split -1 with every frame served the device runs none, and without
+        # the arrays the server could not tell "nothing to compute" from "not
+        # measured" and would keep its estimate of A (device.Cycle) frozen
+        # (phase 3.9).
+        if self.num_segments is not None:
+            if segments and (max(segments) >= self.num_segments or min(segments) < 0):
                 raise ValueError(f"segment {max(segments)} outside the model's {self.num_segments}")
             runs = [segments.get(i, (0.0, 0)) for i in range(self.num_segments)]
             data["segment_ms"] = [total / n if n else None for total, n in runs]

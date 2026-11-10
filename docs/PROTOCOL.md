@@ -203,7 +203,11 @@ Request:
 
   Optional fields are omitted when unknown: `0` is a value, not "absent".
   `segment_ms` and `segment_count` have one entry per segment of the
-  session's model (`num_layers`), or `400 invalid_request`. They are the raw
+  session's model (`num_layers`), or `400 invalid_request`. A client that
+  sends them sends them in every heartbeat, all `null`/`0` when no segment
+  ran (split −1 with every frame served): the server derives the rest of the
+  device's cycle from them, and a missing window is "not measured", not
+  "nothing computed". They are the raw
   window, like the rest of the telemetry: the server keeps the moving
   averages; with them it estimates the device's cost of a split it has
   not used. A segment counts every run, the prefix of a frame and the
