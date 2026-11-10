@@ -124,7 +124,7 @@ paths):
 | Key | Default | Meaning |
 |---|---|---|
 | `server.heartbeat_interval_ms` | 1000 | interval sent to clients, 100–60000 |
-| `server.verbose` | false | one table row per accepted heartbeat |
+| `server.verbose` | false | one table row per accepted heartbeat ([Server output](#server-output)) |
 | `server.admin` | false | enable the unauthenticated admin endpoint |
 | `server.load_sample_interval_ms` | 1000 | how often the server samples its own CPU/memory load, 100–60000 |
 | `server.load_cpu_ewma_alpha` | 0.35 | weight of the newest CPU sample in the moving average, (0, 1] |
@@ -196,6 +196,46 @@ curl -s http://127.0.0.1:8080/api/v1/server/status
 
 On `SIGINT`/`SIGTERM` the server closes the streams (`1001`), stops the
 worker and closes the recording.
+
+### Server output
+
+The log (stderr) has one line per event: start-up (`loaded N models`,
+`offloading algorithm: …`, `worker ready: N models enabled, N slots, N
+threads`, `profile <model>: N runs in … ms`, `recording to <file>`,
+`listening on <addr>`), devices (`registered device=… type=… model=…
+session=…`, `session expired`, `admin policy` / `admin unpin`), errors
+(`heartbeat error`, `stream: device=… seq=…`, `offload: device=…`, `worker
+… lost`) and shutdown (`recorded N lines to <file> (N events dropped)`). The
+worker's own lines are copied into it with a `worker` prefix.
+
+With `server.verbose` (or `-verbose`) the server also prints to stdout one
+table row per accepted heartbeat, with the header repeated every 20 rows
+(`internal/server/table.go`). A row summarizes the device's window, the
+time since its previous heartbeat. `N/A` = the device did not send the
+value, or the server has no measure yet.
+
+| Column | Meaning |
+|---|---|
+| `Time` | server's local time of the heartbeat |
+| `Device` | `device_id` (first 16 characters) |
+| `Mode` | mode the device says it applies (`LOCAL` / `SPLIT`), not the server's policy |
+| `Ver app/srv` | policy version the device applies / the server's current one; different = the device has not received or applied the last policy yet |
+| `Inf` | `inference_count`: device cycles completed in the window (one per frame, served or finished locally); 0 = the loop is stalled |
+| `Inf/s` | `Inf` / `HB gap` |
+| `Comp mean (ms)`, `Comp max (ms)` | mean and maximum of the device's compute time per cycle in the window: the prefix it runs (the whole model in `LOCAL`), interpreter calls only; ~0 at split −1. Not the end-to-end latency |
+| `CPU %` | device CPU load (`cpu_load` × 100) |
+| `Mem (MB)` | memory available on the device, MiB |
+| `HB RTT (ms)` | duration of the device's previous heartbeat request, measured by the device (control plane, not the stream) |
+| `HB gap (ms)` | time since the device's previous contact with the server (heartbeat or registration); about `heartbeat_interval_ms` |
+| `HB req (B)` | size of the heartbeat body, bytes |
+| `Srv CPU %` | CPU of the whole server machine (worker included), moving average (`load_cpu_ewma_alpha`) |
+| `Srv mem (MB)` | memory available on the server machine, MiB |
+| `BW (Mbit/s)` | the device's upload bandwidth estimate (moving average of the valid frame and probe reads, [docs/RECORDING.md](docs/RECORDING.md#network)); `not limit.` = the network does not limit (reads come from the buffer); `N/A` = no stream or no valid sample yet |
+| `Ping (ms)` | half of the minimum stream ping RTT of the last 60 s: the one-way latency the cost model uses |
+
+The per-frame times (upload, queue, service, answer) are not in the table:
+they are in the recording ([docs/RECORDING.md](docs/RECORDING.md)) and in
+`GET /api/v1/server/status`.
 
 ## Development
 
