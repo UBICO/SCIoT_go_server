@@ -28,13 +28,19 @@ const (
 	// 10 Mbit/s la coda supera 1 s).
 	PingTimeout = 5 * time.Second
 	// Rete "non limitante": tra i campioni dell'ultimo NotLimitingWindow
-	// (almeno NotLimitingMinSamples), meno di NotLimitingShare sono validi. Il
-	// server legge più lentamente di quanto i byte arrivino: la rete non è il
-	// collo di bottiglia (localhost, LAN). Una finestra di tempo, non di
-	// campioni: con un probe ogni 30 s, 20 campioni sarebbero 10 minuti.
-	NotLimitingWindow     = 60 * time.Second
-	NotLimitingMinSamples = 3
-	NotLimitingShare      = 0.1
+	// (almeno NotLimitingMinSamples), almeno NotLimitingBufferedShare vengono
+	// dal buffer (Sample.Buffered). Il server legge più lentamente di quanto i
+	// byte arrivino: la rete non è il collo di bottiglia (localhost, LAN). Una
+	// finestra di tempo, non di campioni: con un probe ogni 30 s, 20 campioni
+	// sarebbero 10 minuti.
+	//
+	// Contano i campioni dal buffer, non i "non validi": un campione che ha
+	// aspettato l'85% dei byte non è valido ma dice che la rete limita (Fase
+	// 3.9, ~8 Mbit/s: tre probe così davano "non limitante" e un invio di
+	// 1,2 MB previsto in 3 ms).
+	NotLimitingWindow        = 60 * time.Second
+	NotLimitingMinSamples    = 3
+	NotLimitingBufferedShare = 0.9
 )
 
 // State è la rete di un device vista dal server.
@@ -49,7 +55,7 @@ type State struct {
 	// LatencyMS è metà del minimo RTT dei ping degli ultimi LatencyWindow;
 	// nil senza ping.
 	LatencyMS *float64 `json:"latency_ms,omitempty"`
-	// NotLimiting: quasi tutti i campioni recenti sono stati scartati, la rete
+	// NotLimiting: quasi tutti i campioni recenti vengono dal buffer, la rete
 	// è più veloce di quanto il server legga. BandwidthBps non va presa come
 	// un limite.
 	NotLimiting bool   `json:"not_limiting"`
@@ -94,10 +100,10 @@ type ping struct {
 	rtt time.Duration
 }
 
-// mark è un campione per la regola "non limitante": quando e se valido.
+// mark è un campione per la regola "non limitante": quando e se dal buffer.
 type mark struct {
-	at    time.Time
-	valid bool
+	at       time.Time
+	buffered bool
 }
 
 // NewEstimator crea uno stato vuoto; bandwidthTau è la costante di tempo
@@ -116,7 +122,7 @@ func (e *Estimator) Observe(at time.Time, s Sample) {
 	} else {
 		e.discarded++
 	}
-	e.recent = append(e.recent, mark{at: at, valid: s.Valid})
+	e.recent = append(e.recent, mark{at: at, buffered: s.Buffered()})
 	cutoff := at.Add(-NotLimitingWindow)
 	for len(e.recent) > 0 && e.recent[0].at.Before(cutoff) {
 		e.recent = e.recent[1:]
@@ -189,18 +195,18 @@ func notLimiting(recent []mark, now time.Time) bool {
 	// Solo i campioni entro NotLimitingWindow da now: se non arriva niente da
 	// un minuto, la vecchia conclusione non vale più.
 	cutoff := now.Add(-NotLimitingWindow)
-	total, valid := 0, 0
+	total, buffered := 0, 0
 	for _, m := range recent {
 		if m.at.Before(cutoff) {
 			continue
 		}
 		total++
-		if m.valid {
-			valid++
+		if m.buffered {
+			buffered++
 		}
 	}
 	if total < NotLimitingMinSamples {
 		return false
 	}
-	return float64(valid)/float64(total) < NotLimitingShare
+	return float64(buffered)/float64(total) >= NotLimitingBufferedShare
 }

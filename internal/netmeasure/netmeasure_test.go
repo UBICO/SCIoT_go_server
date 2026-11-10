@@ -189,10 +189,10 @@ func TestEstimatorNotLimitingOverTime(t *testing.T) {
 	if !e.Snapshot(at(2)).NotLimiting {
 		t.Fatal("3 campioni scartati in 60 s: rete non limitante")
 	}
-	// Un valido tra 3: 33% non è sotto NotLimitingShare.
+	// Un valido tra 3: 2 su 3 dal buffer, sotto NotLimitingBufferedShare.
 	e.Observe(at(3), valid(1000, time.Millisecond)) // finestra: 30, 60, 90 s
 	if e.Snapshot(at(3)).NotLimiting {
-		t.Fatal("1 valido su 3 non è sotto NotLimitingShare")
+		t.Fatal("2 su 3 dal buffer non bastano")
 	}
 	// Nessun campione per due minuti: la conclusione scade.
 	e2 := NewEstimator(time.Minute)
@@ -201,6 +201,43 @@ func TestEstimatorNotLimitingOverTime(t *testing.T) {
 	}
 	if e2.Snapshot(at(2).Add(2 * time.Minute)).NotLimiting {
 		t.Fatal("campioni più vecchi di NotLimitingWindow: non valgono più")
+	}
+}
+
+// Fase 3.9, run C1 (~8 Mbit/s): i primi tre probe da 512 KiB avevano
+// aspettato l'87, 87 e 75% dei byte. Non validi, ma la rete limita: non è
+// "non limitante", e senza banda l'invio resta sconosciuto.
+func TestEstimatorSlowNetworkIsNotNotLimiting(t *testing.T) {
+	e := NewEstimator(time.Minute)
+	for i, share := range []float64{0.875, 0.875, 0.75} {
+		e.Observe(t0.Add(time.Duration(i)*6*time.Second), sampleOf(524288, int(share*524288), 1400*time.Millisecond))
+	}
+	lat := 2.0
+	s := e.Snapshot(t0.Add(12 * time.Second))
+	s.LatencyMS = &lat
+	if s.NotLimiting || s.Discarded != 3 {
+		t.Fatalf("stato %+v: 3 scartati, rete limitante", s)
+	}
+	if _, ok := s.UploadMS(1228800); ok {
+		t.Error("senza campioni validi l'invio è sconosciuto, non la sola latenza")
+	}
+}
+
+func TestSampleBuffered(t *testing.T) {
+	for _, c := range []struct {
+		total, waited int
+		want          bool
+	}{
+		{1000, 0, true},     // localhost: tutto dal buffer
+		{1000, 499, true},   // sotto BufferedShare
+		{1000, 500, false},  // al limite: ambiguo
+		{1000, 840, false},  // C1: non valido, ma la rete limita
+		{1000, 1000, false}, // valido
+		{0, 0, false},       // messaggio vuoto
+	} {
+		if got := sampleOf(c.total, c.waited, time.Millisecond).Buffered(); got != c.want {
+			t.Errorf("%d/%d byte aspettati: Buffered %v, atteso %v", c.waited, c.total, got, c.want)
+		}
 	}
 }
 
