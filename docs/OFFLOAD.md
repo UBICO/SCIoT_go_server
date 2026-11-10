@@ -62,12 +62,15 @@ At every heartbeat, in order:
      instead of split 6, 26% faster at ρ = 0.69;
    - `σ` is the noise of the two predictions' difference (below).
 
-   At the best's split point with another window than the chosen one, the
-   hysteresis is on the window instead: the device keeps its window if its
-   value is within `(1 + p95_slack)` × the best's plus the margin and the
+   At the best's split point (with `p95_slack` > 0), whatever window is
+   chosen, the hysteresis is on the window instead: the device keeps its
+   window if its value is within `(1 + p95_slack)` × the best's plus the margin and the
    chosen window does not give `margin_rel` more frames per second; it moves
    for the frames per second (`fps`) or, beyond the slack, for the value
-   (`latency`).
+   (`latency`). Also when the chosen window is the best's: in the phase 4.2
+   campaign (R1) a device at window 2 with a p95 just past the slack (175
+   against 140, ratio 1.26) went back to window 1 on the value and, 10 s
+   later, to window 2 again, once per run.
 
    If the current candidate violates the constraints, the algorithm moves
    to the chosen one without margin (`infeasible`); the minimum duration

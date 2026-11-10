@@ -294,3 +294,23 @@ func TestLatencyKeepsAWindowWithinSlack(t *testing.T) {
 		t.Errorf("da finestra 3 entro il 25%%: %+v; attesa hysteresis", d)
 	}
 }
+
+// Campagna 4.2, R1: il device a finestra 2 non torna alla 1 quando il p95
+// della 2 esce appena dallo slack (176/140 = 1,26): fastestWindow dà la 1
+// (win == best), ma l'attuale è ancora entro lo slack più il margine e la 1
+// non dà più frame/s. Con P95Slack 0 resta la regola di prima (il valore).
+func TestLatencyKeepsTheWindowJustOutsideTheSlack(t *testing.T) {
+	l := NewLatency(DefaultLatencyConfig())
+	sigma, n := calm()
+	ps := piWindows(176, 11.7)
+	if got := ps[l.fastestWindow(ps, ps[len(ps)-1], 2)].Window; got != 1 {
+		t.Fatalf("fastestWindow: finestra %d, attesa la 1 (176 > 1,25 × 140)", got)
+	}
+	if d := l.choose(onWindow(2), ps, sigma, n); d.Reason != ReasonHysteresis || d.Changes(onWindow(2).Policy, 3) {
+		t.Errorf("da finestra 2: %+v; attesa hysteresis (nessun ritorno alla 1)", d)
+	}
+	l.cfg.P95Slack = 0
+	if d := l.choose(onWindow(2), ps, sigma, n); d.MaxInflight == nil || *d.MaxInflight != 1 || d.Reason != ReasonChange {
+		t.Errorf("P95Slack 0, da finestra 2: %+v; attesa la 1 per il valore (36 ms > margine)", d)
+	}
+}
