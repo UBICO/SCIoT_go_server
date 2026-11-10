@@ -135,9 +135,12 @@ the device and one clock per duration:
   arrive. Bytes that piled up in the TCP buffer (the server was busy, or the
   network is faster than the server reads) make `receive_ms` too short and
   the bandwidth too high: that is why such samples are discarded, and counted
-  in `discarded_samples`. If fewer than 10% of the samples of the last 60 s
-  are valid (at least 3 samples), `not_limiting` is true: the network is not the bottleneck (localhost, a
-  fast LAN) and `bandwidth_bps` must not be read as a limit.
+  in `discarded_samples`. A sample is *buffered* if less than 50% of its
+  bytes waited; between 50% and 90% it is neither valid nor buffered (the
+  network limits, but not enough to measure it: phase 3.9, ~8 Mbit/s Wi-Fi,
+  75–87%). If at least 90% of the samples of the last 60 s are buffered (at
+  least 3 samples), `not_limiting` is true: the network is not the bottleneck
+  (localhost, a fast LAN) and `bandwidth_bps` must not be read as a limit.
 - **Latency.** A WebSocket ping every `stream.ping_interval_ms` (default
   1000), its pong awaited up to 5 s: `latency_ms` is half the *minimum* RTT
   of the pings of the last 60 s. Not an average: the device's pong travels

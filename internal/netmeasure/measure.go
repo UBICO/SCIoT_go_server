@@ -31,6 +31,17 @@ const WaitThreshold = 200 * time.Microsecond
 // aspettato perché il campione misuri la rete e non il buffer.
 const ValidWaitedShare = 0.9
 
+// BufferedShare: sotto questa quota di byte aspettati il campione viene "dal
+// buffer": la maggior parte dei byte era già arrivata prima che il server la
+// leggesse, la rete è più veloce del server. Solo questi campioni dicono che
+// la rete non limita (Estimator, NotLimiting).
+//
+// Tra BufferedShare e ValidWaitedShare il campione è ambiguo: la rete limita
+// (la maggior parte dei byte l'ha aspettata) ma non abbastanza per misurarne
+// la banda. Fase 3.9: in localhost tutti i campioni sono sotto 0,1, su Wi-Fi
+// quasi tutti sopra 0,2; a ~8 Mbit/s i probe scartati avevano 0,75–0,87.
+const BufferedShare = 0.5
+
 // Sample è la ricezione di un messaggio.
 type Sample struct {
 	Bytes   int           // byte del messaggio (payload WebSocket)
@@ -47,6 +58,14 @@ func (s Sample) BandwidthBps() float64 {
 		return 0
 	}
 	return float64(s.Bytes) / s.Receive.Seconds()
+}
+
+// Buffered dice se il campione viene dal buffer: WaitedBytes/Bytes sotto
+// BufferedShare.
+func (s Sample) Buffered() bool {
+	// Un messaggio vuoto non dice nulla sulla rete; float64 per evitare la
+	// divisione intera.
+	return s.Bytes > 0 && float64(s.WaitedBytes)/float64(s.Bytes) < BufferedShare
 }
 
 // ReadChunk è la dimensione di ogni Read. La libreria riempie p per intero

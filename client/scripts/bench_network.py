@@ -13,7 +13,7 @@ upload (client → server) like one link. For every limit of ``--limits-mbps``
 
 1. set the limit on the proxy;
 2. wait ``--warmup`` seconds: the estimate is a moving average and the
-   "not limiting" flag looks at the last 20 frames;
+   "not limiting" flag looks at the samples of the last 60 s;
 3. measure for ``--measure`` seconds.
 
 Per limit it reports the server's estimate (median over the heartbeats of the
