@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -53,9 +52,6 @@ def main(argv: list[str] | None = None) -> int:
     server, _ = build_server(worker, args.listen)
     server.start()
 
-    stop = threading.Event()
-    signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    signal.signal(signal.SIGINT, lambda *_: stop.set())
     # The Go server does not parse this line (it waits for Describe), but it is
     # useful in the logs.
     print(
@@ -65,9 +61,32 @@ def main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
         flush=True,
     )
-    stop.wait()
+    wait_for_stop()
     server.stop(grace=2).wait()
     return 0
+
+
+def wait_for_stop(poll_s: float = 0.2) -> None:
+    """Block until SIGTERM or SIGINT.
+
+    The handler must not take a lock. With threading.Event.set() in the
+    handler, a second signal arriving while the first handler held the
+    Event's lock ran a nested handler on the same thread, which waited for
+    that lock forever: on shutdown the Go server sends SIGTERM to the
+    process group and `uv run` forwards another, and every worker of the
+    phase 4.2 campaign stayed alive, deadlocked, still listening on its
+    port (54 of 60 hung with a burst of SIGTERMs; 0 with a flag).
+    """
+    stopped = False
+
+    def handler(*_):
+        nonlocal stopped
+        stopped = True
+
+    signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGINT, handler)
+    while not stopped:
+        time.sleep(poll_s)
 
 
 if __name__ == "__main__":

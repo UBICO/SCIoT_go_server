@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -362,4 +365,56 @@ func TestSupervisorExternalWorker(t *testing.T) {
 	}
 	stop()
 	eventually(t, 5*time.Second, "worker esterno perso", func() bool { return !sup.Ready() })
+}
+
+// Fase 4.2: il worker avviato ("uv run") esce, ma un suo figlio bloccato
+// (python in deadlock sul segnale) restava vivo, orfano, sulla porta. Dopo
+// lo spegnimento nessun processo del gruppo deve sopravvivere.
+func TestSupervisorKillsTheWholeGroup(t *testing.T) {
+	opts, _ := helperOptions(t, "orphan-child")
+	pidFile := filepath.Join(t.TempDir(), "child")
+	t.Setenv(helperEnv+"_CHILD", pidFile)
+	sup, _, cancel, done := runSupervisor(t, opts)
+	eventually(t, 10*time.Second, "worker pronto", sup.Ready)
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("pid del figlio: %v", err)
+	}
+	pid, _ := strconv.Atoi(string(data))
+	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) }) // anche se il test fallisce
+
+	cancel()
+	waitDone(t, done, 3*time.Second)
+	eventually(t, 2*time.Second, "figlio del worker terminato", func() bool {
+		// Kill(pid, 0) non manda nulla: dice solo se il processo esiste.
+		// Uno zombie esiste ancora finché il padre (il worker) non è uscito,
+		// ma qui il padre è già uscito e init lo raccoglie.
+		return syscall.Kill(pid, 0) == syscall.ESRCH
+	})
+}
+
+// Fase 4.2: un worker che muore all'avvio si riavvia dopo il backoff, non
+// dopo StartupTimeout (qui 5 s; nel config del server 120 s).
+func TestSupervisorRestartsAWorkerThatDiesAtStart(t *testing.T) {
+	opts, counter := helperOptions(t, "die-at-start")
+	runSupervisor(t, opts)
+	eventually(t, 2*time.Second, "tre avvii prima di StartupTimeout", func() bool { return starts(counter) >= 3 })
+}
+
+// Fase 4.2: con l'indirizzo già occupato (un worker vecchio) il supervisore
+// non avvia il worker e non chiama Describe, che risponderebbe dal processo
+// vecchio; parte appena l'indirizzo si libera.
+func TestSupervisorWaitsForABusyAddress(t *testing.T) {
+	opts, counter := helperOptions(t, "serve")
+	stale, err := net.Listen("tcp", opts.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sup, _, _, _ := runSupervisor(t, opts)
+	time.Sleep(500 * time.Millisecond) // diversi backoff da 50–200 ms
+	if n := starts(counter); n != 0 || sup.Ready() {
+		t.Fatalf("indirizzo occupato: %d avvii, pronto %v; attesi 0 e false", n, sup.Ready())
+	}
+	stale.Close()
+	eventually(t, 10*time.Second, "pronto dopo che l'indirizzo si è liberato", sup.Ready)
 }

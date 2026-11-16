@@ -35,6 +35,22 @@ uv run sciot-worker --listen 127.0.0.1:50051 --slots 2 --threads 6 \
 A *slot* is a complete set of interpreters for every configured model, used by
 one request at a time. slots × threads should not exceed the cores.
 
+It stops on `SIGTERM` or `SIGINT`; the Go server sends `SIGTERM` to the
+worker's process group (`uv run` and python) and, once `uv run` has exited,
+`SIGKILL` to the group, so no worker outlives the server. Before starting it,
+the server checks that the worker's address is free; if not, it logs
+`worker: 127.0.0.1:50052 already in use (a stale sciot-worker? …)` and retries
+with a growing pause (1 s, 2 s, … up to 30 s), without starting the
+worker: find the process with `lsof -nP -iTCP:50052 -sTCP:LISTEN` and stop it
+(`kill -9 <pid>` for a stale worker, which may ignore `SIGTERM`); the server
+then starts its worker by itself. The worker also refuses a port in use
+(gRPC's `SO_REUSEPORT` off: `Failed to bind to address …`), and a worker that
+dies at start is restarted after the pause, not after `startup_timeout_ms`.
+Until phase 4.2 the signal handler could deadlock on a second `SIGTERM` (the
+server's and the one `uv run` forwards) and left a worker per run alive on its
+port, where the next server could reach it; after an update, check with
+`pgrep -fl sciot-worker` that none is left from before.
+
 `RunFrom` runs a model from `split_point + 1` to the last segment. When the
 request carries `postprocess` (the Go server always sends the model's), the
 worker decodes the output after giving the slot back and returns the

@@ -210,3 +210,16 @@ def test_decode_error_is_invalid_argument(make_worker):
         )
     assert err.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     assert "decode" in err.value.details()
+
+
+def test_a_port_in_use_is_an_error(model_dir):
+    # Phase 4.2: with SO_REUSEPORT (gRPC's default) a new worker bound next to
+    # a stale one on the same port, and the server could reach the stale one.
+    worker = PartitionWorker([ModelConfig("tiny", model_dir)], 1, 1)
+    server, port = build_server(worker, "127.0.0.1:0")
+    server.start()
+    try:
+        with pytest.raises((OSError, RuntimeError)):  # grpc raises RuntimeError itself
+            build_server(worker, f"127.0.0.1:{port}")
+    finally:
+        server.stop(grace=None)

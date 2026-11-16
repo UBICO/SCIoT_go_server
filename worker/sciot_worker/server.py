@@ -158,7 +158,12 @@ def build_server(worker: PartitionWorker, listen: str) -> tuple[grpc.Server, int
     """
     from concurrent import futures
 
+    # gRPC turns SO_REUSEPORT on by default, so a new worker bound next to a
+    # stale one on the same port (phase 4.2: 22 deadlocked workers, 3 on
+    # 127.0.0.1:50052) and the server could reach the stale one. Off,
+    # add_insecure_port returns 0 and the check below raises.
     options = [
+        ("grpc.so_reuseport", 0),
         ("grpc.max_receive_message_length", MAX_MESSAGE_BYTES),
         ("grpc.max_send_message_length", MAX_MESSAGE_BYTES),
     ]

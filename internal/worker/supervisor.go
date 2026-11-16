@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -159,26 +160,30 @@ func (s *Supervisor) runManaged(ctx context.Context) {
 	// porta occupata), riavviarlo senza pausa riempirebbe il log e la CPU.
 	backoff := s.opts.MinBackoff
 	for {
-		exited, stop, err := s.start(ctx)
-		if err != nil {
+		// Porta occupata (un worker vecchio): niente start né waitReady, un
+		// Describe risponderebbe dal processo vecchio. Si va al backoff.
+		if err := addressFree(s.opts.Address); err != nil {
+			_, port, _ := net.SplitHostPort(s.opts.Address)
+			log.Printf("worker: %s already in use (a stale sciot-worker? lsof -nP -iTCP:%s -sTCP:LISTEN): %v", s.opts.Address, port, err)
+		} else if p, stop, err := s.start(ctx); err != nil {
 			log.Printf("worker: %v", err)
 		} else {
-			if err := s.waitReady(ctx); err == nil {
+			if err := s.waitReady(ctx, p.done); err == nil {
 				backoff = s.opts.MinBackoff // avvio riuscito: azzera l'attesa
-			} else if ctx.Err() == nil {
+			} else if ctx.Err() == nil && !errors.Is(err, errExited) {
 				// Non è partito in tempo: lo si ferma e si riprova.
 				log.Printf("worker: %v; restarting", err)
 				stop()
 			}
 
 			select {
-			case err := <-exited:
+			case <-p.done:
 				s.setReady(nil, 0)
-				log.Printf("worker exited: %v", err)
+				log.Printf("worker exited: %v", p.err)
 			case <-ctx.Done():
 				s.setReady(nil, 0)
 				stop()
-				<-exited
+				<-p.done
 				return
 			}
 		}
@@ -199,7 +204,7 @@ func (s *Supervisor) runExternal(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if !s.Ready() {
-			if err := s.waitReady(ctx); err != nil && ctx.Err() == nil {
+			if err := s.waitReady(ctx, nil); err != nil && ctx.Err() == nil {
 				log.Printf("worker %s not ready: %v", s.opts.Address, err)
 			}
 		} else if _, err := s.currentClient().Describe(ctx); err != nil && ctx.Err() == nil {
@@ -215,9 +220,14 @@ func (s *Supervisor) runExternal(ctx context.Context) {
 	}
 }
 
+// errExited: il processo del worker è terminato prima di essere pronto.
+var errExited = errors.New("worker exited before it was ready")
+
 // waitReady chiama Describe finché il worker risponde o scade StartupTimeout.
 // Quando risponde costruisce il catalogo e segna il worker come pronto.
-func (s *Supervisor) waitReady(ctx context.Context) error {
+// done è il p.done del processo avviato (nil per un worker esterno: un canale
+// nil in un select non è mai pronto).
+func (s *Supervisor) waitReady(ctx context.Context, done <-chan struct{}) error {
 	ctx, cancel := context.WithTimeout(ctx, s.opts.StartupTimeout)
 	defer cancel()
 
@@ -239,16 +249,28 @@ func (s *Supervisor) waitReady(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("worker not ready after %v: %w", s.opts.StartupTimeout, ctx.Err())
+		case <-done: // un worker che muore all'avvio si riavvia dopo il backoff
+			return errExited
 		case <-ticker.C:
 		}
 	}
 }
 
+// proc è un processo del worker avviato da start. done si chiude quando il
+// processo è terminato (Wait è tornato); err, il risultato di Wait, si legge
+// solo dopo <-done (la chiusura del canale lo rende visibile a chi legge).
+// Un canale chiuso lo vedono tutti quelli che lo aspettano: waitReady e
+// runManaged insieme (Fase 4.2), mentre un valore inviato lo riceve uno solo.
+type proc struct {
+	done chan struct{}
+	err  error
+}
+
 // start avvia il processo del worker e restituisce:
-//   - exited: riceve il risultato di Wait quando il processo termina;
+//   - p: p.done si chiude quando il processo termina, p.err è il risultato;
 //   - stop: chiede al processo di fermarsi (SIGTERM al gruppo, SIGKILL dopo
 //     StopGrace). Si può chiamare più volte.
-func (s *Supervisor) start(ctx context.Context) (exited <-chan error, stop func(), err error) {
+func (s *Supervisor) start(ctx context.Context) (p *proc, stop func(), err error) {
 	args := append([]string{}, s.opts.Command[1:]...)
 	args = append(args,
 		"--listen", s.opts.Address,
@@ -293,14 +315,21 @@ func (s *Supervisor) start(ctx context.Context) (exited <-chan error, stop func(
 		log.Printf("worker: reconnect: %v", err)
 	}
 
-	ch := make(chan error, 1) // bufferizzato: la goroutine non resta bloccata
+	p = &proc{done: make(chan struct{})}
 	go func() {
 		err := cmd.Wait()
+		// Wait aspetta solo il processo avviato ("uv run"): dopo WaitDelay Go
+		// uccide lui, non python, che restava orfano (Fase 4.2: 22 worker vivi
+		// senza server). SIGKILL a tutto il gruppo, come cmd.Cancel fa con
+		// SIGTERM; l'errore si ignora (ESRCH: il gruppo è già vuoto, il caso
+		// normale).
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		pw.Close() // fine dell'output: forwardLines termina
 		stop()     // libera procCtx
-		ch <- err
+		p.err = err
+		close(p.done)
 	}()
-	return ch, stop, nil
+	return p, stop, nil
 }
 
 // forwardLines copia ogni riga di r nel log del server, con un prefisso.
@@ -312,4 +341,20 @@ func forwardLines(r io.Reader, prefix string) {
 	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
 		log.Printf("%sread error: %v", prefix, err)
 	}
+}
+
+// addressFree dice se addr (host:porta) è libero, aprendolo e chiudendolo
+// subito; l'errore di net.Listen se è occupato. Go non usa SO_REUSEPORT, quindi
+// un worker vecchio sulla porta (anche con SO_REUSEPORT, il default di gRPC
+// fino alla Fase 4.2) lo fa fallire.
+//
+// shortcut: tra il controllo e l'avvio del worker passano alcuni secondi in cui
+// un altro processo potrebbe prendere la porta; il worker allora fallisce
+// all'avvio (so_reuseport 0) e si riprova dopo il backoff.
+func addressFree(addr string) error {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return l.Close()
 }
