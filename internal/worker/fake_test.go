@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -112,6 +113,10 @@ func TestHelperWorker(t *testing.T) {
 	if mode == "" {
 		return // eseguito come test normale: non fa nulla
 	}
+	if mode == "stuck-child" { // il python bloccato: ignora SIGTERM e SIGINT, non esce mai
+		signal.Ignore(syscall.SIGTERM, syscall.SIGINT)
+		select {}
+	}
 	countStart()
 
 	args := os.Args
@@ -129,11 +134,22 @@ func TestHelperWorker(t *testing.T) {
 	}
 
 	switch mode {
+	case "die-at-start": // muore prima di essere pronto (porta occupata, modello mancante)
+		os.Exit(3)
 	case "never": // non risponde mai: per il timeout di avvio
 		time.Sleep(time.Minute)
 		os.Exit(0)
 	case "ignore-term": // ignora SIGTERM: deve arrivare SIGKILL
 		signal.Ignore(syscall.SIGTERM)
+	case "orphan-child":
+		// Come "uv run" con python bloccato (Fase 4.2): un figlio nello stesso
+		// gruppo che non esce mai; il pid va nel file del test.
+		child := exec.Command(os.Args[0], "-test.run=^TestHelperWorker$")
+		child.Env = append(os.Environ(), helperEnv+"=stuck-child")
+		if err := child.Start(); err != nil {
+			os.Exit(4)
+		}
+		os.WriteFile(os.Getenv(helperEnv+"_CHILD"), []byte(strconv.Itoa(child.Process.Pid)), 0o644)
 	}
 
 	_, _, stop := serveFake(t, listen)
