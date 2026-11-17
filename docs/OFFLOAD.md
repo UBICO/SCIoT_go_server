@@ -190,6 +190,13 @@ device does the same. A Pi with yolo-pico (R5, split 4, ~200 KB per frame)
 goes to window 3, whose measured p95 is 1.55× window 1's: the bandwidth
 estimate makes its transfer too short, so the simulation gives the three
 windows the same p95 ([COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign)).
+With the bandwidth from the time per byte (phase 4.3 campaign) it goes to
+window 2, the right one: measured, window 2's p95 is 1.19× window 1's and
+window 3's 1.42× ([COSTMODEL.md](COSTMODEL.md#loaded-server-and-pico-on-the-pi-phase-43-campaign)).
+
+The maximum window (3) was chosen for 7% of the time in `SPLIT` in the free
+runs of phase 4.2 (only pico, before the bandwidth fix) and 1% in phase
+4.3: a maximum computed per device (above) is not needed for now.
 
 ### Other devices
 
@@ -282,6 +289,21 @@ slack), with the same frames/s and p95; the load stayed at ρ 0.3–0.4 with
 no queue, so `k_queue` could not act. `k_noise` stays, for noisier
 predictions. `sciot-replay check` still gives the prediction error per
 band of ρ.
+
+**Loaded server** (phase 4.3 campaign: two Pis, worker with 1 slot,
+[COSTMODEL.md](COSTMODEL.md#loaded-server-and-pico-on-the-pi-phase-43-campaign)).
+With 1 thread (utilization 0.92–0.95) `k_queue` acted, and badly: in Q5 a
+device stayed at split 4 window 2 (p95 361 ms, predicted 364) for 70 s with
+reason `hysteresis` while split −1 window 1 was predicted at 214 ms. At
+ρ 0.99 the queue term multiplied the margin's base by 20 (728 ms), so no
+gain could replace the current policy; the replay of the same recording
+with `k_queue: 0` moves it after 32 s. The simulation was within 2% of the
+p95 there, so the prudence the term added had no reason: removed. With 2
+threads (utilization 0.6–0.73) the two `k_queue` settings ended in
+different policies (Q1 both at window 2, Q2 one at window 1), but not
+because of the term (ρ below 0.8, reason `best`): the predicted p95 of
+window 2 over window 1 was 1.24 in one run and 1.27 in the other, either
+side of `p95_slack` 0.25.
 
 ## Admin
 

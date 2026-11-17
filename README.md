@@ -32,8 +32,8 @@ Status:
   window per device, simulating the other devices as clients
 - [ ] phase 4, Python client with camera (laptop, Raspberry Pi) and
   verification on devices over a real network
-  ([docs/RASPBERRY.md](docs/RASPBERRY.md)); open: the bandwidth estimate for
-  small frames, a slow network, a loaded server
+  ([docs/RASPBERRY.md](docs/RASPBERRY.md)); open: a slow network, the p95
+  with two devices (−8…−20%) and with fast frames (pico, −30%)
 - [ ] phase 5, ESP32 client
 
 The reference device client is in `client/`, in Python
