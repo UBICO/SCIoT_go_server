@@ -95,7 +95,7 @@ func win(rho, pred, meas float64) CheckWindow {
 	}
 }
 
-func TestCheckBucketsAndRhoFrom(t *testing.T) {
+func TestCheckBuckets(t *testing.T) {
 	ws := []CheckWindow{
 		win(0.3, 105, 100), win(0.4, 95, 100), win(0.45, 100, 100), // errori +5%, −5%, 0
 		win(0.6, 108, 100), win(0.7, 92, 100), // |8%|
@@ -118,15 +118,5 @@ func TestCheckBucketsAndRhoFrom(t *testing.T) {
 	}
 	if bs[3].Windows != 0 || !math.IsNaN(bs[3].AbsP95) {
 		t.Errorf("fascia vuota = %+v", bs[3])
-	}
-
-	if rho, ok := RhoFrom(bs, 0.1); !ok || rho != 0.8 {
-		t.Errorf("RhoFrom(0.1) = %v, %v; atteso 0.8", rho, ok)
-	}
-	if rho, ok := RhoFrom(bs, 0.06); !ok || rho != 0.5 {
-		t.Errorf("RhoFrom(0.06) = %v, %v; atteso 0.5", rho, ok)
-	}
-	if _, ok := RhoFrom(bs, 0.5); ok {
-		t.Error("RhoFrom(0.5): nessuna fascia supera il margine, atteso ok = false")
 	}
 }

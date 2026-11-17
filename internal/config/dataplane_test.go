@@ -210,15 +210,21 @@ func TestOffloadConfig(t *testing.T) {
 		t.Errorf("default = %q %+v, %v", name, cfg, err)
 	}
 	name, cfg, err = loadSections(t, `"offload": {"algorithm": "latency", "objective": "mean", "k_noise": 0, "min_hold_ms": 5000, "p95_slack": 0},`).OffloadConfig()
-	if err != nil || name != "latency" || cfg.Objective != offload.ObjectiveMean || cfg.KNoise != 0 || cfg.MinHold != 5*time.Second || cfg.KQueue != 1 || cfg.P95Slack != 0 {
+	if err != nil || name != "latency" || cfg.Objective != offload.ObjectiveMean || cfg.KNoise != 0 || cfg.MinHold != 5*time.Second || cfg.P95Slack != 0 {
 		t.Errorf("latency = %q %+v, %v", name, cfg, err)
 	}
 	for _, bad := range []string{
 		`"algorithm": "random"`, `"objective": "p99"`, `"max_reject_share": 2`,
-		`"margin_rel": -0.1`, `"min_hold_ms": -1`, `"queue_rho_from": 1`, `"p95_slack": -0.1`,
+		`"margin_rel": -0.1`, `"min_hold_ms": -1`, `"p95_slack": -0.1`,
 	} {
 		if _, _, err := loadSections(t, `"offload": {`+bad+`},`).OffloadConfig(); err == nil {
 			t.Errorf("%s: atteso un errore", bad)
+		}
+	}
+	// Tolti nella Fase 4.3: una config che li usa ancora non si carica.
+	for _, gone := range []string{`"k_queue": 1`, `"queue_rho_from": 0.8`} {
+		if _, err := Load(writeConfig(t, `{"offload": {`+gone+`},`+modelsJSON+`}`)); err == nil {
+			t.Errorf("%s: atteso un errore in Load", gone)
 		}
 	}
 }

@@ -289,7 +289,8 @@ after each.
   `record.dir`), `offload.p95_slack` left at its default (0.25). Two copies
   for R4, differing only in the `offload` section:
   `config-knoise0.json` (`"k_noise": 0`) and `config-kqueue0.json`
-  (`"k_queue": 0`).
+  (`"k_queue": 0`; the key was removed in phase 4.3 and a config that
+  still has it no longer starts, so R4 now runs `k_noise` only).
 - R5 needs a second model, different from yolo-small: export and build it
   ([MODELS.md](MODELS.md)), add it to `models` in all three `config.json`,
   and copy its directory to `pi2` (`~/sciot-models/<model_key>`).
@@ -339,5 +340,4 @@ after the window hysteresis fix), R2, R3 ×3, R4 2 + 2, R5 ×2 with yolo-pico
 [COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign)
 (cost model, CPU contention, two devices, two models) and
 [OFFLOAD.md](OFFLOAD.md) (window, other devices, `k_noise` / `k_queue`).
-The slow network (R6) and a loaded server (ρ above `queue_rho_from`, where
-`k_queue` acts) are still to run.
+The slow network (R6) is still to run (`k_queue` was removed in phase 4.3).

@@ -375,7 +375,8 @@ for `pi1` alone (R1). Not explained: likely the Wi-Fi shared by two devices
 (a longer transfer tail, which the simulation does not have), not checked.
 With `k_noise: 0` or `k_queue: 0` (R4) the decisions and the measures are
 those of R3: with ρ 0.4 and no queue neither term is active
-([OFFLOAD.md](OFFLOAD.md#verification-phase-38)).
+([OFFLOAD.md](OFFLOAD.md#verification-phase-38)). The queue term
+(`k_queue`) was removed in phase 4.3.
 
 **Two models** (R5 ×2: `pi1` yolo-small, `pi2` yolo-pico 320, 2.3 MB,
 ~200 KB per frame at split 4). `pi1` as in R3 (window 2, 10.6 frames/s, p95

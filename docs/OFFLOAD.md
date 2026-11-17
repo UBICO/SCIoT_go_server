@@ -50,16 +50,14 @@ At every heartbeat, in order:
 5. **Hysteresis**: the best replaces the current one only if it is better
    by more than a margin (`hysteresis` otherwise):
 
-       margin = max(margin_min_ms, margin_rel × current) × (1 + k_queue · max(0, ρ − queue_rho_from)/(1−ρ))  +  k_noise · σ
+       margin = max(margin_min_ms, margin_rel × current)  +  k_noise · σ
 
-   - `ρ` is the best candidate's utilization from the simulation (capped at
-     0.99): near saturation a small error on the load moves the latency a
-     lot, so the margin grows. Only above `queue_rho_from` (default 0.8):
-     below, the simulation's p95 is within `margin_rel` of the client's
-     (phase 3.8, `sciot-replay check`: [Verification](#verification-phase-38)),
-     and a margin that grew from low loads kept a single device at split 3
-     instead of split 6, 26% faster at ρ = 0.69;
    - `σ` is the noise of the two predictions' difference (below).
+
+   There is no term for the queue: the one that grew the margin with the
+   best candidate's utilization ρ (`k_queue`, `queue_rho_from`) was removed
+   in phase 4.3, because near saturation it blocked every change (at
+   ρ = 0.99 it multiplied the base by 20).
 
    At the best's split point (with `p95_slack` > 0), whatever window is
    chosen, the hysteresis is on the window instead: the device keeps its
@@ -269,8 +267,8 @@ with two within ~1 ms (37.0–38.9 against 36.5–38.5 ms; phase 4.2 campaign,
 the contention is gone.
 
 **Ablation** (2 and 4 devices started together, 2 runs, 90 s): with
-`k_noise: 0` or `k_queue: 0` the policies, changes, time to the first
-`SPLIT`, p95 and frames per second are those of the full algorithm, and
+`k_noise: 0` or `k_queue: 0` (`k_queue` removed in phase 4.3) the
+policies, changes, time to the first `SPLIT`, p95 and frames per second are those of the full algorithm, and
 with the other devices simulated as clients the reservations (removed in
 phase 4.2, [Other devices](#other-devices)) changed neither the predictions
 nor the decision. The
@@ -281,10 +279,9 @@ Wi-Fi, 2 runs each) the same: with `k_noise: 0` or `k_queue: 0` every
 device goes `LOCAL` → split −1 window 1 → window 2 at the same times as
 with the full algorithm (one move to window 2 5 s later, on the edge of the
 slack), with the same frames/s and p95; the load stayed at ρ 0.3–0.4 with
-no queue, so `k_queue` could not act. They stay, for a loaded server and
-noisier predictions. `queue_rho_from` from the prediction error per band
-of ρ (`sciot-replay check`): no band above `margin_rel` in 6 of the 11
-recordings, 0.8 in 3 and 0.95 in 2, so the default 0.8 stays.
+no queue, so `k_queue` could not act. `k_noise` stays, for noisier
+predictions. `sciot-replay check` still gives the prediction error per
+band of ρ.
 
 ## Admin
 
@@ -306,9 +303,7 @@ otherwise). A new registration starts unpinned.
 | `offload.min_hold_ms` | 10000 | 0–3600000: no change before the policy has been in force this long |
 | `offload.margin_min_ms` | 2 | 0–1000: the smallest gain (ms) that replaces the current policy (the hysteresis base, step 5 of [`latency`](#latency)) |
 | `offload.margin_rel` | 0.1 | 0–1: the gain needed as a share of the current value; the base is the larger of the two |
-| `offload.k_queue` | 1 | 0–100; 0 removes the queue term (ablation, phase 3.8) |
 | `offload.k_noise` | 1 | 0–100; 0 removes the noise term |
-| `offload.queue_rho_from` | 0.8 | 0–0.99: utilization from which the queue term grows; 0 = from no load |
 
 `sciot-replay algo -algorithm latency -config config.json` replays a
 recording with the parameters of that file's `offload` section.

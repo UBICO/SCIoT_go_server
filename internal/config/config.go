@@ -85,9 +85,7 @@ type Offload struct {
 	MinHoldMS      *int     `json:"min_hold_ms,omitempty"`
 	MarginMinMS    *float64 `json:"margin_min_ms,omitempty"`
 	MarginRel      *float64 `json:"margin_rel,omitempty"`
-	KQueue         *float64 `json:"k_queue,omitempty"`
 	KNoise         *float64 `json:"k_noise,omitempty"`
-	QueueRhoFrom   *float64 `json:"queue_rho_from,omitempty"`
 }
 
 // Record è la sezione "record": dove scrivere la registrazione degli eventi
@@ -406,9 +404,7 @@ func (f File) OffloadConfig() (string, offload.LatencyConfig, error) {
 		{"offload.p95_slack", o.P95Slack, &cfg.P95Slack, 0, 10},
 		{"offload.margin_min_ms", o.MarginMinMS, &cfg.MarginMinMS, 0, 1000},
 		{"offload.margin_rel", o.MarginRel, &cfg.MarginRel, 0, 1},
-		{"offload.k_queue", o.KQueue, &cfg.KQueue, 0, 100},
 		{"offload.k_noise", o.KNoise, &cfg.KNoise, 0, 100},
-		{"offload.queue_rho_from", o.QueueRhoFrom, &cfg.QueueRhoFrom, 0, 0.99},
 	} {
 		if v.in == nil {
 			continue
