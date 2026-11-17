@@ -340,4 +340,48 @@ after the window hysteresis fix), R2, R3 ×3, R4 2 + 2, R5 ×2 with yolo-pico
 [COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign)
 (cost model, CPU contention, two devices, two models) and
 [OFFLOAD.md](OFFLOAD.md) (window, other devices, `k_noise` / `k_queue`).
-The slow network (R6) is still to run (`k_queue` was removed in phase 4.3).
+The slow network (R6) is still to run; the loaded server ran in
+[step 9](#9-phase-43-campaign).
+
+## 9. Phase 4.3 campaign
+
+Two open checks of phase 4: a **loaded server** (utilization above 0.8,
+never reached with two Pis on 2 slots) and **yolo-pico** after the
+bandwidth from the time per byte. Same rules as step 8 (server restarted
+before every run, both Pis started together from the server's machine,
+90 s, static image, `vcgencmd get_throttled` after each); CSVs in
+`~/sciot/results/phase43/` on the Pis.
+
+**Before the runs:**
+
+- Server and both clients from the same commit (`rsync` `client/`, `uv sync
+  --frozen`). Over a non-interactive `ssh` the Pi's shell does not read the
+  `PATH` the uv installer added: call `~/.local/bin/uv`, or prefix the
+  command with `export PATH=$HOME/.local/bin:$PATH;`.
+- The load comes from a worker with **1 slot** instead of more devices:
+  copies of `config.json` differing only in `worker`: `"slots": 1` with
+  `"threads": 2` (`S` at split −1 ~36 ms on a MacBook: two Pis at window 2
+  give ρ ~0.75) and with `"threads": 1` (`S` ~67 ms: ρ ≥ 1 offered). The
+  dispatcher, the simulation and the worker take any number of slots ≥ 1.
+
+| Run | Devices | Worker | `<policy>` | Repeat |
+|---|---|---|---|---|
+| Q1: free | pi1 + pi2, yolo-small | 1 slot × 2 threads | no pin | 2 |
+| Q2: free, `k_queue: 0` | same | same | no pin | 2 |
+| Q3: window 3 | same | same | both `{"mode":"SPLIT","split_point":-1,"max_inflight":3}` | 1 |
+| Q4: saturated | same | 1 slot × 1 thread | both split −1, `max_inflight` 2 | 1 |
+| Q5: free, saturated | same | 1 slot × 1 thread | no pin | 1 + 1 with `k_queue: 0` |
+| P1: pico free | pi1 yolo-small, pi2 yolo-pico (`--model-dir`) | `config.json` (2 slots) | no pin | 2 |
+| P2: pico windows | same | same | pi2 `{"mode":"SPLIT","split_point":4,"max_inflight":<w>}`, `<w>` 1, 2, 3 | 1 each |
+
+`k_queue` was removed after this campaign ([OFFLOAD.md](OFFLOAD.md#verification-phase-38)):
+a config with it no longer starts.
+
+**Run** (2026-11-17, commit `59dd88d`, `client/results/phase43/`): the 13
+runs, P1/P2 repeated once (the first attempt pointed `--model-dir` at a
+path that does not exist on the Pi, so `pi2` never started). No
+throttling, 43–65 °C. Results:
+[COSTMODEL.md](COSTMODEL.md#loaded-server-and-pico-on-the-pi-phase-43-campaign)
+(simulation near saturation, queue formulas, pico) and
+[OFFLOAD.md](OFFLOAD.md#verification-phase-38) (`k_queue`, window). Still
+to run: the slow network (R6 of step 8).

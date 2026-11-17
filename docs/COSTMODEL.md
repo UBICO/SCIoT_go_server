@@ -423,6 +423,75 @@ samples). `bandwidth_std_bps` keeps the time per byte's CV, so the CV of
 the bandwidth [above](#variability-on-the-replay-phase-42) was
 computed on the rates, before the change.
 
+### Loaded server and pico on the Pi (phase 4.3 campaign)
+
+Two Raspberry Pis over Wi-Fi, static image, server on a MacBook at commit
+`59dd88d` ([RASPBERRY.md](RASPBERRY.md#9-phase-43-campaign),
+`client/results/phase43/`), 2026-11-17, 90 s per run. Predicted: median
+over the decisions after the last policy change (live; replay for pinned
+devices); measured: client CSV from 5 s after it. Utilization: the
+dispatcher's, median over the steady part.
+
+**Loaded server.** The worker with **1 slot** brings the two Pis' load near
+saturation, which two devices on 2 slots never reached (ρ 0.3–0.4 in phase
+4.2): `S` at split −1 is 36 ms with 2 threads, 67 ms with 1. Both Pis
+yolo-small.
+
+| Run | Worker | Policies | Utilization | frames/s measured (error) | p95 ms measured (error) |
+|---|---|---|---|---|---|
+| Q1 ×2, free | 1 × 2 | −1/2, −1/2 | 0.71–0.73 | 10.3–10.4 (−5…0%) | 227–243 (−10…+6%) |
+| Q2 ×2, free, `k_queue: 0` | 1 × 2 | −1/2, −1/1 | 0.59 | 11.1 / 5.7 (−3…+4%) | 210–222 / 198 (−19…−9%) |
+| Q3, pinned −1/3 | 1 × 2 | −1/3, −1/3 | 0.72 | 10.3–10.4 (−5…−1%) | 342–346 (−6…+2%) |
+| Q4, pinned −1/2 | 1 × 1 | −1/2, −1/2 | 0.94 (p90 0.99) | 7.27 (0%) | 288–292 (−2…−1%) |
+| Q5, free | 1 × 1 | 4/2, −1/2 | 0.95 | 7.9 (0%) | 361 / 258 (0…+1%) |
+| Q5k, free, `k_queue: 0` | 1 × 1 | −1/2, −1/1 | 0.92 | 9.3 / 4.6 (+3…+4%) | 251 / 273 (−16…−8%) |
+
+The simulation holds near saturation: in Q4 and Q5 (utilization 0.94–0.95,
+queue wait 79–113 ms) frames/s and mean within 3%, p95 within 2%. The
+error left is the p95 of two devices on different windows (Q2, Q5k: −8…−19%,
+as in [phase 4.2](#verification-on-the-pi-with-answer_ms-phase-42-campaign)).
+Q3 gets the frames/s of window 2 at a higher p95: at window 3 the link,
+not the server, bounds the rate. No frame refused by the server in any run
+(4 `deadline_exceeded` in 29 826 frames of the whole campaign). The queue
+term of the algorithm's margin froze Q5 near saturation and was removed
+([OFFLOAD.md](OFFLOAD.md#verification-phase-38)).
+
+**Queue formulas** (`sciot-replay queue`, the pending repetition of
+[verification 1](#verification-1-2026-10-28) with devices on other
+machines): measured mean wait per band against M/M/c and G/G/c.
+
+| Run | ρ band (windows) | measured | M/M/c | G/G/c |
+|---|---|---|---|---|
+| Q3 | 0.5–0.8 (15) | 8.6 ms | 123 ms | 23 ms |
+| Q4 | 0.95–1 (8) | 84.7 ms | 42 437 ms | 2 944 ms |
+| Q4 | ≥ 1 (7) | 83.4 ms | ∞ | ∞ |
+
+Near saturation both formulas are wrong by orders of magnitude: they
+describe an open queue, while here each device has at most its window in
+flight, so the queue is bounded by the sum of the windows (Q4: at most 4
+frames in flight, measured wait ~1.3 `S`). The simulation models the windows; the formulas stay
+superseded.
+
+**Pico after the bandwidth from the time per byte.** `pi1` yolo-small free,
+`pi2` yolo-pico 320 free (P1 ×2) or pinned at split 4 (P2).
+
+| `pi2` | frames/s measured / predicted | p95 ms measured / predicted | mean ms measured / predicted |
+|---|---|---|---|
+| P2, 4/1 | 27.0 / 31.6 (+17%) | 52 / 45 (−13%) | 44 / 42 (−5%) |
+| P2, 4/2 | 44.1 / 61.2 (+39%) | 62 / 44 (−29%) | 52 / 43 (−17%) |
+| P2, 4/3 | 56.0 / 60.5 (+8%) | 74 / 61 (−18%) | 59 / 60 (+2%) |
+| P1_1, free → 4/2 | 42.5 (+35%) | 68 (−31%) | 53 (−16%) |
+| P1_2, free → 5/2 | 41.5 (+43%) | 69 (−33%) | 55 (−19%) |
+
+The choice is now right: measured, window 2's p95 is 1.19× window 1's
+(within `p95_slack`) and window 3's 1.42× (outside), and both free runs end
+at window 2 (split 4 or 5, predicted equal). In R5 (before the change) it
+was window 3. The error is not: the simulation gives window 2 the frames/s
+of a full pipeline (61, as window 3), measured 44 against 56. A
+per-frame cost on the client with ~20 ms frames would explain it; not
+measured, not modeled. `pi1` (yolo-small, ρ 0.3) frames/s −2…+3%, p95
+−8…−14%.
+
 ## Mean or p95
 
 Every SPLIT prediction has both the mean latency of the device's frames
@@ -564,5 +633,7 @@ in brackets):
 
 **Limits**: clients and worker on the same machine, so CPU contention adds
 noise to `S` (`cs`) and to the device's times, and with many slots it slows
-everything down (no data near saturation for `c` = 4). To repeat with the
-devices on other machines (phase 4).
+everything down (no data near saturation for `c` = 4). Repeated in phase
+4.3 with two Raspberry Pis and 1 slot, up to ρ ≥ 1
+([above](#loaded-server-and-pico-on-the-pi-phase-43-campaign)): both
+formulas fail near saturation, because the windows bound the queue.
