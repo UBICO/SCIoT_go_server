@@ -167,14 +167,19 @@ the device and one clock per duration:
   (localhost, a fast LAN) and `bandwidth_bps` must not be read as a limit.
 - **Latency.** A WebSocket ping every `stream.ping_interval_ms` (default
   1000), its pong awaited up to 5 s: `latency_ms` is half the *minimum* RTT
-  of the pings of the last 60 s. Not an average: the device's pong travels
-  on the same link as its frames, and with the link saturated it waits
-  behind the bytes already in the device's TCP send buffer (bufferbloat:
-  ~170 ms at 50 Mbit/s, measured with
+  of the clean pings of the last 60 s. Not an average: the device's pong
+  travels on the same link as its frames, and with the link saturated it
+  waits behind the bytes already in the device's TCP send buffer
+  (bufferbloat: ~170 ms at 50 Mbit/s, measured with
   `client/scripts/bench_network.py`), so those pings measure the queue, not the
-  latency. The long window keeps a value measured while the link was free
-  (LOCAL, startup, pauses) through a period of saturation; after more than
-  60 s of continuous saturation the latency includes the queue.
+  latency. A ping is clean when no message finished while it travelled (a
+  pong cannot enter a WebSocket message already started, so one that waited
+  behind a frame always sees that frame finish first). Without a clean ping
+  in the last 60 s the latest clean one counts, however old: the base
+  latency rarely changes, and a link saturated for longer (phase 4.2, R2 at
+  window 3: 65 ms against 1.6) no longer inflates it. With no clean ping
+  ever (a device saturated since it connected) the minimum of all pings,
+  which includes the queue.
 - **Probe.** In `LOCAL` no frames flow. To a device that declared the
   capability `probe` the server sends a `probe_request` when no message has
   been measured for `stream.probe_interval_ms` (default 30 s; 5 s,

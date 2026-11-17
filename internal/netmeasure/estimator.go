@@ -12,16 +12,17 @@ const (
 	// DefaultBandwidthTau è la costante di tempo della stima della banda
 	// (internal/ewma): con un probe ogni 30 s segue un cambio in un minuto.
 	DefaultBandwidthTau = 60 * time.Second
-	// LatencyWindow: la latenza è il MINIMO dei ping degli ultimi
+	// LatencyWindow: la latenza è il MINIMO dei ping puliti degli ultimi
 	// LatencyWindow, non una media. Il pong del device viaggia sullo stesso
 	// link dei frame: con il link saturo aspetta dietro i byte già nel buffer
 	// TCP di invio del device (bufferbloat: ~170 ms a 50 Mbit/s, misurato con
-	// client/scripts/bench_network.py) e misura la coda, non la latenza.
-	// La finestra è lunga perché la latenza di base cambia di rado: il valore
-	// misurato a link libero (LOCAL, avvio, pause) sopravvive a un periodo di
-	// saturazione. Oltre LatencyWindow di saturazione continua la latenza
-	// include la coda (come min_rtt in BBR, che però svuota il link per
-	// rimisurarla).
+	// client/scripts/bench_network.py) e misura la coda, non la latenza. Un
+	// ping è pulito se nessun messaggio è finito mentre era in viaggio
+	// (ping.clean). Senza ping puliti nella finestra vale il ping pulito più
+	// recente, anche più vecchio: la latenza di base cambia di rado, e un
+	// device saturo per più di LatencyWindow (Fase 3.9: 1968 ms a 5 Mbit/s;
+	// Fase 4.2, R2_w3: 65 ms contro 1,6) non la gonfia più. Senza nessun ping
+	// pulito (saturo da quando è connesso) il minimo di tutti: include la coda.
 	LatencyWindow = 60 * time.Second
 	// PingTimeout: quanto aspettare un pong. Più dell'intervallo tra i ping:
 	// con il link saturo un pong in ritardo è meglio di nessuna misura (a
@@ -56,8 +57,8 @@ type State struct {
 	BandwidthBps    *float64 `json:"bandwidth_bps,omitempty"`
 	BandwidthStdBps *float64 `json:"bandwidth_std_bps,omitempty"`
 	BandwidthAgeMS  *float64 `json:"bandwidth_age_ms,omitempty"`
-	// LatencyMS è metà del minimo RTT dei ping degli ultimi LatencyWindow;
-	// nil senza ping.
+	// LatencyMS è metà del minimo RTT dei ping puliti degli ultimi LatencyWindow
+	// (vedi latencyMS per i ripieghi); nil senza ping.
 	LatencyMS *float64 `json:"latency_ms,omitempty"`
 	// NotLimiting: quasi tutti i campioni recenti vengono dal buffer, la rete
 	// è più veloce di quanto il server legga. BandwidthBps non va presa come
@@ -89,7 +90,7 @@ type Estimator struct {
 	mu        sync.Mutex
 	tau       time.Duration // della banda
 	perByte   ewma.Stat     // dei campioni validi, in secondi per byte
-	pings     []ping        // dell'ultimo LatencyWindow, dal più vecchio
+	pings     []ping        // dell'ultimo LatencyWindow più il pulito più recente, dal più vecchio
 	valid     uint64
 	discarded uint64
 	recent    []mark // campioni dell'ultimo NotLimitingWindow, dal più vecchio
@@ -102,6 +103,16 @@ type Estimator struct {
 type ping struct {
 	at  time.Time
 	rtt time.Duration
+	// clean: nessun messaggio è finito dopo l'invio del ping (at − rtt),
+	// quindi il pong non ha fatto coda dietro un frame. Basta lastSample: il
+	// pong non entra in un messaggio WebSocket già iniziato, e lo stream
+	// chiama Observe prima di leggere il messaggio dopo (internal/stream,
+	// readLoop), quindi un frame in arrivo durante il ping è già osservato
+	// quando arriva il pong. Shortcut: vale per messaggi non frammentati (il
+	// client Python); un client che frammenta può far passare un pong tra due
+	// frammenti, che resterebbe pulito. Conservativo: un messaggio finito
+	// durante il ping lo sporca anche se il pong non gli era dietro.
+	clean bool
 }
 
 // mark è un campione per la regola "non limitante": quando e se dal buffer.
@@ -149,18 +160,37 @@ func (e *Estimator) LastSample() time.Time {
 }
 
 // ObservePing aggiunge la durata di un ping (andata e ritorno) il cui pong è
-// tornato in at, e dimentica i ping più vecchi di LatencyWindow.
+// tornato in at, e dimentica i ping più vecchi di LatencyWindow, tranne il
+// più recente e il pulito più recente (la latenza di riserva, LatencyWindow).
 //
 // Senza nuovi ping (stream chiuso) i vecchi restano: la latenza sopravvive
 // alle riconnessioni come la banda.
 func (e *Estimator) ObservePing(at time.Time, rtt time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.pings = append(e.pings, ping{at: at, rtt: rtt})
+	// Sporco = un messaggio finito dopo l'invio del ping (at − rtt). Anche dopo
+	// at: lastSample tiene solo l'ultimo, e un frame finito tra il pong e questa
+	// chiamata nasconderebbe quello finito durante il ping. Con lastSample zero
+	// (nessun messaggio) o == at − rtt il ping è pulito.
+	sent := at.Add(-rtt)
+	dirty := e.lastSample.After(sent)
+	e.pings = append(e.pings, ping{at: at, rtt: rtt, clean: !dirty})
 	cutoff := at.Add(-LatencyWindow)
-	for len(e.pings) > 1 && e.pings[0].at.Before(cutoff) {
-		e.pings = e.pings[1:]
+	lastClean := -1
+	for i, p := range e.pings {
+		if p.clean {
+			lastClean = i
+		}
 	}
+	// Filtro sul posto: resta chi è nella finestra e il pulito più recente. Il
+	// ping appena aggiunto è nella finestra, quindi e.pings non resta vuoto.
+	kept := e.pings[:0]
+	for i, p := range e.pings {
+		if i == lastClean || !p.at.Before(cutoff) {
+			kept = append(kept, p)
+		}
+	}
+	e.pings = kept
 }
 
 // Snapshot restituisce lo stato visto in now.
@@ -183,15 +213,34 @@ func (e *Estimator) Snapshot(now time.Time) State {
 	return st
 }
 
-// latencyMS è la latenza di sola andata: metà del minimo RTT, in ms. nil
-// senza ping.
+// latencyMS è la latenza di sola andata, in ms: metà del minimo RTT dei ping
+// puliti nella LatencyWindow che finisce col ping più recente; senza, del
+// ping pulito più recente (più vecchio della finestra); senza nessun ping
+// pulito, del minimo di tutti. nil senza ping. pings in ordine di at.
 func latencyMS(pings []ping) *float64 {
 	if len(pings) == 0 {
 		return nil
 	}
-	m := pings[0].rtt
-	for _, p := range pings[1:] {
-		m = min(m, p.rtt)
+	cutoff := pings[len(pings)-1].at.Add(-LatencyWindow)
+	all := pings[0].rtt
+	var inWindow, lastClean time.Duration
+	var hasWindow, hasClean bool
+	for _, p := range pings {
+		all = min(all, p.rtt)
+		if !p.clean {
+			continue
+		}
+		lastClean, hasClean = p.rtt, true // in ordine di at: resta il più recente
+		if !p.at.Before(cutoff) && (!hasWindow || p.rtt < inWindow) {
+			inWindow, hasWindow = p.rtt, true
+		}
+	}
+	m := all
+	switch {
+	case hasWindow:
+		m = inWindow
+	case hasClean:
+		m = lastClean
 	}
 	v := float64(m) / float64(time.Millisecond) / 2
 	return &v
