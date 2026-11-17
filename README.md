@@ -26,11 +26,15 @@ Status:
 - [x] phase 2, data plane: stream, admission by deadline with a FIFO queue,
   worker supervisor, decoders, model build from Edge Impulse exports,
   recording of events for offline evaluation
-- [ ] phase 3, offloading algorithm: cost model with a simulation of device
+- [x] phase 3, offloading algorithm: cost model with a simulation of device
   and queue, `latency` algorithm (opt-in, `offload.algorithm`; by default
   the policy changes only from the admin endpoint) choosing split point and
-  window per device, simulating the other devices as clients;
-  verification in progress
+  window per device, simulating the other devices as clients
+- [ ] phase 4, Python client with camera (laptop, Raspberry Pi) and
+  verification on devices over a real network
+  ([docs/RASPBERRY.md](docs/RASPBERRY.md)); open: the bandwidth estimate for
+  small frames, a slow network, a loaded server
+- [ ] phase 5, ESP32 client
 
 The reference device client is in `client/`, in Python
 ([docs/CLIENT.md](docs/CLIENT.md), with the SPLIT and network benchmarks).
@@ -47,7 +51,7 @@ The reference device client is in `client/`, in Python
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
 | [worker/README.md](worker/README.md) | the Python worker and the model build tool |
 | [docs/CLIENT.md](docs/CLIENT.md) | the Python device client (`client/`): install, configuration, benchmarks |
-| [docs/RASPBERRY.md](docs/RASPBERRY.md) | the client on a Raspberry Pi with its camera, against a server on another machine; the phase 3.9 benchmark |
+| [docs/RASPBERRY.md](docs/RASPBERRY.md) | the client on a Raspberry Pi with its camera, against a server on another machine; the phase 3.9 benchmark and the phase 4.2 campaign |
 
 ## Requirements
 

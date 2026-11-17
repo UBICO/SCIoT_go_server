@@ -321,7 +321,99 @@ and costs +5…+8% on the clean runs; 0.45 is far too much. Answer and cycle
 spreads move P4's frames between refused and window full (both finished on
 the device), never all the way, with p95, mean and frames/s unchanged
 (−2%, −1%, +6% in every variant). So none is modeled; to look at again with
-a slow network and several devices on other machines.
+a slow network. With two devices on other machines and a small model the
+transfer's spread matters ([below](#verification-on-the-pi-with-answer_ms-phase-42-campaign),
+two models), still not modeled.
+
+### Verification on the Pi with `answer_ms` (phase 4.2 campaign)
+
+One Raspberry Pi (`pi1`, static image, split −1, yolo-small, Wi-Fi, server
+on a MacBook; [RASPBERRY.md](RASPBERRY.md#8-phase-42-campaign),
+`client/results/phase42/`), 2026-11-10. R1: the algorithm free, 4 runs
+(R1_4 after the fix of the window hysteresis); R2: windows 1, 2, 3 pinned.
+Predicted: median over the decisions at that window (R1, live; R2, replay,
+since a pinned device gets no decisions); measured: client CSV, every frame
+at that window.
+
+| Runs | Window | frames/s measured / predicted | p95 ms measured / predicted |
+|---|---|---|---|
+| R1_1–R1_4 | 1 | 7.04–7.13 / 6.81–7.19 | 151–158 / 148–164 |
+| R1_1–R1_4 | 2 | 11.60–11.64 / 11.60–11.78 | 182–185 / 176–179 |
+| R2_w1 | 1 | 6.78 / 6.83 | 155 / 151 |
+| R2_w2 | 2 | 11.23 / 11.68 | 221 (Wi-Fi tail at 40–68 s; ~185 without) / 175 |
+| R2_w3 | 3 | 11.42 / 11.49 | 278 / 265 |
+
+Frames/s within −3…+2% and p95 within −2…−5% (with the R2 replay's
+`answer_ms` set to the 11.7 ms measured at window 1: the run's own value
+came from a single frame whose answer the next send delayed, fixed since,
+[above](#answer-time-measured-by-the-client-phase-42)). `answer_ms` 10–13 ms
+in every run. The window 2 is the knee: +65% frames/s for +20% p95 against
+window 1, while window 3 adds 2% frames/s for +50% p95 (the link is full).
+
+**Server time profiled against measured.** With the client on the Pi the
+Mac runs only server and worker: `S` at split −1 profiled at start (5 runs)
+38.5–45.4 ms, measured in the same runs (`server_ms − queue_wait_ms`,
+median) 40.0–47.4 ms, −4…+14%. In phase 3.8, with three clients loading
+TensorFlow on the server's machine, it was 42 against 28 (+50%). With one
+device on another machine the CPU contention is gone; with two (R3–R4,
+below) too: profiled 37.0–38.9 ms, measured 36.5–38.5.
+
+**Two devices** (R3 ×3, R4 ×4: `pi1` and `pi2`, both yolo-small, started
+together, 2026-11-17). Every run, every device: `LOCAL` → split −1 window 1
+(`latency`, 22–25 s) → window 2 (`fps`, 10 s later) and no other change; in
+R4_kqueue0_2 `pi2` moved to window 2 after 15 s instead of 10 (predicted p95
+ratio 1.25–1.32, on the edge of the slack). Load ρ 0.3–0.4, queue wait 0.
+Predicted (median over the decisions after the last change) against
+measured (client CSV, from 5 s after it):
+
+| | frames/s | mean | p95 |
+|---|---|---|---|
+| predicted / measured | 9.8–10.7 / 10.0–10.7 | −0…−8% | 194–216 / 221–249 ms (−12…−20%) |
+
+Frames/s and mean as with one device; the p95 is 12–20% low, against −3%
+for `pi1` alone (R1). Not explained: likely the Wi-Fi shared by two devices
+(a longer transfer tail, which the simulation does not have), not checked.
+With `k_noise: 0` or `k_queue: 0` (R4) the decisions and the measures are
+those of R3: with ρ 0.4 and no queue neither term is active
+([OFFLOAD.md](OFFLOAD.md#verification-phase-38)).
+
+**Two models** (R5 ×2: `pi1` yolo-small, `pi2` yolo-pico 320, 2.3 MB,
+~200 KB per frame at split 4). `pi1` as in R3 (window 2, 10.6 frames/s, p95
+221). `pi2`: split 4 window 1 (`latency`) → window 3 (`fps`): the simulation
+gives the three windows the same p95 (the device bounds the rate), so the
+largest wins. Measured at window 3 53 frames/s, mean 61–63 ms, p95 79–80,
+against a predicted 65, 37–41, 37–43 (frames/s +22…+24%, mean −35…−40%, p95
+−47…−53%); measured at window 1 (its 10 s) p95 51–60, so window 3 breaks
+the slack (×1.55 > 1.25).
+
+The main cause is the bandwidth estimate, not the client: `netmeasure`
+averages each sample's bandwidth (bytes/s), and the transfer time is bytes
+divided by that average. For small frames with spread read times (pico:
+a few 2–4 ms samples at 50–100 MB/s among ones of ~18 ms, CV of the time per
+byte 0.46) the mean of the rates is far above bytes / mean time: 15.6–16.7
+against 11.0–11.4 MB/s, so 12 ms predicted per frame against 16–17
+measured. For yolo-small (1.2 MB, CV 0.03–0.15) the two are equal. The
+answer measured at window 3 (28 ms, against 11–14 at window 1) is mostly
+this transfer queueing on the link behind the previous frame. Replay of
+every 3.9 and 4.2 run (27 run/device pairs) with the bandwidth recomputed
+from the recorded samples as the average of the time per byte:
+
+| | frames/s | p95 | mean |
+|---|---|---|---|
+| yolo-small, median \|error\| (25 pairs), now → time per byte | 2.4 → 2.8% | 12.0 → 10.8% | 3.7 → 1.8% |
+| R5 `pi2`, now | +22…+24% | −47…−53% | −35…−40% |
+| R5 `pi2`, time per byte | +6…+10% | −18…−19% | 0…+4% |
+
+yolo-small's decisions do not change (1 of 158 in R4_kqueue0_2); R5_1's
+`pi2` picks window 2 (45 of 70 decisions), R5_2's stays at window 3. The
+one regression is A1 (phase 3.9, Wi-Fi stalls): frames/s −13%, mean +10%,
+same decision. The 3.8 recordings (localhost) have no bandwidth sample.
+Pico at window 2 was never measured. The p95 left out (−18%) is the
+transfer's spread: a per-device CV of the time per byte brings yolo-small's
+p95 error to 4% but A1's to +75…+127%, and sends R5_2's `pi2` to `LOCAL`
+(46 of 69 decisions), which is measured worse (~14 frames/s, p95 66,
+against 26–29 frames/s, p95 51–60 at split 4 window 1): only SPLIT would get
+a spread, `LOCAL` none. Not modeled.
 
 ## Mean or p95
 

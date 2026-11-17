@@ -182,7 +182,16 @@ p95. Only the window: applied to every candidate, it would repeat option b
 p95 and filling the server. Replay: every rule-c run of the Pi (with
 `answer_ms`) goes to window 2; the phase 3.8 runs with free devices (B, B2)
 do not change a single decision. `p95_slack: 0` is the rule before phase
-4.2. Applies with `objective: mean` too (the slack is on the value).
+4.2. Applies with `objective: mean` too (the slack is on the value). Live
+on the Pi (phase 4.2 campaign, R1, 4 runs): `LOCAL` → split −1 window 1
+(`latency`) → window 2 (`fps`) 10 s later, 11.6 frames/s at p95 182–185
+against 7.0–7.1 at 151–158 ([COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign));
+in the first three runs it went back to window 1 once (fixed, step 5); in
+the fourth it stayed at window 2. With two Pis (R3–R5) every yolo-small
+device does the same. A Pi with yolo-pico (R5, split 4, ~200 KB per frame)
+goes to window 3, whose measured p95 is 1.55× window 1's: the bandwidth
+estimate makes its transfer too short, so the simulation gives the three
+windows the same p95 ([COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign)).
 
 ### Other devices
 
@@ -253,7 +262,11 @@ the measured `S` (27 → 34 ms) while other clients were loading, and a late
 move to `SPLIT` in an early run (fixed since in the benchmark) came from an
 `S` profiled while three clients loaded TensorFlow on the same CPU (42 ms,
 against 28 measured once in `SPLIT`): CPU contention of the shared machine,
-to be checked again with devices on other machines (phase 4).
+to be checked again with devices on other machines (phase 4). With one
+device on a Raspberry Pi the profile is within −4…+14% of the measured `S`,
+with two within ~1 ms (37.0–38.9 against 36.5–38.5 ms; phase 4.2 campaign,
+[COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign)):
+the contention is gone.
 
 **Ablation** (2 and 4 devices started together, 2 runs, 90 s): with
 `k_noise: 0` or `k_queue: 0` the policies, changes, time to the first
@@ -263,8 +276,13 @@ phase 4.2, [Other devices](#other-devices)) changed neither the predictions
 nor the decision. The
 decisions here are clear-cut (`SPLIT` beats `LOCAL` by ~20 ms for the first
 device and loses by ~20 ms for the second), so the margin's terms never
-decide; they stay, for noisier predictions on real networks and devices
-that differ (phase 4). `queue_rho_from` from the prediction error per band
+decide. On a real network (phase 4.2 campaign, R4: two Raspberry Pis over
+Wi-Fi, 2 runs each) the same: with `k_noise: 0` or `k_queue: 0` every
+device goes `LOCAL` → split −1 window 1 → window 2 at the same times as
+with the full algorithm (one move to window 2 5 s later, on the edge of the
+slack), with the same frames/s and p95; the load stayed at ρ 0.3–0.4 with
+no queue, so `k_queue` could not act. They stay, for a loaded server and
+noisier predictions. `queue_rho_from` from the prediction error per band
 of ρ (`sciot-replay check`): no band above `margin_rel` in 6 of the 11
 recordings, 0.8 in 3 and 0.95 in 2, so the default 0.8 stays.
 
