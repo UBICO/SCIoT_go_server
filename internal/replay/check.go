@@ -134,9 +134,7 @@ type CheckWindow struct {
 // applicata, con una previsione completa (Missing vuoto) e almeno minFrames
 // frame del client nella finestra.
 //
-// ρ della fascia è Pred.Rho, quello previsto: è il ρ che il margine
-// dell'algoritmo legge (offload.Latency.margin), quindi l'asse su cui va
-// scelto queue_rho_from.
+// ρ della fascia è Pred.Rho, quello previsto.
 func Check(record io.Reader, clients map[string][]ClientFrame, warmup time.Duration, minFrames int) ([]CheckWindow, error) {
 	// Static non cambia la policy e restituisce le previsioni di ogni coppia.
 	steps, err := Algo(record, offload.Static{})
@@ -180,8 +178,7 @@ type CheckBucket struct {
 	// Mediane dell'errore relativo (previsto − misurato)/misurato: > 0 il
 	// modello sovrastima. NaN senza finestre (o con misurato 0 per tutte).
 	P95, Mean, FPS, Share float64
-	// AbsP95 è la mediana di |errore relativo del p95|: la regola di
-	// queue_rho_from (RhoFrom).
+	// AbsP95 è la mediana di |errore relativo del p95|.
 	AbsP95 float64
 }
 
@@ -229,18 +226,4 @@ func median(x []float64) float64 {
 		return math.NaN()
 	}
 	return costmodel.Percentile(x, 0.5)
-}
-
-// RhoFrom è queue_rho_from ricavato dalle fasce: il limite inferiore
-// (rhoEdges) della prima fascia, dal basso, con AbsP95 > marginRel. Sotto, la
-// parte base del margine (margin_rel × valore) copre già l'errore del
-// modello; da lì in su serve il termine di coda. ok = false se nessuna fascia
-// con finestre supera marginRel: i dati non dicono dove parte.
-func RhoFrom(bs []CheckBucket, marginRel float64) (rho float64, ok bool) {
-	for k, b := range bs {
-		if !math.IsNaN(b.AbsP95) && b.AbsP95 > marginRel {
-			return rhoEdges[k], true
-		}
-	}
-	return 0, false
 }

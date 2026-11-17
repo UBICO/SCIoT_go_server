@@ -50,14 +50,8 @@ type LatencyConfig struct {
 	P95Slack float64
 	// MinHold: nessun cambio prima che la policy sia in vigore da tanto.
 	MinHold time.Duration
-	// Margine: max(MarginMinMS, MarginRel × valore attuale) × (1 + KQueue ·
-	// max(0, ρ' − QueueRhoFrom)/(1−ρ')) + KNoise · σ.
-	MarginMinMS, MarginRel, KQueue, KNoise float64
-	// QueueRhoFrom è da dove parte il termine di coda: sotto, il p95 della
-	// simulazione è entro MarginRel da quello del client (Fase 3.8, sciot-replay
-	// check, docs/OFFLOAD.md "Verification") e il margine non deve crescere.
-	// 0 = da subito.
-	QueueRhoFrom float64
+	// Margine: max(MarginMinMS, MarginRel × valore attuale) + KNoise · σ.
+	MarginMinMS, MarginRel, KNoise float64
 	// NoiseTau è la costante di tempo della stima del rumore σ.
 	NoiseTau time.Duration
 }
@@ -74,7 +68,7 @@ func DefaultLatencyConfig() LatencyConfig {
 		Objective:   ObjectiveP95,
 		MinFPSRatio: 1, MaxRejectShare: 0.1, P95Slack: 0.25,
 		MinHold:     10 * time.Second,
-		MarginMinMS: 2, MarginRel: 0.1, KQueue: 1, KNoise: 1, QueueRhoFrom: 0.8,
+		MarginMinMS: 2, MarginRel: 0.1, KNoise: 1,
 		NoiseTau: 10 * time.Second,
 	}
 }
@@ -83,9 +77,6 @@ func DefaultLatencyConfig() LatencyConfig {
 // affidabile e lo split point non può sostituire quello in uso (stessa
 // regola dei 3 campioni di not_limiting).
 const minNoiseSamples = 3
-
-// maxRho limita ρ' nel termine di coda del margine: a ρ' = 1 sarebbe infinito.
-const maxRho = 0.99
 
 // Motivi di una decisione (Decision.Reason, evento decision).
 const (
@@ -286,13 +277,12 @@ func (l *Latency) best(preds []costmodel.Prediction, local costmodel.Prediction)
 // margin è il guadagno minimo (ms) perché cand sostituisca cur, con sd il
 // rumore della loro differenza:
 //
-//	max(MarginMinMS, MarginRel × value(cur)) × (1 + KQueue · max(0, ρ − QueueRhoFrom)/(1−ρ)) + KNoise · sd
+//	max(MarginMinMS, MarginRel × value(cur)) + KNoise · sd
 //
-// con ρ = cand.Rho, limitato a maxRho.
-func (l *Latency) margin(cur, cand costmodel.Prediction, sd float64) float64 {
-	rho := math.Min(cand.Rho, maxRho)
-	queue := 1 + l.cfg.KQueue*math.Max(0, rho-l.cfg.QueueRhoFrom)/(1-rho)
-	return math.Max(l.cfg.MarginMinMS, l.cfg.MarginRel*l.value(cur))*queue + l.cfg.KNoise*sd
+// Non dipende da ρ del candidato (Fase 4.3): il parametro resta perché il
+// termine di coda ne era l'unico uso e TestMargin ne verifica l'indipendenza.
+func (l *Latency) margin(cur, _ costmodel.Prediction, sd float64) float64 {
+	return math.Max(l.cfg.MarginMinMS, l.cfg.MarginRel*l.value(cur)) + l.cfg.KNoise*sd
 }
 
 // canChange dice se una policy in vigore da age può già cambiare.

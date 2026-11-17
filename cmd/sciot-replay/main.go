@@ -3,7 +3,7 @@
 //
 //	sciot-replay queue [-window 5s] [-min-frames 20] record.jsonl
 //	sciot-replay algo [-algorithm static|latency] [-config config.json] [-out decisions.jsonl] record.jsonl
-//	sciot-replay check [-warmup 20s] [-min-frames 10] [-margin-rel 0.1] record.jsonl frames_<device>.csv...
+//	sciot-replay check [-warmup 20s] [-min-frames 10] record.jsonl frames_<device>.csv...
 //
 // queue: per ogni finestra, attesa in coda misurata contro quella prevista da
 // M/M/c (Erlang C) e G/G/c (Allen–Cunneen), con λ, S, c, ca e cs misurati
@@ -17,7 +17,7 @@
 // check: per ogni heartbeat di un device in SPLIT, la previsione della
 // simulazione per la coppia applicata contro le misure del client (il CSV dei
 // frame, uno per device: il device è nel nome, frames_<device>.csv); errori
-// mediani per fascia di ρ previsto e queue_rho_from ricavato con margin_rel.
+// mediani per fascia di ρ previsto.
 package main
 
 import (
@@ -76,13 +76,12 @@ func main() {
 		fs := flag.NewFlagSet("check", flag.ExitOnError)
 		warmup := fs.Duration("warmup", 20*time.Second, "skip each device's first heartbeats")
 		minFrames := fs.Int("min-frames", 10, "skip windows with fewer client frames")
-		marginRel := fs.Float64("margin-rel", offload.DefaultLatencyConfig().MarginRel, "offload.margin_rel: the error the margin's base covers")
 		fs.Parse(os.Args[2:])
 		if fs.NArg() < 2 {
 			fmt.Fprintln(os.Stderr, "check: a recording and at least one frames_<device>.csv")
 			os.Exit(2)
 		}
-		err = check(os.Stdout, fs.Arg(0), fs.Args()[1:], *warmup, *minFrames, *marginRel)
+		err = check(os.Stdout, fs.Arg(0), fs.Args()[1:], *warmup, *minFrames)
 	default:
 		usage()
 	}
@@ -93,7 +92,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage:\n  sciot-replay queue [-window 5s] [-min-frames 20] record.jsonl\n  sciot-replay algo [-algorithm static|latency] [-config config.json] [-out decisions.jsonl] record.jsonl\n  sciot-replay check [-warmup 20s] [-min-frames 10] [-margin-rel 0.1] record.jsonl frames_<device>.csv...")
+	fmt.Fprintln(os.Stderr, "usage:\n  sciot-replay queue [-window 5s] [-min-frames 20] record.jsonl\n  sciot-replay algo [-algorithm static|latency] [-config config.json] [-out decisions.jsonl] record.jsonl\n  sciot-replay check [-warmup 20s] [-min-frames 10] record.jsonl frames_<device>.csv...")
 	os.Exit(2)
 }
 
@@ -184,7 +183,7 @@ func writeDecisions(path string, steps []replay.Step, name string) error {
 	return f.Close()
 }
 
-func check(out io.Writer, recordPath string, csvPaths []string, warmup time.Duration, minFrames int, marginRel float64) error {
+func check(out io.Writer, recordPath string, csvPaths []string, warmup time.Duration, minFrames int) error {
 	clients := map[string][]replay.ClientFrame{}
 	for _, path := range csvPaths {
 		id, ok := strings.CutPrefix(strings.TrimSuffix(filepath.Base(path), ".csv"), "frames_")
@@ -234,11 +233,6 @@ func check(out io.Writer, recordPath string, csvPaths []string, warmup time.Dura
 	fmt.Fprintf(out, "\nframes/s not served, median of the windows:  %12s %10s\n", "predicted", "measured")
 	fmt.Fprintf(out, "  refused or expired on the server           %12.1f %10.1f\n", med(rejP), med(rejM))
 	fmt.Fprintf(out, "  window full (finished on the device)       %12.1f %10.1f\n", med(fullP), med(fullM))
-	if rho, ok := replay.RhoFrom(bs, marginRel); ok {
-		fmt.Fprintf(out, "\nqueue_rho_from = %.2f (first band with median |p95 error| > margin_rel %.2f)\n", rho, marginRel)
-	} else {
-		fmt.Fprintf(out, "\nqueue_rho_from: no band above margin_rel %.2f in these data\n", marginRel)
-	}
 	return nil
 }
 

@@ -132,26 +132,18 @@ func TestLatencyGoesLocal(t *testing.T) {
 func TestMargin(t *testing.T) {
 	l := NewLatency(DefaultLatencyConfig())
 	cur, cand := pred(1, 50, 20), pred(0, 40, 25)
-	// base max(2, 5) = 5; ρ 0.3 sotto la soglia 0.8: fattore 1; + 1 × σ 2.
+	// base max(2, 5) = 5; + 1 × σ 2.
 	if got, want := l.margin(cur, cand, 2), 5.0+2; math.Abs(got-want) > 1e-9 {
-		t.Errorf("sotto la soglia: margine %v, atteso %v", got, want)
+		t.Errorf("margine %v, atteso %v", got, want)
 	}
-	// ρ 0.9: × (1 + (0.9 − 0.8)/0.1) = × 2.
-	cand.Rho = 0.9
-	if got := l.margin(cur, cand, 0); math.Abs(got-10) > 1e-9 {
-		t.Errorf("ρ 0.9: margine %v, atteso 10", got)
-	}
-	// ρ oltre il limite: non infinito.
-	cand.Rho = 1
-	if got := l.margin(cur, cand, 0); math.IsInf(got, 0) || math.Abs(got-5*(1+0.19/0.01)) > 1e-9 {
-		t.Errorf("ρ = 1: margine %v", got)
-	}
-	// Soglia 0: il termine di coda parte da subito.
-	cfg := DefaultLatencyConfig()
-	cfg.QueueRhoFrom = 0
-	cand.Rho = 0.3
-	if got := NewLatency(cfg).margin(cur, cand, 0); math.Abs(got-5*(1+0.3/0.7)) > 1e-9 {
-		t.Errorf("soglia 0: margine %v", got)
+	// Nessun termine di coda (Fase 4.3): il margine non dipende da ρ, nemmeno
+	// in saturazione. Con il termine, a ρ 0.99 valeva 5 × 20 = 100 e bloccava
+	// ogni cambio (run Q5 sul Pi).
+	for _, rho := range []float64{0.9, 0.99, 1} {
+		cand.Rho = rho
+		if got := l.margin(cur, cand, 0); math.Abs(got-5) > 1e-9 {
+			t.Errorf("ρ %v: margine %v, atteso 5", rho, got)
+		}
 	}
 	// Base minima con valori piccoli.
 	if got := l.margin(pred(1, 5, 20), pred(0, 4, 25), 0); math.Abs(got-2) > 1e-9 {
