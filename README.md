@@ -234,7 +234,7 @@ value, or the server has no measure yet.
 | `HB req (B)` | size of the heartbeat body, bytes |
 | `Srv CPU %` | CPU of the whole server machine (worker included), moving average (`load_cpu_ewma_alpha`) |
 | `Srv mem (MB)` | memory available on the server machine, MiB |
-| `BW (Mbit/s)` | the device's upload bandwidth estimate (moving average of the valid frame and probe reads, [docs/RECORDING.md](docs/RECORDING.md#network)); `not limit.` = the network does not limit (reads come from the buffer); `N/A` = no stream or no valid sample yet |
+| `BW (Mbit/s)` | the device's upload bandwidth estimate (inverse of the moving average of the time per byte of the valid frame and probe reads, [docs/RECORDING.md](docs/RECORDING.md#network)); `not limit.` = the network does not limit (reads come from the buffer); `N/A` = no stream or no valid sample yet |
 | `Ping (ms)` | half of the minimum stream ping RTT of the last 60 s: the one-way latency the cost model uses |
 
 The per-frame times (upload, queue, service, answer) are not in the table:
