@@ -416,7 +416,7 @@ Limits `0,10,50` (the link free first):
 `scripts/bench_multi.py` runs `--devices` clients on one server with an
 offloading algorithm (`--algorithm`, default `latency`), started `--stagger`
 seconds apart (default 0: together, devices deciding at the same time,
-[OFFLOAD.md](OFFLOAD.md#reservations)), for `--duration` seconds.
+[OFFLOAD.md](OFFLOAD.md#other-devices)), for `--duration` seconds.
 
 ```bash
 uv run --project client python client/scripts/bench_multi.py --model-dir ~/sciot-models/yolo_small_320 --devices 2
@@ -435,8 +435,8 @@ algorithm without one of its parts ([OFFLOAD.md](OFFLOAD.md#configuration)).
 
 Per device: frames/s, latency p50/p95 after `--warmup` seconds (default
 20), share answered by the server, policy changes and the last policy
-(`SPLIT k/w`: split point and window); then every change with its reason,
-and the largest load reserved and not yet measured. Clients and server
+(`SPLIT k/w`: split point and window); then every change with its reason.
+Clients and server
 share the machine: the numbers show the algorithm's behaviour, not the
 capacity.
 
@@ -455,8 +455,9 @@ slots. Its best `SPLIT` candidates then had window 1, twice the frames per
 second of `LOCAL` at the same p95: the tie goes to `LOCAL`, the objective
 being the latency ([OFFLOAD.md](OFFLOAD.md#ties)). Since phase 3.8 the
 second device sees the first as a simulated client instead of reserved load
-(reservations count only in the fallback, so this line usually shows 0);
-runs with 2 to 4 devices: [OFFLOAD.md](OFFLOAD.md#verification-phase-38).
+(the reservations were removed in phase 4.2,
+[OFFLOAD.md](OFFLOAD.md#other-devices)); runs with 2 to 4 devices:
+[OFFLOAD.md](OFFLOAD.md#verification-phase-38).
 
 ## Tests
 

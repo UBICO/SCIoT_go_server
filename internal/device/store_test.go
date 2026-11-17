@@ -117,6 +117,12 @@ func TestConcurrentRegister(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v } // funzione generica: &v di qualunque tipo
 
+// fomoTel aggiunge a t i segmenti di fomo (null/0), obbligatori in ogni heartbeat.
+func fomoTel(t api.Telemetry) api.Telemetry {
+	t.SegmentMS, t.SegmentCount = make([]*float64, fomo.NumLayers), make([]int, fomo.NumLayers)
+	return t
+}
+
 func TestHeartbeatUpdatesState(t *testing.T) {
 	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Second)
@@ -124,7 +130,7 @@ func TestHeartbeatUpdatesState(t *testing.T) {
 	d := s.Register("web_96", "python", fomo, api.Capabilities{})
 
 	s.now = func() time.Time { return t1 } // il tempo avanza di 1 s
-	tel := api.Telemetry{InferenceCount: 47, InferenceTimeMS: ptr(41.7), InferenceTimeMaxMS: ptr(60.0), CPULoad: ptr(0.42)}
+	tel := fomoTel(api.Telemetry{InferenceCount: 47, InferenceTimeMS: ptr(41.7), InferenceTimeMaxMS: ptr(60.0), CPULoad: ptr(0.42)})
 
 	res, err := s.Heartbeat("web_96", d.SessionID, 1, tel)
 	if err != nil {
@@ -161,6 +167,10 @@ func TestHeartbeatSegmentsMustMatchTheModel(t *testing.T) {
 	short := api.Telemetry{SegmentMS: make([]*float64, 3), SegmentCount: make([]int, 3)}
 	if _, err := s.Heartbeat("web_96", d.SessionID, 1, short); !errors.Is(err, ErrInvalidTelemetry) {
 		t.Fatalf("err = %v, want ErrInvalidTelemetry", err)
+	}
+	// Fase 4.2: segment_ms è obbligatorio.
+	if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceCount: 1}); !errors.Is(err, ErrInvalidTelemetry) {
+		t.Fatalf("senza segment_ms: err = %v, want ErrInvalidTelemetry", err)
 	}
 	// Rifiutato: lo stato non cambia.
 	if got, _ := s.Get("web_96"); !got.LastSeen.Equal(t0) || got.AppliedPolicyVersion != 0 {
@@ -235,7 +245,7 @@ func TestHeartbeatUpdatesAnswer(t *testing.T) {
 	d := s.Register("pi1", "python", fomo, api.Capabilities{})
 
 	s.now = func() time.Time { return t0.Add(time.Second) }
-	res, err := s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{})
+	res, err := s.Heartbeat("pi1", d.SessionID, 1, fomoTel(api.Telemetry{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,16 +254,16 @@ func TestHeartbeatUpdatesAnswer(t *testing.T) {
 	}
 
 	s.now = func() time.Time { return t0.Add(2 * time.Second) }
-	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{AnswerMS: ptr(10.0)}); res.Answer.Mean() != 10 {
+	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, fomoTel(api.Telemetry{AnswerMS: ptr(10.0)})); res.Answer.Mean() != 10 {
 		t.Errorf("primo campione: %v, atteso 10", res.Answer.Mean())
 	}
 	s.now = func() time.Time { return t0.Add(3 * time.Second) }
-	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{}); res.Answer.N() != 1 || res.Answer.Mean() != 10 {
+	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, fomoTel(api.Telemetry{})); res.Answer.N() != 1 || res.Answer.Mean() != 10 {
 		t.Errorf("finestra senza answer_ms: %d campioni, media %v; attesi 1 e 10", res.Answer.N(), res.Answer.Mean())
 	}
 	s.now = func() time.Time { return t0.Add(4 * time.Second) }
 	// Due campioni a 1 s di distanza con τ 10 s: pesa la media semplice.
-	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, api.Telemetry{AnswerMS: ptr(14.0)}); res.Answer.Mean() != 12 {
+	if res, _ = s.Heartbeat("pi1", d.SessionID, 1, fomoTel(api.Telemetry{AnswerMS: ptr(14.0)})); res.Answer.Mean() != 12 {
 		t.Errorf("secondo campione: %v, atteso 12", res.Answer.Mean())
 	}
 
@@ -294,7 +304,7 @@ func TestHeartbeatSessionExpired(t *testing.T) {
 func TestReRegisterResetsHeartbeatState(t *testing.T) {
 	s := newTestStore(time.Now())
 	d := s.Register("web_96", "python", fomo, api.Capabilities{})
-	if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceCount: 10}); err != nil {
+	if _, err := s.Heartbeat("web_96", d.SessionID, 1, fomoTel(api.Telemetry{InferenceCount: 10})); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,7 +321,7 @@ func TestConcurrentHeartbeat(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 100 {
 		wg.Go(func() {
-			if _, err := s.Heartbeat("web_96", d.SessionID, 1, api.Telemetry{InferenceCount: 1}); err != nil {
+			if _, err := s.Heartbeat("web_96", d.SessionID, 1, fomoTel(api.Telemetry{InferenceCount: 1})); err != nil {
 				t.Error(err)
 			}
 			s.Get("web_96")
@@ -339,7 +349,7 @@ func TestSetPolicyBumpsVersion(t *testing.T) {
 	}
 
 	// Il prossimo heartbeat restituisce la nuova policy.
-	res, err := s.Heartbeat("web_96", reg.SessionID, 1, api.Telemetry{})
+	res, err := s.Heartbeat("web_96", reg.SessionID, 1, fomoTel(api.Telemetry{}))
 	if err != nil || res.Policy.PolicyVersion != 2 {
 		t.Errorf("heartbeat: %+v, %v", res.Policy, err)
 	}
@@ -405,7 +415,7 @@ func TestAdminPinsThePolicy(t *testing.T) {
 	if _, err := s.SetAutoPolicy("web_96", reg.SessionID, 3, split); !errors.Is(err, ErrPinned) {
 		t.Errorf("su un device bloccato: err = %v, atteso ErrPinned", err)
 	}
-	res, _ := s.Heartbeat("web_96", reg.SessionID, 3, api.Telemetry{})
+	res, _ := s.Heartbeat("web_96", reg.SessionID, 3, fomoTel(api.Telemetry{}))
 	if !res.Pinned || res.Policy.Mode != api.ModeLocal {
 		t.Errorf("heartbeat: %+v", res)
 	}

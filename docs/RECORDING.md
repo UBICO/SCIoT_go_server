@@ -263,13 +263,12 @@ Written by the server at every heartbeat when an algorithm is enabled
 `best`, `hysteresis`, `min_hold`, `current_unknown`, `no_candidate`,
 `few_samples`, `static`; see [OFFLOAD.md](OFFLOAD.md)). `max_inflight` is
 the chosen window, absent for `LOCAL` and for a policy without one.
-`pending_per_s` and `pending_erlangs` are the load other devices reserved
-and the dispatcher does not measure yet, added to the others' before
-predicting, only in the fallback without clients
-([OFFLOAD.md](OFFLOAD.md#reservations)); omitted when 0.
 `clients` is how many other devices the simulation ran as clients
 ([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation)); omitted
 when 0: no other device in `SPLIT`, or the fallback on the measured load.
+Recordings before phase 4.2 may also have `pending_per_s` and
+`pending_erlangs`, the load reserved by the reservations, removed since
+([OFFLOAD.md](OFFLOAD.md#other-devices)).
 `lag_ms` is the time from the heartbeat to the decision in the server's
 decision goroutine ([OFFLOAD.md](OFFLOAD.md#cost)); absent from
 `sciot-replay algo -out`, which decides at each heartbeat.

@@ -26,8 +26,7 @@ At every heartbeat, in order:
    yolo-small. The other devices in `SPLIT` are simulated as clients at
    their current policy ([COSTMODEL.md](COSTMODEL.md#frames-the-device-sends-simulation));
    only when one of them has incomplete inputs the simulation falls back to
-   their measured load plus what the algorithm granted and the dispatcher
-   does not see yet ([Reservations](#reservations)). A prediction with missing inputs is not
+   their measured load ([Other devices](#other-devices)). A prediction with missing inputs is not
    a candidate; if the current one's is missing, nothing changes
    (`current_unknown`): one cannot tell whether another is better.
 2. **Minimum duration**: no change before the policy has been in force for
@@ -82,8 +81,7 @@ on the stream as soon as it is decided and in the answer to its next
 heartbeat (the answer to the heartbeat that triggered the decision carries
 the current policy: see [Cost](#cost)); the recording gets a
 `policy` event with the reason (`latency`, `fps` or `infeasible`) and, at every
-heartbeat, a `decision` event with every prediction, the reserved load it
-saw and the reason.
+heartbeat, a `decision` event with every prediction and the reason.
 
 ### Ties
 
@@ -186,37 +184,30 @@ p95 and filling the server. Replay: every rule-c run of the Pi (with
 do not change a single decision. `p95_slack: 0` is the rule before phase
 4.2. Applies with `objective: mean` too (the slack is on the value).
 
-### Reservations
+### Other devices
 
-With the other devices simulated as clients (phase 3.8) a granted change is
-already in the next decisions: the server updates the device's policy in
-`offload.Fleet` when it changes it. So reservations are added only in the
-fallback, when the others are the measured load; a change still reserves,
-for a device that decides in the fallback right after. The ablation (phase
-3.8) found no difference with them off when every other device is a client.
-The fallback happens when a device in `SPLIT` has incomplete inputs (for
-example a client without `segment_ms`, optional in the protocol, or an
-unknown bandwidth on a real network): whether reservations can go is to be
-measured on real devices (phase 4), counting decisions with `clients` 0
-while other devices are in `SPLIT`.
+The other devices in `SPLIT` are simulated as clients at the policy the
+server last gave them (phase 3.8): the server updates a device's policy in
+`offload.Fleet` when it changes it, so a change granted to one device is in
+the next decision of every other, before the dispatcher measures it. The
+dispatcher measures λ and ρ over a sliding window of 10 s: a device that
+moves to `SPLIT` appears in the measure gradually, and another device
+deciding a second later on the measure alone would see the server almost
+free, move too, and overload it.
 
-The dispatcher measures λ and ρ over a sliding window of 10 s, so a device
-that moves to `SPLIT` appears in the measure gradually. Without correction,
-another device deciding a second later sees the server almost free, moves
-too, and both overload it. When the algorithm moves a device it reserves
-the difference of server load between the new candidate and the current one
-(frames served per second × S, in erlang). The next decisions of the other
-devices add the part the measure does not contain yet,
-`reserved × max(0, 1 − age / 10 s)`: no load is counted twice or never.
+The fallback, when another device in `SPLIT` has incomplete inputs
+(`costmodel.ClientFrom`: segment times, bandwidth, `S` or cycle not known),
+uses the others' measured load, with that delay. `segment_ms` is required
+in every heartbeat since phase 4.2 ([PROTOCOL.md](PROTOCOL.md#post-apiv1heartbeat)),
+so only inputs not measured yet, at the start of a session, leave it.
 
-- Only increases are reserved: a device that leaves `SPLIT` frees load the
-  measure sees with the same delay, and meanwhile the others are only more
-  careful.
-- Reading the reservations, deciding and reserving happen under one lock:
-  two heartbeats at the same instant do not see the same free load.
-- Simplification: the reservation is made when the algorithm decides, even
-  if the server then does not apply the change (device pinned or registered
-  again meanwhile, rare); it fades within 10 s.
+Until phase 4.2 the algorithm also **reserved** the load it granted and, in
+the fallback, added the part the measure did not contain yet. Removed in
+phase 4.2, because it never acted: with two Raspberry Pis moving to `SPLIT`
+within a second of each other (phase 4.2 campaign, runs R3–R5) the fallback
+happened in 0 of the 1232 decisions taken while the other device was in
+`SPLIT`; in the phase 3.8 recordings, offline, in 15 of 9017, and the
+reserved load changed none of the decisions where it was present.
 
 ### Noise σ
 
@@ -266,9 +257,10 @@ to be checked again with devices on other machines (phase 4).
 
 **Ablation** (2 and 4 devices started together, 2 runs, 90 s): with
 `k_noise: 0` or `k_queue: 0` the policies, changes, time to the first
-`SPLIT`, p95 and frames per second are those of the full algorithm; with
-the other devices simulated as clients the reservations change neither the
-predictions nor the decision (`TestReservationsOnlyInTheFallback`). The
+`SPLIT`, p95 and frames per second are those of the full algorithm, and
+with the other devices simulated as clients the reservations (removed in
+phase 4.2, [Other devices](#other-devices)) changed neither the predictions
+nor the decision. The
 decisions here are clear-cut (`SPLIT` beats `LOCAL` by ~20 ms for the first
 device and loses by ~20 ms for the second), so the margin's terms never
 decide; they stay, for noisier predictions on real networks and devices
@@ -299,7 +291,6 @@ otherwise). A new registration starts unpinned.
 | `offload.k_queue` | 1 | 0–100; 0 removes the queue term (ablation, phase 3.8) |
 | `offload.k_noise` | 1 | 0–100; 0 removes the noise term |
 | `offload.queue_rho_from` | 0.8 | 0–0.99: utilization from which the queue term grows; 0 = from no load |
-| `offload.reserve` | true | false turns the [reservations](#reservations) off (ablation, phase 3.8) |
 
 `sciot-replay algo -algorithm latency -config config.json` replays a
 recording with the parameters of that file's `offload` section.
@@ -315,7 +306,7 @@ heartbeat interval.
 
 So decisions run outside the heartbeat handler, in one goroutine of the
 server, one device at a time (two devices never decide on the same free
-server; the reservations' lock stays for the fallback). The handler queues
+server). The handler queues
 the device and answers at once with the current policy. The queue holds
 each device once: a new heartbeat of a device already waiting replaces the
 older one, so the queue never exceeds the number of devices and every

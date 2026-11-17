@@ -4,15 +4,14 @@ Method
 ------
 One Go server (worker, recording, ``offload.algorithm``) and ``--devices``
 clients with different device ids, started ``--stagger`` seconds apart (0 =
-together: the case where the algorithm's reservations matter, phase 3.7).
+together: the case where the devices decide at the same time, phase 3.7).
 Every client is released to the algorithm (the registration check pins it,
 like any admin policy), or pinned to ``--pin`` (load chosen by hand), and
 runs for ``--duration`` seconds.
 
 Per device: frames per second, latency p50/p95 after ``--warmup`` seconds,
 the share answered by the server, the policy changes and the last policy.
-From the recording: every policy change with its reason, and the largest
-load the algorithm saw reserved and not yet measured (``pending_erlangs``).
+From the recording: every policy change with its reason.
 
 Client and server share the machine, so the devices compete for its CPU:
 the numbers are for the algorithm's behaviour, not for capacity.
@@ -107,14 +106,6 @@ def policy_timeline(events: list[dict]) -> list[dict]:
         for e in events
         if e.get("kind") == "policy"
     ]
-
-
-def max_pending(events: list[dict]) -> float:
-    """The largest load reserved by other devices and not yet measured."""
-    return max(
-        (e.get("pending_erlangs", 0.0) for e in events if e.get("kind") == "decision"),
-        default=0.0,
-    )
 
 
 def format_table(per_device: dict[str, dict], timeline: list[dict]) -> str:
@@ -306,13 +297,11 @@ def main(argv: list[str] | None = None) -> int:
         "args": {k: str(v) for k, v in vars(args).items()},
         "devices": per_device,
         "policy_changes": timeline,
-        "max_pending_erlangs": max_pending(events),
     }
     (out_dir / "results.json").write_text(json.dumps(results, indent=2))
     table = format_table(per_device, timeline)
     (out_dir / "results.md").write_text(table + "\n")
     print(table)
-    print(f"\nlargest reserved load not yet measured: {results['max_pending_erlangs']:.2f} erlang")
     print(f"results in {out_dir}")
     return 0
 
