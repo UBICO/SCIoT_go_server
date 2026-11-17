@@ -45,10 +45,14 @@ const (
 
 // State è la rete di un device vista dal server.
 type State struct {
-	// BandwidthBps è la media mobile della banda dei campioni validi, in byte
-	// al secondo, pesata sul tempo; nil se non c'è ancora un campione valido.
-	// BandwidthStdBps è la deviazione standard dei campioni, BandwidthAgeMS da
-	// quanto non arriva un campione valido.
+	// BandwidthBps è la banda dei campioni validi, in byte al secondo: l'inverso
+	// della media mobile del loro tempo per byte, pesata sul tempo; nil se non
+	// c'è ancora un campione valido. Non la media delle bande: con tempi
+	// dispersi (frame piccoli) quella è più alta di byte / tempo medio, e
+	// UploadMS esce troppo corto (Fase 4.2, R5: 16 contro 11 MB/s).
+	// BandwidthStdBps è la stessa dispersione relativa (CV) del tempo per byte,
+	// riportata sulla banda; BandwidthAgeMS da quanto non arriva un campione
+	// valido.
 	BandwidthBps    *float64 `json:"bandwidth_bps,omitempty"`
 	BandwidthStdBps *float64 `json:"bandwidth_std_bps,omitempty"`
 	BandwidthAgeMS  *float64 `json:"bandwidth_age_ms,omitempty"`
@@ -84,7 +88,7 @@ func (s State) UploadMS(bytes int) (ms float64, ok bool) {
 type Estimator struct {
 	mu        sync.Mutex
 	tau       time.Duration // della banda
-	bandwidth ewma.Stat     // dei campioni validi, in byte al secondo
+	perByte   ewma.Stat     // dei campioni validi, in secondi per byte
 	pings     []ping        // dell'ultimo LatencyWindow, dal più vecchio
 	valid     uint64
 	discarded uint64
@@ -128,7 +132,9 @@ func (e *Estimator) Observe(at time.Time, s Sample) {
 		e.recent = e.recent[1:]
 	}
 	if s.Valid {
-		e.bandwidth.Update(at, s.BandwidthBps(), e.tau)
+		// Media mobile del tempo per byte, non della banda. Un campione valido
+		// ha sempre Bytes > 0 (sampleOf).
+		e.perByte.Update(at, s.Receive.Seconds()/float64(s.Bytes), e.tau)
 	}
 }
 
@@ -168,8 +174,11 @@ func (e *Estimator) Snapshot(now time.Time) State {
 		Discarded:   e.discarded,
 	}
 	// Valori nuovi a ogni Snapshot: chi tiene lo State non li vede cambiare.
-	if b, ok := e.bandwidth.Estimate(now, 1); ok {
-		st.BandwidthBps, st.BandwidthStdBps, st.BandwidthAgeMS = &b.Mean, &b.Std, &b.AgeMS
+	// b.Mean è in secondi per byte; con b.Mean == 0 (tempi nulli) niente banda.
+	if b, ok := e.perByte.Estimate(now, 1); ok && b.Mean > 0 {
+		bw := 1 / b.Mean
+		sd := b.Std / b.Mean * bw // CV del tempo per byte, riportato sulla banda
+		st.BandwidthBps, st.BandwidthStdBps, st.BandwidthAgeMS = &bw, &sd, &b.AgeMS
 	}
 	return st
 }

@@ -3,6 +3,7 @@ package netmeasure
 import (
 	"bytes"
 	"io"
+	"math"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -173,6 +174,40 @@ func TestEstimatorDiscardedDoNotMoveBandwidth(t *testing.T) {
 	if *s.BandwidthBps != 1e6 || s.Valid != 1 || s.Discarded != 1 {
 		t.Errorf("stato %+v: banda 1e6, 1 valido, 1 scartato", s)
 	}
+}
+
+// Frame uguali letti in tempi diversi: la banda è byte / tempo medio, non la
+// media delle bande (Fase 4.2, R5: frame piccoli con tempi dispersi).
+func TestEstimatorBandwidthIsBytesOverMeanTime(t *testing.T) {
+	e := NewEstimator(time.Minute)
+	// Nello stesso istante: pesano uguale (ewma.Alpha, media semplice).
+	e.Observe(t0, valid(1000, 10*time.Millisecond)) // 1e-5 s/B, 1e5 B/s
+	e.Observe(t0, valid(1000, 30*time.Millisecond)) // 3e-5 s/B, 3,3e4 B/s
+	s := e.Snapshot(t0)
+	// 1000 B / 20 ms; la media delle bande sarebbe 6,7e4.
+	if s.BandwidthBps == nil || !near(*s.BandwidthBps, 5e4) {
+		t.Fatalf("banda %v, attesa 5e4 (byte / tempo medio)", deref(s.BandwidthBps))
+	}
+	// Tempo per byte 2e-5 ± 1e-5: CV 0,5, deviazione 0,5 × 5e4.
+	if s.BandwidthStdBps == nil || !near(*s.BandwidthStdBps, 2.5e4) {
+		t.Errorf("deviazione %v, attesa 2,5e4 (CV del tempo per byte × banda)", deref(s.BandwidthStdBps))
+	}
+	if s.BandwidthAgeMS == nil || *s.BandwidthAgeMS != 0 {
+		t.Errorf("età %v, attesa 0", deref(s.BandwidthAgeMS))
+	}
+}
+
+// deref: il valore per i messaggi, "nil" se manca.
+func deref(p *float64) any {
+	if p == nil {
+		return "nil"
+	}
+	return *p
+}
+
+// near: uguali a meno dell'arrotondamento (relativo 1e-9).
+func near(got, want float64) bool {
+	return math.Abs(got-want) <= 1e-9*math.Abs(want)
 }
 
 func TestEstimatorNotLimitingOverTime(t *testing.T) {

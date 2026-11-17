@@ -308,7 +308,7 @@ measured:
 | Variant | p95 error A1 / A2 / A3 / C1 / W1 | P4: refused / window full |
 |---|---|---|
 | none (`answer_ms` only) | −32 / −3 / −1 / −20 / −3% | 14.8 / 0 |
-| transfer, CV of the bandwidth (median 0.06) | −3 / +2 / +6 / −17 / +8% | 14.8 / 0 |
+| transfer, CV of the bandwidth (median 0.06, of the rates) | −3 / +2 / +6 / −17 / +8% | 14.8 / 0 |
 | transfer, CV 0.45 (of `receive_ms`) | +11 / +59 / +52 / +32 / +41% | 14.8 / 0 |
 | answer, CV 0.1–0.4 | within ±3% of none | ~12.7 / 2.4 |
 | cycle CV 0.5 + answer CV 0.2 | — | 9.6 / 5.2 |
@@ -387,10 +387,10 @@ against a predicted 65, 37–41, 37–43 (frames/s +22…+24%, mean −35…−4
 the slack (×1.55 > 1.25).
 
 The main cause is the bandwidth estimate, not the client: `netmeasure`
-averages each sample's bandwidth (bytes/s), and the transfer time is bytes
-divided by that average. For small frames with spread read times (pico:
-a few 2–4 ms samples at 50–100 MB/s among ones of ~18 ms, CV of the time per
-byte 0.46) the mean of the rates is far above bytes / mean time: 15.6–16.7
+averaged each sample's bandwidth (bytes/s, until the change below), and the
+transfer time is bytes divided by that average. For small frames with
+spread read times (pico: a few 2–4 ms samples at 50–100 MB/s among ones
+of ~18 ms, CV of the time per byte 0.46) the mean of the rates is far above bytes / mean time: 15.6–16.7
 against 11.0–11.4 MB/s, so 12 ms predicted per frame against 16–17
 measured. For yolo-small (1.2 MB, CV 0.03–0.15) the two are equal. The
 answer measured at window 3 (28 ms, against 11–14 at window 1) is mostly
@@ -414,6 +414,13 @@ p95 error to 4% but A1's to +75…+127%, and sends R5_2's `pi2` to `LOCAL`
 (46 of 69 decisions), which is measured worse (~14 frames/s, p95 66,
 against 26–29 frames/s, p95 51–60 at split 4 window 1): only SPLIT would get
 a spread, `LOCAL` none. Not modeled.
+
+Since phase 4.2 `netmeasure` averages the time per byte
+([RECORDING.md](RECORDING.md#network)): the "time per byte" rows above are
+what the server now estimates (the same code, rerun on the recorded
+samples). `bandwidth_std_bps` keeps the time per byte's CV, so the CV of
+the bandwidth [above](#variability-on-the-replay-phase-42) was
+computed on the rates, before the change.
 
 ## Mean or p95
 
