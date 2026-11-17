@@ -203,7 +203,13 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 
 	// Sotto il lock: il modello è quello della sessione attuale. La sessione
 	// è già verificata sopra, quindi un device scaduto riceve session_expired.
-	if t.SegmentMS != nil && len(t.SegmentMS) != d.Model.NumLayers {
+	// segment_ms è obbligatorio (Fase 4.2): senza, il device non si può
+	// simulare come client degli altri (Fleet.Clients, ripiego per tutti).
+	if t.SegmentMS == nil {
+		return HeartbeatResult{}, fmt.Errorf("%w: segment_ms and segment_count are required, one entry per segment (%d)",
+			ErrInvalidTelemetry, d.Model.NumLayers)
+	}
+	if len(t.SegmentMS) != d.Model.NumLayers {
 		return HeartbeatResult{}, fmt.Errorf("%w: segment_ms has %d entries, the model has %d segments",
 			ErrInvalidTelemetry, len(t.SegmentMS), d.Model.NumLayers)
 	}
@@ -213,9 +219,7 @@ func (s *Store) Heartbeat(id, sessionID string, appliedVersion uint64, t api.Tel
 	d.LastSeen = now
 	d.AppliedPolicyVersion = appliedVersion
 	d.LastTelemetry = t
-	if t.SegmentMS != nil {
-		d.Segments = updateSegments(d.Segments, t.SegmentMS, now, s.segmentTau)
-	}
+	d.Segments = updateSegments(d.Segments, t.SegmentMS, now, s.segmentTau)
 	d.Cycle = d.Cycle.Update(t, float64(since.Microseconds())/1000, now, s.segmentTau)
 	// Nessun campione nella finestra (nil) non vuol dire ritorno 0: la stima
 	// resta com'è. d è una copia del Device: la riga sotto la rimette nella mappa.

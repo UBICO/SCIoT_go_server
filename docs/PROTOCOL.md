@@ -197,15 +197,17 @@ Request:
   | `cpu_load` | no | `0..1`, average over the window |
   | `rtt_ms` | no | duration of the **previous** heartbeat; absent after a failed one |
   | `memory_available_bytes` | no | `>= 0` |
-  | `segment_ms` | no, with `segment_count` | per segment `0..last` of the model, the mean compute time of the window on the device; `null` for a segment not run in the window |
-  | `segment_count` | with `segment_ms` | per segment, how many times it ran in the window, `>= 0`; `0` if and only if `segment_ms` is `null` there |
+  | `segment_ms` | yes (since phase 4.2) | per segment `0..last` of the model, the mean compute time of the window on the device; `null` for a segment not run in the window |
+  | `segment_count` | yes, with `segment_ms` | per segment, how many times it ran in the window, `>= 0`; `0` if and only if `segment_ms` is `null` there |
   | `wait_ms` | no | total time the client waited in the window for a place in its window of frames in flight (see [CLIENT.md](CLIENT.md#window-full)), `>= 0`; absent = `0` (a client that never waits) |
   | `answer_ms` | no | mean of `rtt − receive_ms − server_ms` (the data plane's [timing](#data-plane)) over the window's results of frames that travelled alone (no other frame of the device in flight when sent, none sent before the answer): latency of the first byte up, return of the answer and the client's time to receive it, `>= 0`; absent = no such result in the window (the server keeps its estimate). The other frames also waited on the link behind an earlier one, which the cost model simulates itself, or had their answer delayed by the client sending the next one. A server before phase 4.2 rejects the field: update server and client together |
 
   Optional fields are omitted when unknown: `0` is a value, not "absent".
   `segment_ms` and `segment_count` have one entry per segment of the
-  session's model (`num_layers`), or `400 invalid_request`. A client that
-  sends them sends them in every heartbeat, all `null`/`0` when no segment
+  session's model (`num_layers`), or `400 invalid_request`; a heartbeat
+  without them is `400 invalid_request` too (since phase 4.2: without them
+  the server cannot simulate the device in the other devices' predictions,
+  [OFFLOAD.md](OFFLOAD.md#other-devices)). They are in every heartbeat, all `null`/`0` when no segment
   ran (split −1 with every frame served): the server derives the rest of the
   device's cycle from them, and a missing window is "not measured", not
   "nothing computed". They are the raw

@@ -230,13 +230,17 @@ func registerSession(t *testing.T, s *Server, modelHash string) string {
 	return resp.SessionID
 }
 
+// fomoSegments sono segment_ms e segment_count di una finestra di fomo (59
+// segmenti) in cui non ne gira nessuno: obbligatori in ogni heartbeat.
+var fomoSegments = `"segment_ms": [null` + strings.Repeat(", null", 58) + `], "segment_count": [0` + strings.Repeat(", 0", 58) + `]`
+
 func heartbeatBody(session string) string {
 	return `{
 		"device_id": "web_192",
 		"session_id": "` + session + `",
 		"policy_version": 1,
 		"mode": "LOCAL",
-		"telemetry": {"inference_count": 10, "inference_time_ms": 41.5, "inference_time_max_ms": 50, "cpu_load": 0.4}
+		"telemetry": {"inference_count": 10, "inference_time_ms": 41.5, "inference_time_max_ms": 50, "cpu_load": 0.4, ` + fomoSegments + `}
 	}`
 }
 
@@ -276,8 +280,9 @@ func TestHeartbeatErrors(t *testing.T) {
 		{"mode non valido", strings.Replace(heartbeatBody(session), `"LOCAL"`, `"REMOTE"`, 1), 400, api.ErrCodeInvalidRequest},
 		{"telemetria fuori range", strings.Replace(heartbeatBody(session), `0.4`, `1.5`, 1), 400, api.ErrCodeInvalidRequest},
 		{"media sopra il massimo", strings.Replace(heartbeatBody(session), `"inference_time_max_ms": 50`, `"inference_time_max_ms": 30`, 1), 400, api.ErrCodeInvalidRequest},
-		{"segmenti incoerenti", strings.Replace(heartbeatBody(session), `"cpu_load": 0.4`, `"cpu_load": 0.4, "segment_ms": [1.5], "segment_count": [0]`, 1), 400, api.ErrCodeInvalidRequest},
-		{"segmenti diversi dal modello", strings.Replace(heartbeatBody(session), `"cpu_load": 0.4`, `"cpu_load": 0.4, "segment_ms": [1.5], "segment_count": [1]`, 1), 400, api.ErrCodeInvalidRequest},
+		{"segmenti incoerenti", strings.Replace(heartbeatBody(session), fomoSegments, `"segment_ms": [1.5], "segment_count": [0]`, 1), 400, api.ErrCodeInvalidRequest},
+		{"segmenti diversi dal modello", strings.Replace(heartbeatBody(session), fomoSegments, `"segment_ms": [1.5], "segment_count": [1]`, 1), 400, api.ErrCodeInvalidRequest},
+		{"senza segmenti", strings.Replace(heartbeatBody(session), ", "+fomoSegments, "", 1), 400, api.ErrCodeInvalidRequest},
 		{"sessione sconosciuta", heartbeatBody("SESSIONE-VECCHIA"), 409, api.ErrCodeSessionExpired},
 		{"device sconosciuto", strings.Replace(heartbeatBody(session), `"web_192"`, `"mai-visto"`, 1), 409, api.ErrCodeSessionExpired},
 	}

@@ -5,7 +5,6 @@ import pytest
 from scripts.bench_multi import (
     device_metrics,
     format_table,
-    max_pending,
     pin_body,
     policy_label,
     policy_timeline,
@@ -34,7 +33,7 @@ def test_device_metrics_skip_the_warmup():
     assert m["latency_ms_p50"] == pytest.approx(20)
 
 
-def test_timeline_and_pending():
+def test_timeline():
     events = [
         {"kind": "start", "t_ms": 0},
         {
@@ -44,7 +43,7 @@ def test_timeline_and_pending():
             "reason": "admin",
             "policy": {"mode": "LOCAL", "split_point": None, "policy_version": 2},
         },
-        {"kind": "decision", "t_ms": 12000, "pending_erlangs": 0.4},
+        {"kind": "decision", "t_ms": 12000},
         {
             "kind": "policy",
             "t_ms": 12000,
@@ -52,15 +51,12 @@ def test_timeline_and_pending():
             "reason": "latency",
             "policy": {"mode": "SPLIT", "split_point": 6, "policy_version": 3, "max_inflight": 2},
         },
-        {"kind": "decision", "t_ms": 12500, "pending_erlangs": 1.3},
     ]
     timeline = policy_timeline(events)
     assert [(c["t_s"], c["policy"], c["reason"]) for c in timeline] == [
         (1.5, "LOCAL", "admin"),
         (12.0, "SPLIT 6/2", "latency"),
     ]
-    assert max_pending(events) == pytest.approx(1.3)
-    assert max_pending([]) == 0.0
 
     table = format_table(
         {"a": {"fps": 50, "latency_ms_p50": 40, "latency_ms_p95": None, "result_fraction": 1}},

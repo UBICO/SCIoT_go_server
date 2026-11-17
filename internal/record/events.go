@@ -158,11 +158,6 @@ type Decision struct {
 	MaxInflight *int              `json:"max_inflight,omitempty"`
 	Changed     bool              `json:"changed"`
 	Reason      string            `json:"reason"`
-	// PendingPerSec e PendingErlangs sono il carico prenotato da altri
-	// device e non ancora nella misura, aggiunto agli altri prima di
-	// prevedere (docs/OFFLOAD.md, "Reservations").
-	PendingPerSec  float64 `json:"pending_per_s,omitempty"`
-	PendingErlangs float64 `json:"pending_erlangs,omitempty"`
 	// Clients: quanti altri device sono stati simulati come client (Fase
 	// 3.8); 0 = gli altri come flusso al ritmo misurato (ripiego).
 	Clients int `json:"clients,omitempty"`

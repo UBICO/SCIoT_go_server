@@ -20,9 +20,6 @@ import (
 //
 // Sceglie la coppia (split point, finestra): la finestra, allo split point
 // scelto, è quella con più frame/s entro P95Slack dal migliore (Fase 4.2).
-// Prenota il carico che concede
-// (reserve.go): i device che decidono subito dopo lo vedono prima che il
-// dispatcher lo misuri.
 //
 // Ricorda, per device e per candidato, il rumore delle previsioni: va
 // creato una volta e usato per tutti i device (è sicuro da più goroutine).
@@ -31,12 +28,6 @@ type Latency struct {
 
 	mu    sync.Mutex
 	noise map[string]map[candidate]*noise // device → candidato → rumore
-
-	// decideMu tiene insieme lettura delle prenotazioni, decisione e nuova
-	// prenotazione: due heartbeat simultanei non vedono lo stesso carico
-	// libero.
-	decideMu sync.Mutex
-	res      reservations
 }
 
 // candidate è una coppia (split point, finestra); finestra 0 per LOCAL.
@@ -69,13 +60,6 @@ type LatencyConfig struct {
 	QueueRhoFrom float64
 	// NoiseTau è la costante di tempo della stima del rumore σ.
 	NoiseTau time.Duration
-	// Reserve: le prenotazioni sono attive (default). false le spegne, per
-	// l'ablazione: con gli altri device simulati come client (Fase 3.8)
-	// servono solo nel ripiego sul carico misurato.
-	Reserve bool
-	// ReserveWindow è la finestra su cui il dispatcher misura λ e ρ
-	// (dispatch.Config.Window): una prenotazione si spegne in questo tempo.
-	ReserveWindow time.Duration
 }
 
 // Obiettivi di LatencyConfig.Objective.
@@ -92,9 +76,6 @@ func DefaultLatencyConfig() LatencyConfig {
 		MinHold:     10 * time.Second,
 		MarginMinMS: 2, MarginRel: 0.1, KQueue: 1, KNoise: 1, QueueRhoFrom: 0.8,
 		NoiseTau: 10 * time.Second,
-		Reserve:  true,
-		// = dispatch.DefaultConfig().Window; cmd/server passa quella vera.
-		ReserveWindow: 10 * time.Second,
 	}
 }
 
@@ -121,7 +102,7 @@ const (
 
 // NewLatency crea l'algoritmo.
 func NewLatency(cfg LatencyConfig) *Latency {
-	return &Latency{cfg: cfg, noise: map[string]map[candidate]*noise{}, res: newReservations(cfg.ReserveWindow)}
+	return &Latency{cfg: cfg, noise: map[string]map[candidate]*noise{}}
 }
 
 func (l *Latency) Name() string { return "latency" }
@@ -131,45 +112,17 @@ func (l *Latency) Forget(deviceID string) {
 	l.mu.Lock()
 	delete(l.noise, deviceID)
 	l.mu.Unlock()
-	l.decideMu.Lock()
-	l.res.forget(deviceID)
-	l.decideMu.Unlock()
 }
 
-// Decide implementa Algorithm. Un cambio prenota la differenza tra il
-// carico della coppia scelta e quello dell'attuale. Il carico prenotato
-// dagli altri device si aggiunge a quello misurato solo nel ripiego, quando
-// gli altri non sono simulati come client (Queue.Clients vuoto): con i
-// client un cambio concesso è già nella simulazione (Fleet.SetPolicy), e
-// sommarlo al carico misurato cambierebbe solo il ρ di LOCAL.
+// Decide implementa Algorithm. Gli altri device in SPLIT sono simulati come
+// client alla policy che il server ha appena dato loro (Fleet.SetPolicy):
+// un cambio concesso è già nella decisione successiva degli altri, prima che
+// il dispatcher lo misuri. Nel ripiego (Queue.Clients vuoto) gli altri sono
+// il carico misurato (docs/OFFLOAD.md, "Other devices").
 func (l *Latency) Decide(now time.Time, s State) Decision {
-	l.decideMu.Lock()
-	defer l.decideMu.Unlock()
-	var pend Load // zero con le prenotazioni spente o con i client
-	// La prenotazione di un cambio (più sotto) resta: serve a chi decide dopo
-	// nel ripiego.
-	if l.cfg.Reserve && len(s.Inputs.Queue.Clients) == 0 {
-		pend = l.res.pending(now, s.DeviceID)
-	}
-	s.Inputs.Queue.OthersLambda += pend.PerSec
-	s.Inputs.Queue.OthersErlangs += pend.Erlangs
-
 	preds := PredictAll(s)
 	sigma, samples := l.observe(now, s.DeviceID, preds)
-	d := l.choose(s, preds, sigma, samples)
-	d.Pending = pend
-	if l.cfg.Reserve && d.Changes(s.Policy, s.MaxWindow) {
-		chosen := IndexOf(preds, d.Split(s.Last), d.Window(s.MaxWindow))
-		cur := IndexOf(preds, s.Split(), s.Window())
-		if chosen >= 0 && cur >= 0 {
-			a, b := serverLoad(preds[chosen]), serverLoad(preds[cur])
-			// shortcut: prenota anche se il server poi non applica il cambio
-			// (device bloccato o ri-registrato nel frattempo, rari): si spegne
-			// in ReserveWindow; se diventa frequente, prenotare dopo SetAutoPolicy.
-			l.res.reserve(now, s.DeviceID, Load{PerSec: a.PerSec - b.PerSec, Erlangs: a.Erlangs - b.Erlangs})
-		}
-	}
-	return d
+	return l.choose(s, preds, sigma, samples)
 }
 
 // choose è la decisione sulle previsioni preds (PredictAll: una per coppia

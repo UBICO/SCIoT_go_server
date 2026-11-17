@@ -78,9 +78,6 @@ type Decision struct {
 	// (split point, finestra) e una per LOCAL (PredictAll), se l'algoritmo ne
 	// usa.
 	Predictions []costmodel.Prediction
-	// Pending è il carico prenotato da altri device e non ancora visibile
-	// nella misura, aggiunto agli altri prima di prevedere (reserve.go).
-	Pending Load
 }
 
 // Split è lo split point della decisione: last per LOCAL.
@@ -241,7 +238,6 @@ func DecisionRecord(s State, d Decision, algorithm string) *record.Decision {
 		DeviceID: s.DeviceID, Algorithm: algorithm, Current: s.Policy,
 		Mode: d.Mode, SplitPoint: d.SplitPoint, MaxInflight: d.MaxInflight,
 		Changed: d.Changes(s.Policy, s.MaxWindow), Reason: d.Reason,
-		PendingPerSec: d.Pending.PerSec, PendingErlangs: d.Pending.Erlangs,
 		Clients:     len(s.Inputs.Queue.Clients),
 		Predictions: RecordPredictions(d.Predictions),
 	}
