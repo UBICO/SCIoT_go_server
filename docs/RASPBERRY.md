@@ -2,7 +2,8 @@
 
 A step-by-step guide: the Python client ([CLIENT.md](CLIENT.md)) on a
 Raspberry Pi, with or without its camera, against a Go server on another
-machine over a real network, then the phase 3.9 benchmark.
+machine over a real network, then the phase 3.9 benchmark and the phase 4.2
+campaign.
 
 In the commands, `<user>@<pi>` is the Pi's user and address (as for `ssh`),
 `<ip>` the address of the machine running the server. Lines marked **check**
@@ -265,8 +266,78 @@ Collect:
   room the bandwidth fell from ~75 to ~8 Mbit/s (2026-11-09), which changes
   every SPLIT result. The probes in the recording show it (`probe` events).
 
-The same recordings feed the checks left for devices on other machines: how
-often the reservation fallback fires ([OFFLOAD.md](OFFLOAD.md)), the
-profiled against the measured server time now that no client shares the
-server's CPU ([COSTMODEL.md](COSTMODEL.md)), and `k_noise` / `k_queue` on a
-real network.
+The checks left for devices on other machines (reservation fallback,
+profiled against measured server time, `k_noise` / `k_queue` on a real
+network) have their own campaign, step 8.
+
+## 8. Phase 4.2 campaign
+
+One campaign for the phase 4.2 checks: the client's `answer_ms` and the
+window chosen for frames per second (`p95_slack`) on a real device, then two
+devices on other machines than the server (reservation fallback, CPU
+contention, `k_noise` / `k_queue`, oscillations), two different models,
+and a slow network. Same rules as step 7: server restarted before every run,
+one recording per run, 90 s, `timeout -s INT`, `vcgencmd get_throttled`
+after each.
+
+**Before the runs:**
+
+- Server and both clients from the **same commit**, `47e760a` or later (the
+  server rejects `answer_ms` before phase 4.2): `rsync` `client/` to both Pis
+  (step 2) and `uv sync --frozen` there. Note the commit.
+- `config.json` as in step 4 (`latency`, `stream.max_inflight` 3, admin,
+  `record.dir`), `offload.p95_slack` left at its default (0.25). Two copies
+  for R4, differing only in the `offload` section:
+  `config-knoise0.json` (`"k_noise": 0`) and `config-kqueue0.json`
+  (`"k_queue": 0`).
+- R5 needs a second model, different from yolo-small: export and build it
+  ([MODELS.md](MODELS.md)), add it to `models` in all three `config.json`,
+  and copy its directory to `pi2` (`~/sciot-models/<model_key>`).
+- `pi2` gets its own `~/sciot/pi.yaml` with `device_id: pi2` (step 6). Both
+  Pis in the same room as in step 7 (~75 Mbit/s), with the static image,
+  except R6.
+
+On each Pi: `mkdir -p ~/sciot/results/phase42`. A run with one device is
+the client command of step 7 with `--frames-csv
+~/sciot/results/phase42/<CSV>`.
+
+**Two devices together** (R3–R5): start both from the server's machine, so
+that they register within a second:
+
+```bash
+ssh <user>@<pi1> "cd ~/sciot/client && timeout -s INT 90 uv run sciot-client --config ~/sciot/pi.yaml --camera static --no-table --frames-csv ~/sciot/results/phase42/<run>_pi1.csv" &
+ssh <user>@<pi2> "cd ~/sciot/client && timeout -s INT 90 uv run sciot-client --config ~/sciot/pi.yaml --camera static --no-table --frames-csv ~/sciot/results/phase42/<run>_pi2.csv" &
+wait
+```
+
+Pins as in step 7 (the loop on the server's machine before the client,
+`/admin/devices/<device_id>/policy`).
+
+| Run | Devices | Server config | `<policy>` | Repeat | CSV | Feeds |
+|---|---|---|---|---|---|---|
+| R1: free | pi1 | `config.json` | no pin | 3 | `R1_<n>.csv` | `answer_ms` and the cost model; expected split −1, window 2 (reason `fps`) |
+| R2: fixed windows | pi1 | `config.json` | `{"mode":"SPLIT","split_point":-1,"max_inflight":<w>}`, `<w>` 1, 2, 3 | 1 each | `R2_w<w>.csv` | the frames/s–latency curve; predicted against measured per window |
+| R3: two devices | pi1 + pi2 together | `config.json` | no pin | 3 | `R3_<n>_<pi>.csv` | reservation fallback, `S` profiled vs measured, two real devices as clients, policy changes |
+| R4: ablation | pi1 + pi2 together | `config-knoise0.json`, then `config-kqueue0.json` | no pin | 2 + 2 | `R4_knoise0_<n>_<pi>.csv`, `R4_kqueue0_<n>_<pi>.csv` | `k_noise` / `k_queue` on a real network |
+| R5: two models | pi1 (yolo-small) + pi2 (second model, `--model-dir ~/sciot-models/<model_key>`) together | `config.json` | no pin | 2 | `R5_<n>_<pi>.csv` | heterogeneous devices (different models and split points) |
+| R6: slow network | pi2 in the other room (~8 Mbit/s, step 7) | `config.json` | no pin | 2 | `R6_<n>.csv` | slow link: upload, Wi-Fi stalls, window choice |
+
+About 17 runs, ~45 minutes with the restarts. Collect as in step 7:
+
+```bash
+rsync -av <user>@<pi1>:~/sciot/results/phase42/ client/results/phase42/
+rsync -av <user>@<pi2>:~/sciot/results/phase42/ client/results/phase42/
+```
+
+and write `client/results/phase42/README.md` (gitignored, as for phase 3.9):
+commit, `config.json` of each run, for every run the pairs CSV ↔ recording,
+temperatures, and anything unusual (a Pi moved, a run repeated).
+
+**Run** (2026-11-10 and 2026-11-17, `client/results/phase42/`): R1 ×4 (R1_4
+after the window hysteresis fix), R2, R3 ×3, R4 2 + 2, R5 ×2 with yolo-pico
+320 on `pi2`; R6 not run. No throttling, 44–58 °C. Results:
+[COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign)
+(cost model, CPU contention, two devices, two models) and
+[OFFLOAD.md](OFFLOAD.md) (window, other devices, `k_noise` / `k_queue`).
+The slow network (R6) and a loaded server (ρ above `queue_rho_from`, where
+`k_queue` acts) are still to run.
