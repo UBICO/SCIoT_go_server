@@ -310,6 +310,62 @@ func TestEstimatorKeepsTheLastPing(t *testing.T) {
 	}
 }
 
+// Fase 4.4: un ping è pulito se nessun messaggio è finito mentre era in
+// viaggio; la latenza viene dai ping puliti, poi dal pulito più recente, poi
+// da tutti (ping.clean, latencyMS).
+func TestEstimatorLatencyFromCleanPings(t *testing.T) {
+	// ev è un messaggio finito in at (rtt 0) o un ping tornato in at.
+	type ev struct{ at, rtt time.Duration }
+	ms := time.Millisecond
+	// saturated: ogni secondo da from a to un frame finisce in k s e un ping
+	// da 300 ms (inviato in k − 150 ms) torna in k + 150 ms: sporco.
+	saturated := func(from, to int) []ev {
+		var out []ev
+		for k := from; k <= to; k++ {
+			s := time.Duration(k) * time.Second
+			out = append(out, ev{at: s}, ev{at: s + 150*ms, rtt: 300 * ms})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name string
+		evs  []ev
+		want float64
+	}{
+		{"un ping durante un frame non conta, anche se breve",
+			[]ev{{at: 0, rtt: 10 * ms}, {at: time.Second}, {at: time.Second + 2*ms, rtt: 4 * ms}}, 5},
+		// lastSample tiene solo l'ultimo: un frame finito tra il pong e
+		// ObservePing (lastSample > at) nasconde quello finito durante il ping.
+		{"un frame finito dopo il pong non pulisce il ping",
+			[]ev{{at: 0, rtt: 10 * ms}, {at: time.Second}, {at: time.Second + 3*ms}, {at: time.Second + 2*ms, rtt: 4 * ms}}, 5},
+		{"un frame finito all'invio del ping non lo sporca",
+			[]ev{{at: 0, rtt: 10 * ms}, {at: time.Second}, {at: time.Second + 4*ms, rtt: 4 * ms}}, 2},
+		{"saturo oltre la finestra: resta il pulito",
+			append([]ev{{at: 0, rtt: 4 * ms}}, saturated(1, 70)...), 2},
+		{"un pulito nuovo sostituisce quello vecchio",
+			append(append([]ev{{at: 0, rtt: 4 * ms}}, saturated(1, 70)...), ev{at: 75 * time.Second, rtt: 8 * ms}), 4},
+		{"il pulito vecchio non batte quelli della finestra",
+			[]ev{{at: 0, rtt: 2 * ms}, {at: 70 * time.Second, rtt: 10 * ms}}, 5},
+		{"saturo da quando è connesso: il minimo di tutti",
+			saturated(1, 70), 150},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := NewEstimator(time.Minute)
+			for _, x := range c.evs {
+				if x.rtt == 0 {
+					e.Observe(t0.Add(x.at), valid(1000, ms))
+				} else {
+					e.ObservePing(t0.Add(x.at), x.rtt)
+				}
+			}
+			got := e.Snapshot(t0.Add(c.evs[len(c.evs)-1].at)).LatencyMS
+			if got == nil || !near(*got, c.want) {
+				t.Errorf("latenza %v ms, attesa %v", deref(got), c.want)
+			}
+		})
+	}
+}
+
 func TestEstimatorLastSample(t *testing.T) {
 	e := NewEstimator(time.Minute)
 	if !e.LastSample().IsZero() {
