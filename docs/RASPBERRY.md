@@ -36,9 +36,13 @@ it sees it. Without a camera none of this is needed.
 
 ```bash
 sudo apt update
-sudo apt install -y python3-picamera2 rsync   # without a camera: rsync only
+sudo apt install -y chrony python3-picamera2 rsync   # without a camera: chrony rsync
 curl -LsSf https://astral.sh/uv/install.sh | sh   # then open a new shell
 ```
+
+chrony replaces `systemd-timesyncd` as the clock's NTP client: see
+[Clocks](#5-clocks). `uv sync` cannot do this (a Python package does not
+install system services), so it is part of this step.
 
 rsync creates only the last directory of the destination: create the parents
 first. From the machine with this repository, at its root:
@@ -147,18 +151,42 @@ wall clock) with the server's decisions (the server's wall clock), heartbeat
 by heartbeat (1 s): with clocks 2 s apart, frames would be compared with the
 wrong decision. They must agree within a few tens of ms.
 
+**chrony on the Pi** (installed in [step 2](#2-install)), not
+`systemd-timesyncd`: timesyncd polls its server at most every 34 minutes
+and between polls the Pi's clock drifts. With it, the clocks of the Pis and
+the MacBook were 100–175 ms apart in the phase 4.3 campaign, and the gap
+changed between runs a few minutes apart; with chrony (a poll about every
+minute) ~20 ms, mostly the Mac's own offset. chrony keeps Debian's default
+servers: what matters is that the Pi and the server's machine agree, not
+which source they use. Even with the same pool name (a Debian server, say)
+the two get different servers from it; public servers are within ~1 ms of
+UTC, and each machine's error comes from its own network path (a few ms,
+more over Wi-Fi). Two machines each synchronized within a few ms of UTC
+agree within ~10 ms. For less, or with no internet, point the Pi at the
+server's machine (on Linux: chrony there too, with `allow <subnet>`; a Mac
+does not serve NTP by default), with a file in `/etc/chrony/conf.d/`:
+
+```bash
+echo 'server <server-host> iburst prefer' | sudo tee /etc/chrony/conf.d/sciot.conf
+sudo systemctl restart chrony
+```
+
 On the Pi:
 
 ```bash
-timedatectl status          # "System clock synchronized: yes", "NTP service: active"
-timedatectl timesync-status # Offset: a few ms (with chrony instead: chronyc tracking, "System time")
+systemctl is-active chrony systemd-timesyncd   # active, inactive
+chronyc tracking                               # "System time": a few ms; "Ref time" recent
 ```
 
-On a Mac: System Settings → General → Date & Time → set automatically; the
-offset:
+On the server's machine: a Mac sets the time automatically (System
+Settings → General → Date & Time; offset: `sntp time.apple.com`, step it
+with `sudo sntp -sS time.apple.com`); Linux: chrony as on the Pi.
+
+What the analysis needs is the offset **between** the two machines. From
+the server's machine (one ssh session, the shortest of 20 round trips):
 
 ```bash
-sntp time.apple.com
+python3 client/scripts/clock_offset.py <user>@<pi>   # offset pi - this machine: +21.6 ms (±4.1)
 ```
 
 ## 6. Configuration and first run
