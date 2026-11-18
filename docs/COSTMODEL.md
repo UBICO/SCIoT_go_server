@@ -371,8 +371,9 @@ measured (client CSV, from 5 s after it):
 | predicted / measured | 9.8–10.7 / 10.0–10.7 | −0…−8% | 194–216 / 221–249 ms (−12…−20%) |
 
 Frames/s and mean as with one device; the p95 is 12–20% low, against −3%
-for `pi1` alone (R1). Not explained: likely the Wi-Fi shared by two devices
-(a longer transfer tail, which the simulation does not have), not checked.
+for `pi1` alone (R1): the Wi-Fi shared by the two devices, a longer
+transfer tail that the simulation does not have (checked in
+[phase 4.4](#slow-network-shared-wi-fi-and-pico-alone-phase-44)).
 With `k_noise: 0` or `k_queue: 0` (R4) the decisions and the measures are
 those of R3: with ρ 0.4 and no queue neither term is active
 ([OFFLOAD.md](OFFLOAD.md#verification-phase-38)). The queue term
@@ -409,7 +410,7 @@ yolo-small's decisions do not change (1 of 158 in R4_kqueue0_2); R5_1's
 `pi2` picks window 2 (45 of 70 decisions), R5_2's stays at window 3. The
 one regression is A1 (phase 3.9, Wi-Fi stalls): frames/s −13%, mean +10%,
 same decision. The 3.8 recordings (localhost) have no bandwidth sample.
-Pico at window 2 was never measured. The p95 left out (−18%) is the
+Pico at window 2 was not measured here ([phase 4.3](#loaded-server-and-pico-on-the-pi-phase-43-campaign)). The p95 left out (−18%) is the
 transfer's spread: a per-device CV of the time per byte brings yolo-small's
 p95 error to 4% but A1's to +75…+127%, and sends R5_2's `pi2` to `LOCAL`
 (46 of 69 decisions), which is measured worse (~14 frames/s, p95 66,
@@ -487,10 +488,97 @@ The choice is now right: measured, window 2's p95 is 1.19× window 1's
 (within `p95_slack`) and window 3's 1.42× (outside), and both free runs end
 at window 2 (split 4 or 5, predicted equal). In R5 (before the change) it
 was window 3. The error is not: the simulation gives window 2 the frames/s
-of a full pipeline (61, as window 3), measured 44 against 56. A
-per-frame cost on the client with ~20 ms frames would explain it; not
-measured, not modeled. `pi1` (yolo-small, ρ 0.3) frames/s −2…+3%, p95
-−8…−14%.
+of a full pipeline (61, as window 3), measured 44 against 56: the other
+Pi's traffic and an answer that grows with the frames in flight, not a CPU
+cost on the client ([phase 4.4](#slow-network-shared-wi-fi-and-pico-alone-phase-44)).
+`pi1` (yolo-small, ρ 0.3) frames/s −2…+3%, p95 −8…−14%.
+
+### Slow network, shared Wi-Fi and pico alone (phase 4.4)
+
+The three checks left from phase 4: a slow network on the Pi, the p95
+12–20% low with two devices, pico at window 2. The last two first offline,
+on the 4.2 and 4.3 recordings; then one Raspberry Pi at a time (`pi2`),
+static image, server on a MacBook at commit `28cc069`
+([RASPBERRY.md](RASPBERRY.md#10-phase-44-campaign), `client/results/phase44/`),
+2026-11-18. Predicted: live decisions after the last change (free runs),
+replay (pinned runs); measured: client CSV.
+
+**Slow network.** Upload capped on the Pi with `tc` (token bucket),
+yolo-small, the algorithm free (R6a) or pinned at split −1 window 1 (R6b):
+
+| Cap | Policy | frames/s measured (error) | p95 ms measured (error) |
+|---|---|---|---|
+| 40 Mbit/s | −1/1 after 37 s | 3.15 (0%) | 331 (0%) |
+| 20 Mbit/s | 4/1 after 26 s | 2.57 (+2%) | 514 (−4%) |
+| 10, 5 Mbit/s | `LOCAL` | 1.54 (−1%) | 640 (−1%) |
+| 10 Mbit/s, pinned | −1/1 | 1.90 (+1%) | 1050 (0%) |
+
+Mean within 1%, one policy change per run and none back. At 10 Mbit/s
+split −1 was predicted at p95 966 against `LOCAL`'s 634 (1.52×, beyond
+`p95_slack`), measured pinned at 1050 against 640: staying `LOCAL` was
+right. In the pinned run half the frames finish on the device (window
+full: waiting would cost more than the 634 ms local frame), and the
+simulation has them too. The bandwidth estimate with frames flowing is
+within 1–3% of the cap (39.9, 20.6, 10.1 Mbit/s); with only probes (the
+`LOCAL` runs) +8% (10.8, 5.4): after a pause the token bucket lets 64 KiB
+through at once, a large share of a 512 KiB probe. The latency stays at
+1.5–3.4 ms in every R6 run, the pinned one too (link 94% busy since the
+start): only clean pings count ([RECORDING.md](RECORDING.md#network), fixed
+before this campaign; with the old rule `bench_network.py` gave 1968 ms
+after 60 s at 5 Mbit/s). Pico pinned at window 3 (PA_w3, below, link ~95%
+busy) had 4–7 ms against 1.5 at windows 1 and 2, from pings during which no
+message finished, so not the upload queue (perhaps the busy client answering
+pings late); its prediction is right all the same.
+
+**Two devices: the shared Wi-Fi.** The low p95 with two Pis (phase 4.2 R3–R4,
+phase 4.3 Q) comes from the transfer. Same Pi, model and split (`pi1`,
+yolo-small, −1), `receive_ms` against the other Pi's traffic:
+
+| `pi2` sends | `pi1` `receive_ms` p50 / p95 | CV |
+|---|---|---|
+| nothing (R1) | 86 / 91 ms | 0.04 |
+| 5.7 MB/s (P2, pico window 1) | 88 / 99 ms | 0.07 |
+| 8–10 MB/s (P1, P2, R5) | 89–92 / 103–114 ms | 0.09–0.12 |
+| 12 MB/s (R3, R4, Q: yolo-small) | 95–97 / 115–126 ms | 0.14–0.17 |
+
+Within one run too (P1_1: `pi1`'s frames whose transfer `pi2`'s did not
+overlap 84 / 90 ms, overlapped 91 / 105), so it is not the day (R1 ran a
+week earlier). The frames above the p95 lose their time on the link: the
+transfer, the wait behind the previous frame, the wait for a full window;
+queue wait 0 and `S` +0…4 ms. The mean is right because the bandwidth (time
+per byte) already includes the sharing: only the spread is missing, the
+per-device transfer spread of [phase 4.2](#verification-on-the-pi-with-answer_ms-phase-42-campaign),
+not modeled.
+
+**Pico at window 2.** On the client neither the prefix nor `A` grows with
+the window (P2: prefix 10.2 / 10.3 / 10.4 ms, `A` 4.9–5.3 at windows 1, 2,
+3), and answers are stamped also while a prefix runs (the receiver thread
+is not held by the interpreter): no CPU cost on the client. The lost cycle
+is the wait for a full window, 20.5 / 5.9 / 1.9 ms a frame: at window 2 the
+window bounds the rate, while the simulation has the device bound it. The
+window's place is held longer than simulated, for two reasons. The other
+Pi: alone (PA runs, `pi1` idle) pico's transfer CV is 0.12–0.18 against
+0.34–0.45 and its answer at window 1 6 ms against 14, and window 2 gives
+53.6 frames/s against 45.9 with `pi1` running (same steady part). And the
+answer grows with the frames in flight even alone (`rtt − receive − server
+time` 6.0 / 11.0 / 16.8 ms at windows 1, 2, 3), while `answer_ms` comes
+from frames sent alone, at window 1: the replay of PA_w2 with 11 ms gives
++8% frames/s and +1% p95. Whether the Pi's own upload delays the answer
+on the half-duplex Wi-Fi or the client does, these runs cannot tell (no
+Pi on a cable). The choice is unaffected: measured and predicted, window 2.
+`S` of pico on the Mac was 7–13 ms that day against 4.3 in phase 4.3,
+measured and followed by the model.
+
+| PA, `pi2` pico 4/w | frames/s measured / predicted | p95 ms measured / predicted |
+|---|---|---|
+| window 1 | 27.6 / 30.1 (+9%) | 47 / 46 (−1%) |
+| window 2 | 53.6 / 65.0 (+21%) | 48 / 40 (−17%) |
+| window 3 | 63.6 / 63.8 (0%) | 59 / 60 (+2%) |
+
+Not modeled, both wait for the ESP32 client (other costs than the Python
+one): a per-device transfer spread, and an answer measured with frames in
+flight, which needs the server to mark the frames that found the link free
+(the simulation already queues the others on the link).
 
 ## Mean or p95
 

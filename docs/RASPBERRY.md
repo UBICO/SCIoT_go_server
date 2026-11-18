@@ -340,8 +340,8 @@ after the window hysteresis fix), R2, R3 ×3, R4 2 + 2, R5 ×2 with yolo-pico
 [COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-answer_ms-phase-42-campaign)
 (cost model, CPU contention, two devices, two models) and
 [OFFLOAD.md](OFFLOAD.md) (window, other devices, `k_noise` / `k_queue`).
-The slow network (R6) is still to run; the loaded server ran in
-[step 9](#9-phase-43-campaign).
+The loaded server ran in [step 9](#9-phase-43-campaign), the slow network
+in [step 10](#10-phase-44-campaign) (with `tc` instead of the other room).
 
 ## 9. Phase 4.3 campaign
 
@@ -383,5 +383,47 @@ path that does not exist on the Pi, so `pi2` never started). No
 throttling, 43–65 °C. Results:
 [COSTMODEL.md](COSTMODEL.md#loaded-server-and-pico-on-the-pi-phase-43-campaign)
 (simulation near saturation, queue formulas, pico) and
-[OFFLOAD.md](OFFLOAD.md#verification-phase-38) (`k_queue`, window). Still
-to run: the slow network (R6 of step 8).
+[OFFLOAD.md](OFFLOAD.md#verification-phase-38) (`k_queue`, window). The
+slow network ran in [step 10](#10-phase-44-campaign).
+
+## 10. Phase 4.4 campaign
+
+The checks left from phase 4: a **slow network** (R6 of step 8, never run)
+and **pico alone** at each window, to separate its error at window 2 from
+the other Pi's traffic. One Pi at a time, the other idle; same rules as
+step 9 (server restarted before every run, static image, `vcgencmd
+get_throttled` after each); CSVs in `~/sciot/results/phase44/` on the Pi.
+
+**Before the runs:**
+
+- The server at `28cc069` or later: latency from clean pings only
+  ([RECORDING.md](RECORDING.md#network)). With the old rule a link
+  saturated for 60 s made the latency the queue (1968 ms at 5 Mbit/s).
+- The cap is a token bucket on the Pi's egress, so it limits the upload
+  (the bandwidth the cost model uses), not the answers:
+
+  ```bash
+  sudo tc qdisc replace dev wlan0 root tbf rate 10mbit burst 64kb latency 300ms
+  sudo tc qdisc del dev wlan0 root   # back to the default
+  ```
+
+  Over `ssh` the script needs `sudo` without a password for `tc` only:
+  `echo '<user> ALL=(root) NOPASSWD: /usr/sbin/tc' | sudo tee
+  /etc/sudoers.d/sciot-tc`, `sudo chmod 440` it and check with `sudo visudo
+  -c` (remove it after the campaign). Call `tc` through `sudo` also to read
+  the qdisc: a non-interactive `ssh` has no `/usr/sbin` in `PATH`.
+
+| Run | Device | Cap | `<policy>` | Length |
+|---|---|---|---|---|
+| R6a: free | yolo-small | 40, 20, 10, 5 Mbit/s | no pin | 150 s each |
+| R6b: pinned | yolo-small | 10 Mbit/s | `{"mode":"SPLIT","split_point":-1,"max_inflight":1}` | 150 s |
+| PA: pico alone | yolo-pico (`--model-dir`) | none | `{"mode":"SPLIT","split_point":4,"max_inflight":<w>}`, `<w>` 1, 2, 3 | 90 s each |
+
+150 s so that a device that leaves `LOCAL` stays more than 60 s on a
+saturated link (the latency's window).
+
+**Run** (2026-11-18, commit `28cc069`, `client/results/phase44/`): the 8
+runs, all on `pi2` (yolo-small from its `pi.yaml`, pico with
+`--model-dir`). No throttling, 43–57 °C. Results:
+[COSTMODEL.md](COSTMODEL.md#slow-network-shared-wi-fi-and-pico-alone-phase-44)
+(slow network, the two-device p95, pico at window 2).
