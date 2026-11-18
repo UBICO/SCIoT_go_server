@@ -122,7 +122,11 @@ paths):
   "models": [
     {
       "model_key": "yolo_small_320",
-      "tflite_dir": "/path/to/sciot-models/yolo_small_320"
+      "tflite_dir": "models/yolo_small_320"
+    },
+    {
+      "model_key": "yolo_pico_320",
+      "tflite_dir": "models/yolo_pico_320"
     }
   ]
 }

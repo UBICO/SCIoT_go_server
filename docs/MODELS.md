@@ -9,6 +9,12 @@ Edge Impulse Studio ──▶ two exports ──▶ sciot-model build ──▶ 
                                                                  manifest.json
 ```
 
+Two built models are in the repository, under `models/`: `yolo_small_320`
+(28 MB, float32) and `yolo_pico_320` (2.3 MB, float32). `config.example.json`
+points to them with paths relative to the repository root, so start the server
+from there. Rebuilding a model changes its hash: commit the new directory and
+copy it to the devices.
+
 The same directory is used by the server (worker) **and** by the devices: see
 [Model hash](#model-hash).
 

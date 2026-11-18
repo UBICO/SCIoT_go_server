@@ -1,0 +1,291 @@
+{
+  "format_version": 2,
+  "quantization": null,
+  "tool": {
+    "name": "sciot-model",
+    "tensorflow": "2.20.0"
+  },
+  "source": {
+    "savedmodel": {
+      "file": "ei-sciot---fomo-models-object-detection-tensorflow-savedmodel-model.41.zip",
+      "sha256": "8aa6bb566f30307263d7c137c0dc305f572be32968f168473207cbccab755017"
+    },
+    "edge_impulse": {
+      "project_id": 1011188,
+      "deploy_version": 8,
+      "studio_version": "1.94.5"
+    }
+  },
+  "input": {
+    "shape": [
+      1,
+      320,
+      320,
+      3
+    ],
+    "dtype": "float32",
+    "resize_mode": "fit_shortest"
+  },
+  "output": {
+    "shape": [
+      1,
+      2100,
+      6
+    ],
+    "dtype": "float32"
+  },
+  "cuts": [
+    {
+      "tensor": "StatefulPartitionedCall/functional_1/bb00_conv_1/activation_188_1/Relu6:0",
+      "operation": "StatefulPartitionedCall/functional_1/bb00_conv_1/activation_188_1/Relu6",
+      "operation_type": "Relu6"
+    },
+    {
+      "tensor": "StatefulPartitionedCall/functional_1/bb01_conv_1/activation_189_1/Relu6:0",
+      "operation": "StatefulPartitionedCall/functional_1/bb01_conv_1/activation_189_1/Relu6",
+      "operation_type": "Relu6"
+    },
+    {
+      "tensor": "StatefulPartitionedCall/functional_1/bb02_csp_bn_1/bb02_csp_bn_conv_in_1/activation_190_1/Relu6:0",
+      "operation": "StatefulPartitionedCall/functional_1/bb02_csp_bn_1/bb02_csp_bn_conv_in_1/activation_190_1/Relu6",
+      "operation_type": "Relu6"
+    },
+    {
+      "tensor": "StatefulPartitionedCall/functional_1/bb02_csp_bn_1/bb02_csp_bn_conv_out_1/activation_193_1/Relu6:0",
+      "operation": "StatefulPartitionedCall/functional_1/bb02_csp_bn_1/bb02_csp_bn_conv_out_1/activation_193_1/Relu6",
+      "operation_type": "Relu6"
+    },
+    {
+      "tensor": "StatefulPartitionedCall/functional_1/bb03_conv_1/activation_194_1/Relu6:0",
+      "operation": "StatefulPartitionedCall/functional_1/bb03_conv_1/activation_194_1/Relu6",
+      "operation_type": "Relu6"
+    },
+    {
+      "tensor": "StatefulPartitionedCall/functional_1/bb04_csp_bn_1/bb04_csp_bn_conv_in_1/activation_195_1/Relu6:0",
+      "operation": "StatefulPartitionedCall/functional_1/bb04_csp_bn_1/bb04_csp_bn_conv_in_1/activation_195_1/Relu6",
+      "operation_type": "Relu6"
+    },
+    {
+      "tensor": "StatefulPartitionedCall/functional_1/bb04_csp_bn_1/bb04_csp_bn_conv_out_1/activation_200_1/Relu6:0",
+      "operation": "StatefulPartitionedCall/functional_1/bb04_csp_bn_1/bb04_csp_bn_conv_out_1/activation_200_1/Relu6",
+      "operation_type": "Relu6"
+    }
+  ],
+  "segments": [
+    {
+      "index": 0,
+      "file": "submodel_0.tflite",
+      "size_bytes": 4972,
+      "sha256": "9003c7d23882fa70589ee7b6b6dee61bcfef0e75c69f8ec69f2f6999b3b95fdd",
+      "input": {
+        "shape": [
+          1,
+          320,
+          320,
+          3
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          160,
+          160,
+          32
+        ],
+        "dtype": "float32"
+      }
+    },
+    {
+      "index": 1,
+      "file": "submodel_1.tflite",
+      "size_bytes": 75500,
+      "sha256": "8f6a2d9ef2bee57aa92b64ce5a5780c5cd155acd2db81a13f359fa61f9c27f9a",
+      "input": {
+        "shape": [
+          1,
+          160,
+          160,
+          32
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          80,
+          80,
+          64
+        ],
+        "dtype": "float32"
+      }
+    },
+    {
+      "index": 2,
+      "file": "submodel_2.tflite",
+      "size_bytes": 18364,
+      "sha256": "c6ebdd8164cb5917f0c954211322dedf3e44244e146a781ca79e4873192a73ba",
+      "input": {
+        "shape": [
+          1,
+          80,
+          80,
+          64
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          80,
+          80,
+          64
+        ],
+        "dtype": "float32"
+      }
+    },
+    {
+      "index": 3,
+      "file": "submodel_3.tflite",
+      "size_bytes": 102700,
+      "sha256": "2ad68d42433ed284928a8e529d842b23246e752aa9bc2e657f9b9f74269f96fa",
+      "input": {
+        "shape": [
+          1,
+          80,
+          80,
+          64
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          80,
+          80,
+          64
+        ],
+        "dtype": "float32"
+      }
+    },
+    {
+      "index": 4,
+      "file": "submodel_4.tflite",
+      "size_bytes": 296992,
+      "sha256": "c0ffa3a40bd14ac17cbb2f51d91635ffe89618e60b8109fb119f2d97b42b3a5b",
+      "input": {
+        "shape": [
+          1,
+          80,
+          80,
+          64
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          40,
+          40,
+          128
+        ],
+        "dtype": "float32"
+      }
+    },
+    {
+      "index": 5,
+      "file": "submodel_5.tflite",
+      "size_bytes": 67660,
+      "sha256": "217e5872413f30c975119c9b4daa3551d88ae0183fad3b6a73a5a52baa6b6c04",
+      "input": {
+        "shape": [
+          1,
+          40,
+          40,
+          128
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          40,
+          40,
+          128
+        ],
+        "dtype": "float32"
+      }
+    },
+    {
+      "index": 6,
+      "file": "submodel_6.tflite",
+      "size_bytes": 728052,
+      "sha256": "83e9dec9067955e605c3d8cb7fda73ab4bea2603225f1403690941f19d549c26",
+      "input": {
+        "shape": [
+          1,
+          40,
+          40,
+          128
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          40,
+          40,
+          128
+        ],
+        "dtype": "float32"
+      }
+    },
+    {
+      "index": 7,
+      "file": "submodel_7.tflite",
+      "size_bytes": 27549092,
+      "sha256": "f10bda17329bd566cb956c5ce60a45d5e9ff8808dfde0bd9921a72cb255a20dc",
+      "input": {
+        "shape": [
+          1,
+          40,
+          40,
+          128
+        ],
+        "dtype": "float32"
+      },
+      "output": {
+        "shape": [
+          1,
+          2100,
+          6
+        ],
+        "dtype": "float32"
+      }
+    }
+  ],
+  "verification": {
+    "samples": 1,
+    "atol": 0.0001,
+    "rtol": 0.0001,
+    "savedmodel": {
+      "max_abs_error": 3.62396240234375e-05,
+      "max_rel_error": 0.0010710966660580981
+    },
+    "edge_impulse": {
+      "max_abs_error": 4.521012306213379e-05,
+      "max_rel_error": 0.003393454578916052
+    }
+  },
+  "postprocess": {
+    "decoder": "yolo_pro",
+    "labels": [
+      "bicycle",
+      "stop sign"
+    ],
+    "score_threshold": 0.5,
+    "max_detections": 200,
+    "iou_threshold": 0.2
+  },
+  "model_hash": "b1823f4505d912e7b390f450f39832f8"
+}
