@@ -155,32 +155,82 @@ wrong decision. They must agree within a few tens of ms.
 `systemd-timesyncd`: timesyncd polls its server at most every 34 minutes
 and between polls the Pi's clock drifts. With it, the clocks of the Pis and
 the MacBook were 100–175 ms apart in the phase 4.3 campaign, and the gap
-changed between runs a few minutes apart; with chrony (a poll about every
-minute) ~20 ms, mostly the Mac's own offset. chrony keeps Debian's default
-servers: what matters is that the Pi and the server's machine agree, not
-which source they use. Even with the same pool name (a Debian server, say)
-the two get different servers from it; public servers are within ~1 ms of
-UTC, and each machine's error comes from its own network path (a few ms,
-more over Wi-Fi). Two machines each synchronized within a few ms of UTC
-agree within ~10 ms. For less, or with no internet, point the Pi at the
-server's machine (on Linux: chrony there too, with `allow <subnet>`; a Mac
-does not serve NTP by default), with a file in `/etc/chrony/conf.d/`:
+changed between runs a few minutes apart; with chrony (a poll every 1–17
+minutes and the clock's rate corrected in between, below) ~20 ms, mostly
+the Mac's own offset.
+
+**The same time server on the Pi and on the server's machine.** Then both
+clocks follow one reference, and only each machine's network path to it
+differs (a few ms, more over Wi-Fi). Two machines on different servers
+(even the same pool name hands out different servers) add those servers'
+differences.
+
+- **Server on Linux**: the server's machine is the time server of its
+  devices, and the Pis follow its clock, whatever source it uses itself.
+- **Server on a Mac** (it does not serve NTP by default): the Pi uses the
+  Mac's own time server, System Settings → General → Date & Time → Source
+  (by default `time.apple.com`).
+
+How chrony measures: the Pi sends a request at t1 (its clock), the server
+receives it at t2 and answers at t3 (its clock), the answer arrives at t4.
+Offset = ((t2 − t1) + (t3 − t4)) / 2, network delay = (t4 − t1) − (t3 −
+t2); the offset assumes equal delays both ways, so its error is within half
+the delay (~0.1 ms on a cable, a few ms over Wi-Fi). chrony repeats it every
+~1 to ~17 minutes (`iburst`: a burst at the start), drops the worst samples
+and corrects the clock gradually, its rate too (the drift of the crystal,
+a few ppm), instead of stepping it.
+
+**On the server's machine, Linux only.** chrony there too: the default
+`systemd-timesyncd` only asks for the time, it does not serve it.
 
 ```bash
-echo 'server <server-host> iburst prefer' | sudo tee /etc/chrony/conf.d/sciot.conf
+sudo apt install -y chrony
+printf 'allow <subnet>\nlocal stratum 10\n' | sudo tee /etc/chrony/conf.d/sciot.conf   # <subnet>: the devices', e.g. 192.168.1.0/24
+sudo systemctl restart chrony
+sudo ufw allow from <subnet> to any port 123 proto udp   # only with a firewall (NTP, UDP 123)
+```
+
+The subnet, and the server's address for the Pis, from the server's
+routing table:
+
+```bash
+ip -4 route show proto kernel scope link   # 192.168.1.0/24 dev wlan0 ... src 192.168.1.20
+```
+
+`192.168.1.0/24` is `<subnet>`, `src` the address the Pis use as `<host>`;
+with several lines (cable, Wi-Fi, VPN) the one on the interface the Pis
+reach. Or one `allow <pi-address>` line per Pi (stricter, to update if an
+address changes); never a bare `allow`, which serves everyone.
+
+`allow`: by default chrony is only a client; this answers the devices of
+that subnet. `local stratum 10`: without internet the server is not
+synchronized and chrony would refuse to serve; with it, it offers its own
+clock as a low-rank source, and the Pis stay consistent with the server,
+which is what the analysis needs. With internet it keeps its default
+servers.
+
+**On the Pi**, `<host>` = the server's machine (Linux) or the Mac's time
+server:
+
+```bash
+echo 'server <host> iburst prefer' | sudo tee /etc/chrony/conf.d/sciot.conf
 sudo systemctl restart chrony
 ```
 
-On the Pi:
+`prefer`: `<host>` is used while it answers; the default servers stay as a
+fallback.
+
+**Checks.** On the Pi:
 
 ```bash
 systemctl is-active chrony systemd-timesyncd   # active, inactive
-chronyc tracking                               # "System time": a few ms; "Ref time" recent
+chronyc sources                                # '*' marks the selected source: <host>
+chronyc tracking                               # "System time": a few ms; "Ref time" (UTC) recent
 ```
 
-On the server's machine: a Mac sets the time automatically (System
-Settings → General → Date & Time; offset: `sntp time.apple.com`, step it
-with `sudo sntp -sS time.apple.com`); Linux: chrony as on the Pi.
+On the server's machine: Linux, `chronyc tracking` as on the Pi and
+`sudo chronyc clients` (the Pis appear); a Mac, with the time set automatically:
+`sntp time.apple.com` (offset; `sudo sntp -sS time.apple.com` steps it).
 
 What the analysis needs is the offset **between** the two machines. From
 the server's machine (one ssh session, the shortest of 20 round trips):
