@@ -193,6 +193,9 @@ windows the same p95 ([COSTMODEL.md](COSTMODEL.md#verification-on-the-pi-with-an
 With the bandwidth from the time per byte (phase 4.3 campaign) it goes to
 window 2, the right one: measured, window 2's p95 is 1.19× window 1's and
 window 3's 1.42× ([COSTMODEL.md](COSTMODEL.md#loaded-server-and-pico-on-the-pi-phase-43-campaign)).
+Alone on the Wi-Fi (phase 4.4, pinned) window 2's p95 is 1.02× window 1's
+and window 3's 1.26×: window 2 again, also predicted
+([COSTMODEL.md](COSTMODEL.md#slow-network-shared-wi-fi-and-pico-alone-phase-44)).
 
 The maximum window (3) was chosen for 7% of the time in `SPLIT` in the free
 runs of phase 4.2 (only pico, before the bandwidth fix) and 1% in phase
@@ -304,6 +307,13 @@ different policies (Q1 both at window 2, Q2 one at window 1), but not
 because of the term (ρ below 0.8, reason `best`): the predicted p95 of
 window 2 over window 1 was 1.24 in one run and 1.27 in the other, either
 side of `p95_slack` 0.25.
+
+**Slow network** (phase 4.4 campaign: one Pi, yolo-small, upload capped
+with `tc`, [COSTMODEL.md](COSTMODEL.md#slow-network-shared-wi-fi-and-pico-alone-phase-44)).
+The split point follows the bandwidth: split −1 window 1 at 40 Mbit/s,
+split 4 window 1 at 20, `LOCAL` at 10 and 5, one change per run and none
+back. At 10 Mbit/s split −1 was predicted at 1.52× `LOCAL`'s p95; pinned
+there, it measured 1050 ms against 640, so `LOCAL` was right.
 
 ## Admin
 

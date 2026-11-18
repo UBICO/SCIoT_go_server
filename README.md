@@ -30,10 +30,13 @@ Status:
   and queue, `latency` algorithm (opt-in, `offload.algorithm`; by default
   the policy changes only from the admin endpoint) choosing split point and
   window per device, simulating the other devices as clients
-- [ ] phase 4, Python client with camera (laptop, Raspberry Pi) and
+- [x] phase 4, Python client with camera (laptop, Raspberry Pi) and
   verification on devices over a real network
-  ([docs/RASPBERRY.md](docs/RASPBERRY.md)); open: a slow network, the p95
-  with two devices (−8…−20%) and with fast frames (pico, −30%)
+  ([docs/RASPBERRY.md](docs/RASPBERRY.md)); known limits, not modeled: the
+  p95 with two devices on one Wi-Fi (−8…−20%, the transfer's spread) and
+  with fast frames at window 2 (pico, frames/s +21%, an answer that grows
+  with the frames in flight)
+  ([docs/COSTMODEL.md](docs/COSTMODEL.md#slow-network-shared-wi-fi-and-pico-alone-phase-44))
 - [ ] phase 5, ESP32 client
 
 The reference device client is in `client/`, in Python
@@ -51,7 +54,7 @@ The reference device client is in `client/`, in Python
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
 | [worker/README.md](worker/README.md) | the Python worker and the model build tool |
 | [docs/CLIENT.md](docs/CLIENT.md) | the Python device client (`client/`): install, configuration, benchmarks |
-| [docs/RASPBERRY.md](docs/RASPBERRY.md) | the client on a Raspberry Pi with its camera, against a server on another machine; the phase 3.9 benchmark and the phase 4.2 campaign |
+| [docs/RASPBERRY.md](docs/RASPBERRY.md) | the client on a Raspberry Pi with its camera, against a server on another machine; the phase 3.9 benchmark and the phase 4.2–4.4 campaigns |
 
 ## Requirements
 
