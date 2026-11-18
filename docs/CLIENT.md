@@ -214,7 +214,7 @@ The configuration is `client/sciot_client/go_client.yaml`:
   working directory). Unknown keys are an error.
 
 ```bash
-uv run --project client sciot-client --model-dir ~/sciot-models/yolo_small_320
+uv run --project client sciot-client --model-dir models/yolo_small_320
 ```
 
 Other options: `--cycles N` (stop after N inferences), `--no-table` (no
@@ -274,7 +274,7 @@ static image); the latency starts at the capture, so it includes it.
 Pairing check without running inferences:
 
 ```bash
-uv run --project client python -m sciot_client.control_plane_client --device-id web_96 --model-dir ~/sciot-models/yolo_small_320
+uv run --project client python -m sciot_client.control_plane_client --device-id web_96 --model-dir models/yolo_small_320
 ```
 
 ## Benchmarks
@@ -293,7 +293,7 @@ cycle) stays in SCIoT_python_client, with the legacy server it needs.
 and every split point `-1..last-1` (yolo-small: 9 configurations).
 
 ```bash
-uv run --project client python client/scripts/bench_split.py --model-dir ~/sciot-models/yolo_small_320
+uv run --project client python client/scripts/bench_split.py --model-dir models/yolo_small_320
 ```
 
 **Method.** One Go server (worker, `-admin`, recording) and one client that
@@ -364,7 +364,7 @@ SPLIT at `--split` (default `-1`, the model input), talks to the server
 through a proxy that caps the upload like one link.
 
 ```bash
-uv run --project client python client/scripts/bench_network.py --model-dir ~/sciot-models/yolo_small_320 --limits-mbps 10,50,200,0
+uv run --project client python client/scripts/bench_network.py --model-dir models/yolo_small_320 --limits-mbps 10,50,200,0
 ```
 
 `--split LOCAL` sends no frames: the server measures with probes. Pass
@@ -419,7 +419,7 @@ seconds apart (default 0: together, devices deciding at the same time,
 [OFFLOAD.md](OFFLOAD.md#other-devices)), for `--duration` seconds.
 
 ```bash
-uv run --project client python client/scripts/bench_multi.py --model-dir ~/sciot-models/yolo_small_320 --devices 2
+uv run --project client python client/scripts/bench_multi.py --model-dir models/yolo_small_320 --devices 2
 ```
 
 With `--pin SPLIT/WINDOW` (e.g. `--pin 6/2`; for split −1 write
@@ -469,5 +469,5 @@ The `external_server` tests are skipped by default; they need a running
 server (the policy-change test also `-admin`) and its model directory:
 
 ```bash
-cd client && SCIOT_GO_SERVER_URL=http://127.0.0.1:8080 SCIOT_MODEL_DIR=~/sciot-models/yolo_small_320 uv run pytest -m external_server
+cd client && SCIOT_GO_SERVER_URL=http://127.0.0.1:8080 SCIOT_MODEL_DIR=../models/yolo_small_320 uv run pytest -m external_server
 ```

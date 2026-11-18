@@ -69,7 +69,7 @@ The reference device client is in `client/`, in Python
    must use the same directory: a rebuild changes the model hash.
 
    ```bash
-   uv run --project worker sciot-model build <savedmodel.zip> --ei-cpp-export <cpp.zip> --sample image.png --output ~/sciot-models/yolo_small_320
+   uv run --project worker sciot-model build <savedmodel.zip> --ei-cpp-export <cpp.zip> --sample image.png --output models/yolo_small_320
    ```
 
 2. **Configure** `config.json` (next section) with the model directory and a
@@ -84,7 +84,7 @@ The reference device client is in `client/`, in Python
    directory.
 
    ```bash
-   uv run --project client sciot-client --server http://127.0.0.1:8080 --model-dir ~/sciot-models/yolo_small_320
+   uv run --project client sciot-client --server http://127.0.0.1:8080 --model-dir models/yolo_small_320
    ```
 
 ## Configuration
