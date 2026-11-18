@@ -89,7 +89,7 @@ From the server's machine, with `<model-dir>` the model directory in the
 server's `config.json`:
 
 ```bash
-rsync -av <model-dir>/ <user>@<pi>:~/sciot-models/yolo_small_320/
+rsync -av models/yolo_small_320/ <user>@<pi>:~/sciot-models/yolo_small_320/
 ```
 
 The hash must be the same on both machines, and `manifest.json` must have

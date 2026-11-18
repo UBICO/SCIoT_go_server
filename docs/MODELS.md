@@ -9,6 +9,12 @@ Edge Impulse Studio ──▶ two exports ──▶ sciot-model build ──▶ 
                                                                  manifest.json
 ```
 
+Two built models are in the repository, under `models/`: `yolo_small_320`
+(28 MB, float32) and `yolo_pico_320` (2.3 MB, float32). `config.example.json`
+points to them with paths relative to the repository root, so start the server
+from there. Rebuilding a model changes its hash: commit the new directory and
+copy it to the devices.
+
 The same directory is used by the server (worker) **and** by the devices: see
 [Model hash](#model-hash).
 
@@ -40,7 +46,7 @@ uv run --project worker sciot-model build \
     ei-sciot---fomo-models-object-detection-tensorflow-savedmodel-model.41.zip \
     --ei-cpp-export sciot-fomo-models-cpp-linux-v8-yolo-small.zip \
     --sample images/stop.png --sample images/bicycle.jpg \
-    --output ~/sciot-models/yolo_small_320
+    --output models/yolo_small_320
 ```
 
 The steps, each failing with a clear message before the next:
@@ -122,7 +128,7 @@ them to devices at registration (`num_layers`, `last_offloading_layer`,
 `input`, `postprocess`).
 
 ```json
-{"model_key": "yolo_small_320", "tflite_dir": "/home/lab/sciot-models/yolo_small_320",
+{"model_key": "yolo_small_320", "tflite_dir": "models/yolo_small_320",
  "postprocess": {"score_threshold": 0.6}}
 ```
 
