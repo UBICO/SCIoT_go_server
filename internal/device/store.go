@@ -9,6 +9,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -154,6 +156,21 @@ func (s *Store) Get(id string) (Device, bool) {
 	defer s.mu.Unlock()
 	device, ok := s.devices[id]
 	return device, ok
+}
+
+// List restituisce una copia di tutti i device, ordinati per ID (per la
+// dashboard: lo stesso ordine a ogni richiesta).
+func (s *Store) List() []Device {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Device, 0, len(s.devices))
+	for _, d := range s.devices {
+		out = append(out, d)
+	}
+	// L'ordine di una map in Go è casuale a ogni iterazione: senza sort la
+	// tabella della dashboard cambierebbe ordine a ogni aggiornamento.
+	slices.SortFunc(out, func(a, b Device) int { return strings.Compare(a.ID, b.ID) })
+	return out
 }
 
 // Len restituisce il numero di device registrati.

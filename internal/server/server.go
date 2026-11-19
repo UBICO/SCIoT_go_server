@@ -101,6 +101,12 @@ type Server struct {
 	// nil senza algoritmo. Vedi Close.
 	decider *decider
 
+	// admin: l'autenticazione della porta admin; nil finché AdminRoutes non
+	// viene chiamata. decisions: l'ultima decisione per device, per la
+	// dashboard (admin.go).
+	admin     *adminAuth
+	decisions decisionLog
+
 	table *heartbeatTable  // usata solo se cfg.Verbose
 	now   func() time.Time // orario delle righe; sostituibile nei test
 }
@@ -291,6 +297,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if s.fleet != nil {
 		s.fleet.Forget(req.DeviceID)
 	}
+	s.decisions.forget(req.DeviceID)
 	log.Printf("registered device=%s type=%s model=%s session=%s",
 		req.DeviceID, d.Type, d.Model.ModelKey, d.SessionID)
 	s.rec.Record(&record.Session{DeviceID: d.ID, SessionID: d.SessionID, DeviceType: d.Type,
@@ -682,6 +689,9 @@ func (s *Server) decideNow(j decisionJob) {
 	rec := offload.DecisionRecord(st, d, s.alg.Name())
 	rec.LagMS = float64(now.Sub(j.at).Microseconds()) / 1000
 	s.rec.Record(rec)
+	// Dopo Record, che imposta l'header di rec: da qui rec non cambia più e
+	// gli handler admin lo possono leggere da altre goroutine.
+	s.decisions.set(deviceID, now, rec)
 	if !d.Changes(res.Policy, st.MaxWindow) {
 		return
 	}
