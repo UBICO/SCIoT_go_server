@@ -13,9 +13,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -151,18 +153,30 @@ type Server struct {
 // Load legge e decodifica il file di configurazione.
 // (Spostata qui da registry.LoadConfig: il file non riguarda più solo i modelli.)
 func Load(path string) (File, error) {
-	file, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return File{}, fmt.Errorf("%w", err)
 	}
-	defer file.Close()
+	return Parse(data)
+}
 
-	dec := json.NewDecoder(file)
+// Parse decodifica il testo di un config.json: chiavi sconosciute rifiutate,
+// e niente dopo l'oggetto. Load la usa per il file; la dashboard per il
+// testo da validare prima di salvarlo (docs/ADMIN_API.md).
+func Parse(data []byte) (File, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 
 	var f File
 	if err := dec.Decode(&f); err != nil {
 		return File{}, fmt.Errorf("decode config: %w%s", err, removedKeyHint(err))
+	}
+	// Decode legge solo il primo valore: un "}" di troppo o un secondo
+	// oggetto incollato sotto passerebbero in silenzio. Dopo l'oggetto deve
+	// esserci solo la fine del testo (dec.More non basta: con un "}" di
+	// troppo dice false).
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return File{}, errors.New("decode config: unexpected data after the JSON object")
 	}
 	return f, nil
 }

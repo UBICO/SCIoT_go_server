@@ -5,7 +5,8 @@ The API of the admin port: the contract between the server and the dashboard
 protocol ([PROTOCOL.md](PROTOCOL.md)): devices never use it.
 
 The admin port only reads what the server already computes and calls the
-existing admin actions (pin, unpin), writing who did them to a change log. It
+existing admin actions (pin, unpin) and edits `config.json` for the next start,
+writing who did them to a change log. It
 adds no metric and changes neither the protocol nor the offloading algorithm. Without `-admin-addr` it does not
 exist and the server runs as before.
 
@@ -78,6 +79,8 @@ bodies limited to 64 KiB, branch on `code`.
 | `invalid_request` | 400 | malformed JSON, unknown key, missing field, invalid policy |
 | `device_not_found` | 404 | the device is not registered |
 | `not_found` | 404 | no such endpoint under `/api/` on the admin port (device routes included) |
+| `invalid_config` | 400 | the `config.json` text would not start the server, or changes `worker.command` |
+| `config_changed` | 409 | `config.json` changed since you read it (`base_hash` does not match) |
 
 A cross-origin browser request gets a plain-text `403`, not this JSON.
 
@@ -196,13 +199,78 @@ curl -X DELETE -H "Authorization: Bearer $SCIOT_ADMIN_TOKEN" \
   http://127.0.0.1:8081/api/v1/admin/devices/pi_a/policy
 ```
 
+### `GET /api/v1/admin/config`
+
+The `config.json` the server was started with (`-config`), as text, to edit
+it from the dashboard. A symbolic link is followed: `path` is the real file.
+
+```json
+{"path": "/srv/sciot/config.json", "content": "{\n  \"server\": {},\n …}\n",
+ "hash": "725d660a…", "modified_since_start": false}
+```
+
+| Field | Meaning |
+|---|---|
+| `hash` | sha256 of `content`: send it back as `base_hash` when saving |
+| `modified_since_start` | the file is not the one the server started with (saved from the dashboard or edited by hand): the server runs with the old one until it restarts |
+
+### `POST /api/v1/admin/config/validate`
+
+```json
+{"content": "{ … the whole config.json … }"}
+```
+
+Runs on the text the same checks as the server's start (decoding with unknown
+keys rejected, models and their hashes, every section; `parseConfig` in
+`cmd/server/config.go`), plus one rule: `worker.command` cannot differ from
+the file in use. `200 {"valid": true}`, or `400 invalid_config` with the
+same message the server would log at start:
+
+```json
+{"error": {"code": "invalid_config", "message": "stream config: stream.max_inflight must be >= 1, got 0"}}
+```
+
+`worker.command` is a command line the server runs: if the dashboard could
+change it, the admin token would give a shell on the machine. Change it by
+hand on the server.
+
+Paths in the config (models, `record.dir`) are checked on the server's
+machine, relative to the server's working directory, as at start.
+
+### `PUT /api/v1/admin/config`
+
+```json
+{"content": "{ … }", "base_hash": "<hash from GET>"}
+```
+
+In order: `409 config_changed` if the file's hash is not `base_hash` (someone
+changed it after your `GET`: reload and apply your edits again); the same
+checks as `validate` (`400 invalid_config`); if the text is the same as the
+file, nothing is written; otherwise a backup of the current file, then the new
+file, then a line in the change log. `200`:
+
+```json
+{"changed": true, "hash": "bab942fa…", "backup": "config.json.20261119-150405.bak",
+ "restart_required": true}
+```
+
+- The running server does not change: the new config applies at the next
+  start (`restart_required`).
+- The backup is `<file>.<YYYYMMDD-HHMMSS>.bak` (local time) next to the file,
+  `0600`, never overwritten. Backups are not deleted.
+- The file is replaced atomically (a temporary file in the same folder,
+  synced, renamed over it): a reader sees the old file or the new one, never
+  half of it. It keeps its permissions; its owner becomes the server's user.
+- `500` if the backup or the write fails: the file is left as it was.
+
 ## Change log
 
-Who changed what: every successful admin action (pin, unpin) is written to
-the server log with who did it:
+Who changed what: every successful admin action (pin, unpin, config save) is
+written to the server log with who did it:
 
 ```text
 admin pin: device=pi_a session=FK2F… policy=SPLIT v4 by="francesco"
+admin config: path=/srv/sciot/config.json backup=config.json.20261119-150405.bak by="francesco"
 ```
 
 With a `record` section in `config.json`, the same action is also a line of
@@ -213,16 +281,20 @@ every start (appended), readable only by the server's user (`0600`).
 {"ts": "2026-11-19T14:04:05.123Z", "who": "francesco", "action": "pin",
  "device_id": "pi_a", "session_id": "FK2F…",
  "policy": {"mode": "SPLIT", "split_point": 3, "policy_version": 4}, "pinned": true}
+{"ts": "2026-11-19T15:07:58.505Z", "who": "francesco", "action": "config",
+ "config": {"path": "/srv/sciot/config.json", "backup": "config.json.20261119-160758.bak", "hash": "bab942fa…"}}
 ```
 
 | Field | Meaning |
 |---|---|
 | `ts` | server time, UTC |
 | `who` | the `name` of the login; `token` for a request with `Authorization: Bearer`; `anonymous` on an admin port without token and without login; `device port` for the unauthenticated `-admin` endpoints on the device port |
-| `action` | `pin`, `unpin` |
-| `policy`, `pinned` | the device's policy and pin after the action (after an unpin the policy is unchanged) |
+| `action` | `pin`, `unpin`, `config` |
+| `device_id`, `session_id`, `policy`, `pinned` | pin and unpin: the device, its policy and pin after the action (after an unpin the policy is unchanged) |
+| `config` | config save: the file written (`path`), the backup of the previous content (`backup`, in the same folder), sha256 of the new content (`hash`) |
 
-Refused actions (invalid policy, unknown device) are not logged. The change
+Refused actions (invalid policy, unknown device, invalid config, conflict) and
+a config save that changes nothing are not logged. The change
 log is not part of the recording ([RECORDING.md](RECORDING.md)): it says who
 acted, not what happened to the frames.
 

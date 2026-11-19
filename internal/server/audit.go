@@ -15,7 +15,7 @@ import (
 )
 
 // Registro delle modifiche (docs/ADMIN_API.md#change-log): chi ha cambiato
-// cosa con le azioni admin (pin, unpin; poi la config).
+// cosa con le azioni admin (pin, unpin, salvataggio della config).
 //
 // Ogni azione riuscita va sempre nel log del server, con il nome di chi
 // l'ha fatta. Con la sezione "record" in config.json va anche in
@@ -29,8 +29,9 @@ const AuditFile = "sciot-audit.jsonl"
 
 // Azioni del registro.
 const (
-	auditPin   = "pin"
-	auditUnpin = "unpin"
+	auditPin    = "pin"
+	auditUnpin  = "unpin"
+	auditConfig = "config"
 )
 
 // Chi, quando non c'è il nome di un login.
@@ -45,19 +46,33 @@ const (
 	actorDevicePort = "device port"
 )
 
-// auditEntry è una riga di sciot-audit.jsonl.
+// auditEntry è una riga di sciot-audit.jsonl. Pin e unpin hanno i campi del
+// device, il salvataggio della config ha config:
 //
 //	{"ts":"2026-11-19T15:04:05.123Z","who":"francesco","action":"pin",
 //	 "device_id":"pi_a","session_id":"FK2F…",
 //	 "policy":{"mode":"SPLIT","split_point":3,"policy_version":4},"pinned":true}
+//	{"ts":"…","who":"francesco","action":"config",
+//	 "config":{"path":"/srv/sciot/config.json","backup":"config.json.20261119-150405.bak","hash":"…"}}
+//
+// Puntatori con omitempty: un campo che non c'entra con l'azione manca dalla
+// riga; pinned resta anche quando è false (dopo un unpin).
 type auditEntry struct {
-	TS        time.Time  `json:"ts"`
-	Who       string     `json:"who"`
-	Action    string     `json:"action"`
-	DeviceID  string     `json:"device_id"`
-	SessionID string     `json:"session_id"`
-	Policy    api.Policy `json:"policy"` // la policy dopo l'azione
-	Pinned    bool       `json:"pinned"` // dopo l'azione
+	TS        time.Time         `json:"ts"`
+	Who       string            `json:"who"`
+	Action    string            `json:"action"`
+	DeviceID  string            `json:"device_id,omitempty"`
+	SessionID string            `json:"session_id,omitempty"`
+	Policy    *api.Policy       `json:"policy,omitempty"` // la policy dopo l'azione
+	Pinned    *bool             `json:"pinned,omitempty"` // dopo l'azione
+	Config    *auditConfigEntry `json:"config,omitempty"`
+}
+
+// auditConfigEntry descrive un salvataggio di config.json.
+type auditConfigEntry struct {
+	Path   string `json:"path"`   // il file scritto
+	Backup string `json:"backup"` // il backup del contenuto precedente, nella stessa cartella
+	Hash   string `json:"hash"`   // sha256 del contenuto nuovo
 }
 
 // AuditLog è il file del registro. Lo apre main (OpenAudit) e lo passa con
@@ -106,17 +121,30 @@ func (s *Server) SetAudit(a *AuditLog) { s.auditLog = a }
 
 // audit registra un'azione riuscita su d (lo stato dopo l'azione).
 func (s *Server) audit(r *http.Request, action string, d device.Device) {
+	policy, pinned := d.Policy, d.Pinned
 	e := auditEntry{
 		TS:        s.now().UTC(),
 		Who:       actorOf(r),
 		Action:    action,
 		DeviceID:  d.ID,
 		SessionID: d.SessionID,
-		Policy:    d.Policy,
-		Pinned:    d.Pinned,
+		Policy:    &policy,
+		Pinned:    &pinned,
 	}
 	log.Printf("admin %s: device=%s session=%s policy=%s v%d by=%q",
 		action, d.ID, d.SessionID, d.Policy.Mode, d.Policy.PolicyVersion, e.Who)
+	s.writeAudit(e)
+}
+
+// auditConfigSave registra il salvataggio di config.json.
+func (s *Server) auditConfigSave(r *http.Request, c auditConfigEntry) {
+	e := auditEntry{TS: s.now().UTC(), Who: actorOf(r), Action: auditConfig, Config: &c}
+	log.Printf("admin config: path=%s backup=%s by=%q", c.Path, c.Backup, e.Who)
+	s.writeAudit(e)
+}
+
+// writeAudit scrive e nel file, se c'è.
+func (s *Server) writeAudit(e auditEntry) {
 	if s.auditLog == nil {
 		return
 	}
