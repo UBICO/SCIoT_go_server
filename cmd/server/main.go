@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -265,6 +266,10 @@ func main() {
 			WriteTimeout:      10 * time.Second,
 			IdleTimeout:       120 * time.Second,
 			Handler:           srv.AdminRoutes(adminToken),
+			// Il context del segnale: ogni richiesta admin ne deriva il suo
+			// (r.Context()), quindi al Ctrl+C lo stream di eventi esce subito
+			// invece di far aspettare a Shutdown tutti i 5 s.
+			BaseContext: func(net.Listener) context.Context { return ctx },
 		}
 		go func() {
 			log.Printf("admin API listening on %s", adminServer.Addr)

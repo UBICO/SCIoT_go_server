@@ -142,6 +142,39 @@ in it: the only p95 is the algorithm's prediction
 `decision.ts` and `decision.t_ms` are set by the recorder: without a `record`
 section they are zero; use `at`.
 
+### `GET /api/v1/admin/events`
+
+Server-Sent Events (`Content-Type: text/event-stream`): the same objects as
+`GET status` and `GET devices`, pushed as they change. The browser opens it
+with `new EventSource("/api/v1/admin/events")` after the login (the cookie is
+sent automatically); curl with `-N -H "Authorization: Bearer …"`.
+
+```text
+event: status
+data: {"load": {...}, "devices": 1, "models": 1, ...}
+
+event: device
+data: {"device_id": "pi_a", "policy": {...}, "telemetry": {...}, ...}
+```
+
+| Event | `data` | When |
+|---|---|---|
+| `status` | the body of `GET /api/v1/admin/status` | on connect, then once per `heartbeat_interval_ms` |
+| `device` | one element of `GET /api/v1/admin/devices` | on connect, one per device; then when the device has a new heartbeat (`last_seen`), a new policy or pin (`policy.policy_version`, `pinned`), a new session, or a new decision (`last_decision.at`) |
+
+- On connect the stream starts with the full state: no `GET` is needed
+  first, and nothing is lost between a `GET` and the subscription. After a
+  reconnection the state is sent again in full; there are no event ids.
+- Each connection reads the device store every `heartbeat_interval_ms / 4`
+  and sends only the devices that changed. A heartbeat reaches the stream at
+  most a quarter of the interval after it reached the server: with a 1 s
+  interval, 30 heartbeats from a local fake device arrived 110–247 ms later
+  (median 176 ms, 2026-11-19, server and client on one Mac). Two heartbeats
+  of one device within the same quarter would show only the second.
+- Devices are never removed from the store, so there is no "removed" event.
+- The stream has no write timeout and ends when the client disconnects or
+  the server stops.
+
 ### `POST /api/v1/admin/devices/{device_id}/policy`, `DELETE …`
 
 Pin and unpin, with the same bodies, answers and errors as on the device port

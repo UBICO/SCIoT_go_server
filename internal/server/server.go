@@ -549,12 +549,13 @@ type statusResponse struct {
 
 // handleServerStatus restituisce l'ultimo campione di carico e i contatori.
 func (s *Server) handleServerStatus(w http.ResponseWriter, _ *http.Request) {
-	// una sola writeJSON con statusResponse:
-	//   - Load: lo snapshot di s.load
-	//   - Devices / Models: Len() di Store e Registry
-	//   - StartedAt: s.startedAt
-	//   - UptimeSeconds: tempo trascorso da s.startedAt, misurato con s.now()
-	//     (così nei test è deterministico). Una Duration ha .Seconds().
+	writeJSON(w, http.StatusOK, s.status())
+}
+
+// status costruisce lo stato del server: lo usano GET /api/v1/server/status,
+// la porta admin e il suo stream di eventi (admin_events.go).
+// UptimeSeconds si misura con s.now(), così nei test è deterministico.
+func (s *Server) status() statusResponse {
 	resp := statusResponse{
 		Load:          s.load.Snapshot(),
 		Devices:       s.devices.Len(),
@@ -570,7 +571,7 @@ func (s *Server) handleServerStatus(w http.ResponseWriter, _ *http.Request) {
 		stats := s.rec.Stats()
 		resp.Record = &stats
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
 }
 
 // ---------------------------------------------------------------------------

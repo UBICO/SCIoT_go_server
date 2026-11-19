@@ -49,7 +49,7 @@ The reference device client is in `client/`, in Python
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | the v1 protocol: control plane and data plane, the contract for every client |
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
-| [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, pin/unpin; the contract for the dashboard |
+| [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, live events (SSE), pin/unpin; the contract for the dashboard |
 | [docs/OFFLOAD.md](docs/OFFLOAD.md) | the offloading algorithm: constraints, objective, hysteresis, admin pin, configuration |
 | [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`, `sciot-replay check`) |
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
