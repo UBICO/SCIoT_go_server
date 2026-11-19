@@ -28,3 +28,9 @@ class ResizeObserverStub {
   disconnect() {}
 }
 window.ResizeObserver = ResizeObserverStub
+
+// jsdom non ha document.fonts; il Textarea autosize di Mantine (JsonInput)
+// ascolta "loadingdone" per ridimensionarsi.
+Object.defineProperty(document, 'fonts', {
+  value: { addEventListener: () => {}, removeEventListener: () => {} },
+})

@@ -159,6 +159,22 @@ export interface SetPolicyResponse {
   policy: Policy
 }
 
+// GET /api/v1/admin/config: il config.json del server.
+export interface ConfigFile {
+  path: string
+  content: string
+  hash: string // sha256: il base_hash da rimandare nel PUT
+  modified_since_start: boolean // il server gira con un'altra versione
+}
+
+// La risposta 200 del PUT.
+export interface ConfigSaveResponse {
+  changed: boolean
+  hash: string
+  backup?: string // nome del backup, nella cartella del file
+  restart_required: boolean
+}
+
 export interface LoginResponse {
   name: string
   expires_at: string

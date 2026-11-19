@@ -11,9 +11,9 @@ existing admin actions. It adds no metric and changes neither the protocol
 nor the offloading algorithm. Without `-admin-addr` there is no dashboard and
 the server runs as before.
 
-Status: devices list, device page with live charts, pin and unpin. Next, in
-this order: `config.json` editing with validation and restart, recordings and
-models, model build jobs.
+Status: devices list, device page with live charts, pin and unpin,
+`config.json` editing. Next, in this order: restart from the dashboard,
+recordings and models, model build jobs.
 
 ## Using it
 
@@ -70,6 +70,29 @@ shows the new policy when the stream sends the device again.
 
 The form starts from the current policy and does not follow it afterwards: if
 the algorithm changes the policy while you choose, your choice stays.
+
+### Config
+
+The **Config** page edits the server's `config.json` (the file given with
+`-config`) for the next start; the running server does not change.
+
+- **Validate** asks the server whether it would start with the text: the same
+  checks as the start, with the same message it would log
+  (`stream config: stream.max_inflight must be >= 1, got 0`). The editor also
+  marks text that is not JSON when it loses focus.
+- **Changes** shows the diff between the file and your text.
+- **Save** shows the diff again and asks for a confirmation. The server
+  checks the text again, keeps a backup of the current file next to it
+  (`config.json.<YYYYMMDD-HHMMSS>.bak`), writes the new one atomically and
+  adds a line to the change log with your name. Then restart the server to
+  apply it.
+- `worker.command` cannot be changed from here: it is a command the server
+  runs. Edit it by hand on the server.
+- If the file changed after you opened the page (edited by hand, or saved
+  from another tab), saving stops with "The file changed on the server": your
+  text stays in the editor, copy your edits, reload, apply them again.
+- A yellow banner says when the file differs from the configuration the
+  server started with.
 
 The header shows whether the live stream is connected (`live`,
 `connecting`, `disconnected`) and the server's state (devices, CPU, uptime).
@@ -172,8 +195,8 @@ dashboard/
     api/types.ts        JSON shapes of the admin API (mirror of the Go structs)
     api/client.ts       fetch wrappers, ApiError
     live/               the events stream: LiveProvider, reducer, history
-    components/         TimeChart (uPlot), PolicyBadges, PolicyControl (pin), chart data
-    pages/              Login, Layout (header, menu), device list, device page
+    components/         TimeChart (uPlot), PolicyBadges, PolicyControl (pin), ConfigDiff, chart data
+    pages/              Login, Layout (header, menu), device list, device page, config
     format.ts, hooks.ts number/time formatting, useNow
     test/               vitest setup, fixtures, fake EventSource
 internal/dashboard/
@@ -186,9 +209,11 @@ Tests sit next to the code (`*.test.ts(x)`).
 ### How it is built
 
 - **Libraries.** React 19, Mantine 9 (components and light/dark theme,
-  following the system; `@mantine/notifications` for the results of actions), react-router 8 ("data mode": routes as objects,
-  loaders), uPlot (canvas charts, ~50 KB, light enough for 600 points per
-  series updated every second). TypeScript 6: typescript-eslint does not
+  following the system; `@mantine/notifications` for the results of actions;
+  `JsonInput` as the config editor), jsdiff (`diff`, the config diff),
+  react-router 8 ("data mode": routes as objects, loaders), uPlot (canvas
+  charts, ~50 KB, light enough for 600 points per series updated every
+  second). TypeScript 6: typescript-eslint does not
   support TypeScript 7 yet.
 - **Routes and login.** `router.tsx` declares the routes. The protected area
   (`/` and its children) has a loader, `requireLogin`, that calls `GET
@@ -239,7 +264,9 @@ same PR: `dashboard/src/api/types.ts`, the fixtures in
 - vitest with jsdom; Testing Library for components
   (`@testing-library/react`, `user-event`, `jest-dom` matchers).
 - `src/test/setup.ts` adds what jsdom lacks and Mantine needs (`matchMedia`,
-  `ResizeObserver`), and cleans the DOM after each test.
+  `ResizeObserver`, `document.fonts`), and cleans the DOM after each test.
+- Text with braces goes into an input with `fireEvent.change`:
+  `userEvent.type` reads `{` as a special key (see `ConfigPage.test.tsx`).
 - `fetch` is replaced per test with `vi.stubGlobal`; `EventSource` with
   `FakeStream` (`open`, `emit`, `fail` drive it like the server would).
 - Charts are not drawn in jsdom (no canvas, width 0): their data is tested

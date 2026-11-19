@@ -1,4 +1,4 @@
-import type { ErrorBody, LoginResponse, ServerStatus, SetPolicyRequest, SetPolicyResponse } from './types'
+import type { ConfigFile, ConfigSaveResponse, ErrorBody, LoginResponse, ServerStatus, SetPolicyRequest, SetPolicyResponse } from './types'
 
 // Le chiamate alla porta admin. Percorsi relativi all'origine: in
 // produzione la pagina e l'API sono sullo stesso server Go, in sviluppo il
@@ -63,6 +63,12 @@ export const api = {
   // unpin: restituisce il device all'algoritmo; la policy resta finché
   // l'algoritmo non decide altrimenti.
   unpin: (deviceID: string) => request<SetPolicyResponse>('DELETE', policyPath(deviceID)),
+  // config.json: leggere, validare (stessi controlli dell'avvio), salvare.
+  // Il salvataggio vale dal prossimo avvio del server.
+  getConfig: () => request<ConfigFile>('GET', '/api/v1/admin/config'),
+  validateConfig: (content: string) => request<{ valid: boolean }>('POST', '/api/v1/admin/config/validate', { content }),
+  saveConfig: (content: string, baseHash: string) =>
+    request<ConfigSaveResponse>('PUT', '/api/v1/admin/config', { content, base_hash: baseHash }),
 }
 
 function policyPath(deviceID: string): string {

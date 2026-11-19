@@ -20,9 +20,7 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/device"
 	"github.com/UBICO/SCIoT_go_server/internal/dispatch"
 	"github.com/UBICO/SCIoT_go_server/internal/load"
-	"github.com/UBICO/SCIoT_go_server/internal/offload"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
-	"github.com/UBICO/SCIoT_go_server/internal/registry"
 	"github.com/UBICO/SCIoT_go_server/internal/server"
 	"github.com/UBICO/SCIoT_go_server/internal/stream"
 	"github.com/UBICO/SCIoT_go_server/internal/worker"
@@ -54,17 +52,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-
-	reg, err := registry.New(f.RegistryConfig())
+	// Tutti i controlli della config, gli stessi della dashboard
+	// (cmd/server/config.go). L'errore ha già il prefisso del passo fallito.
+	p, err := parseConfig(f)
 	if err != nil {
-		log.Fatalf("build registry: %v", err)
+		log.Fatalf("%v", err)
 	}
+
+	reg := p.reg
 	log.Printf("loaded %d models", reg.Len())
 
-	srvCfg, err := f.ServerConfig()
-	if err != nil {
-		log.Fatalf("server config: %v", err)
-	}
+	srvCfg := p.server
 	if *verbose {
 		srvCfg.Verbose = true
 	}
@@ -95,16 +93,9 @@ func main() {
 	// --- 3. Store, monitor del carico e Server -------------------------------
 
 	devices := device.NewStore()
-	segmentTau, err := f.DeviceSegmentTau()
-	if err != nil {
-		log.Fatalf("server config: %v", err)
-	}
-	devices.SetSegmentTau(segmentTau)
+	devices.SetSegmentTau(p.segmentTau)
 
-	loadCfg, err := f.LoadConfig()
-	if err != nil {
-		log.Fatalf("load monitor config: %v", err)
-	}
+	loadCfg := p.load
 	if loadCfg.Interval > srvCfg.HeartbeatInterval {
 		log.Printf("WARNING: load sample interval %v is longer than heartbeat interval %v: each heartbeat will see a sample older than one interval",
 			loadCfg.Interval, srvCfg.HeartbeatInterval)
@@ -122,17 +113,9 @@ func main() {
 
 	// Algoritmo di offloading: "static" (default) lascia la policy all'admin,
 	// senza calcolare previsioni a ogni heartbeat.
-	algName, algCfg, err := f.OffloadConfig()
-	if err != nil {
-		log.Fatalf("offload config: %v", err)
-	}
-	if algName != (offload.Static{}).Name() {
-		alg, err := offload.New(algName, algCfg)
-		if err != nil {
-			log.Fatalf("offload: %v", err)
-		}
-		srv.SetAlgorithm(alg)
-		log.Printf("offloading algorithm: %s (objective %s)", algName, algCfg.Objective)
+	if p.alg != nil {
+		srv.SetAlgorithm(p.alg)
+		log.Printf("offloading algorithm: %s (objective %s)", p.algName, p.algCfg.Objective)
 	}
 
 	// --- 3b. Data plane (solo se config.json ha la sezione "worker") ---------
@@ -142,19 +125,9 @@ func main() {
 	// workerDone viene chiuso quando sup.Run è terminato, cioè quando il
 	// processo del worker è uscito. nil senza data plane: il main non aspetta.
 	var workerDone chan struct{}
-	dispatchCfg, err := f.DispatchConfig()
-	if err != nil {
-		log.Fatalf("dispatch config: %v", err)
-	}
-
-	workerOpts, dataPlane, err := f.WorkerOptions(reg.Models())
-	if err != nil {
-		log.Fatalf("worker config: %v", err)
-	}
-	streamCfg, err := f.StreamConfig()
-	if err != nil {
-		log.Fatalf("stream config: %v", err)
-	}
+	dispatchCfg := p.dispatch
+	workerOpts, dataPlane := p.worker, p.dataPlane
+	streamCfg := p.stream
 	// dispatcher, catalog e profileReady servono anche dopo la registrazione
 	// (3c): il profilo registra i suoi eventi.
 	var dispatcher *dispatch.Dispatcher
@@ -194,10 +167,7 @@ func main() {
 
 	// --- 3c. Registrazione (solo se config.json ha la sezione "record") ------
 
-	recordDir, recording, err := f.RecordDir()
-	if err != nil {
-		log.Fatalf("record config: %v", err)
-	}
+	recordDir, recording := p.recordDir, p.recording
 	var rec *record.Recorder // nil = spenta: chi registra non controlla
 	if recording {
 		start := record.Start{
@@ -267,6 +237,11 @@ func main() {
 	// adminServer resta nil senza -admin-addr: lo shutdown lo controlla.
 	var adminServer *http.Server
 	if *adminAddr != "" {
+		// config.json dalla dashboard, con i controlli dell'avvio
+		// (cmd/server/config.go). Prima di AdminRoutes.
+		if err := srv.SetConfigFile(*configPath, checkConfig); err != nil {
+			log.Fatalf("admin config: %v", err)
+		}
 		// Stessi timeout di httpServer: per ora l'API admin ha solo richieste
 		// brevi (la SSE della PR 2 li rivedrà). AdminRoutes va dopo SetStream/
 		// SetAlgorithm/SetRecorder, come Routes.

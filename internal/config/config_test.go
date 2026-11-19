@@ -58,6 +58,29 @@ func TestLoadUnknownField(t *testing.T) {
 	}
 }
 
+// Parse è quello che usa la dashboard su un testo: stesse regole di Load,
+// e niente dopo l'oggetto JSON.
+func TestParse(t *testing.T) {
+	f, err := Parse([]byte(`{"server": {"heartbeat_interval_ms": 500}, "models": []}` + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Server.HeartbeatIntervalMS == nil || *f.Server.HeartbeatIntervalMS != 500 {
+		t.Errorf("heartbeat: %v", f.Server.HeartbeatIntervalMS)
+	}
+	for _, bad := range []string{
+		``,
+		`{"models": [}`,
+		`{"modelz": []}`,
+		`{"models": []} }`,
+		`{"models": []} {"models": []}`,
+	} {
+		if _, err := Parse([]byte(bad)); err == nil || !strings.HasPrefix(err.Error(), "decode config: ") {
+			t.Errorf("%q: err %v, voglio un errore \"decode config: …\"", bad, err)
+		}
+	}
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "non-esiste.json"))
 	if !errors.Is(err, os.ErrNotExist) {

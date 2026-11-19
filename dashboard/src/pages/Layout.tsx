@@ -18,9 +18,12 @@ export function Layout() {
   )
 }
 
-// Le voci del menu. Le prossime pagine (config, modelli, registrazioni) si
+// Le voci del menu. Le prossime pagine (modelli, registrazioni) si
 // aggiungono qui e in router.tsx.
-const nav = [{ to: '/devices', label: 'Devices' }]
+const nav = [
+  { to: '/devices', label: 'Devices' },
+  { to: '/config', label: 'Config' },
+]
 
 function Shell() {
   const [opened, { toggle, close }] = useDisclosure()

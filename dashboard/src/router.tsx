@@ -1,5 +1,7 @@
 import { redirect, type RouteObject } from 'react-router'
-import { api, isUnauthorized } from './api/client'
+import { api, ApiError, isUnauthorized } from './api/client'
+import type { ConfigFile } from './api/types'
+import { ConfigPage } from './pages/ConfigPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DeviceListPage } from './pages/DeviceListPage'
 import { Loading, NotFound, RouteError } from './pages/Errors'
@@ -29,6 +31,22 @@ export async function requireLogin() {
   }
 }
 
+// configLoader legge config.json per la pagina Config. null = modifica
+// dalla dashboard spenta (404).
+export async function configLoader(): Promise<ConfigFile | null> {
+  try {
+    return await api.getConfig()
+  } catch (err) {
+    if (isUnauthorized(err)) {
+      throw redirect('/login')
+    }
+    if (err instanceof ApiError && err.status === 404) {
+      return null
+    }
+    throw err
+  }
+}
+
 export const routes: RouteObject[] = [
   { path: '/login', Component: LoginPage },
   {
@@ -41,6 +59,7 @@ export const routes: RouteObject[] = [
       { index: true, loader: () => redirect('/devices') },
       { path: 'devices', Component: DeviceListPage },
       { path: 'devices/:id', Component: DeviceDetailPage },
+      { path: 'config', Component: ConfigPage, loader: configLoader },
       { path: '*', Component: NotFound },
     ],
   },

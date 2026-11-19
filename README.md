@@ -49,7 +49,7 @@ The reference device client is in `client/`, in Python
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | the v1 protocol: control plane and data plane, the contract for every client |
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
-| [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, live events (SSE), pin/unpin; the contract for the dashboard |
+| [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, live events (SSE), pin/unpin, `config.json` editing, change log; the contract for the dashboard |
 | [docs/DASHBOARD.md](docs/DASHBOARD.md) | the web dashboard on the admin port: using it, building it into the binary, development guide |
 | [docs/OFFLOAD.md](docs/OFFLOAD.md) | the offloading algorithm: constraints, objective, hysteresis, admin pin, configuration |
 | [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`, `sciot-replay check`) |
