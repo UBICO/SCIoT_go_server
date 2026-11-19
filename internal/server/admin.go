@@ -36,6 +36,7 @@ func (s *Server) AdminRoutes(token string) http.Handler {
 	protected.HandleFunc("POST /api/v1/admin/logout", s.handleAdminLogout)
 	protected.HandleFunc("GET /api/v1/admin/status", s.handleServerStatus)
 	protected.HandleFunc("GET /api/v1/admin/devices", s.handleAdminDevices)
+	protected.HandleFunc("GET /api/v1/admin/events", s.handleAdminEvents)
 	protected.HandleFunc("POST /api/v1/admin/devices/{id}/policy", s.handleSetPolicy)
 	protected.HandleFunc("DELETE /api/v1/admin/devices/{id}/policy", s.handleUnpin)
 
@@ -140,6 +141,12 @@ type adminDevicesResponse struct {
 //
 //	200 → adminDevicesResponse ({"devices": []} senza device, mai null)
 func (s *Server) handleAdminDevices(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, adminDevicesResponse{Devices: s.adminDevices()})
+}
+
+// adminDevices costruisce i device come li vede la dashboard, ordinati per
+// ID: lo usano GET /api/v1/admin/devices e lo stream di eventi.
+func (s *Server) adminDevices() []adminDevice {
 	list := s.devices.List()
 	// Non "var out []adminDevice": senza device il JSON sarebbe null invece di [].
 	out := make([]adminDevice, 0, len(list))
@@ -165,7 +172,7 @@ func (s *Server) handleAdminDevices(w http.ResponseWriter, _ *http.Request) {
 		}
 		out = append(out, ad)
 	}
-	writeJSON(w, http.StatusOK, adminDevicesResponse{Devices: out})
+	return out
 }
 
 // ---------------------------------------------------------------------------
