@@ -25,9 +25,13 @@ window of frames in flight). Protocol v1: `docs/PROTOCOL.md`.
 - `client/` — Python device client (uv project `sciot-client`, `docs/CLIENT.md`,
   Raspberry setup in `docs/RASPBERRY.md`); benchmarks in `client/scripts/`,
   results in `client/results/` (gitignored).
+- `dashboard/` — web dashboard (Vite, React, TypeScript, Mantine, uPlot;
+  `docs/DASHBOARD.md`); built into `internal/dashboard/dist/`, embedded in the
+  binary and served on the admin port. Only `dist/embed-placeholder.txt` is in git.
 - `testdata/` — goldens shared by Go, worker and client (`model_hash`, decoders).
 - `docs/` — design and verification: COSTMODEL, OFFLOAD, PROTOCOL, RECORDING, MODELS;
-  ADMIN_API is the contract of the admin port (`-admin-addr`, `internal/server/admin*.go`).
+  ADMIN_API is the contract of the admin port (`-admin-addr`, `internal/server/admin*.go`);
+  DASHBOARD is the dashboard's user and development guide.
 
 ## Run
 ```bash
@@ -47,13 +51,17 @@ uv run --project client sciot-client --server http://127.0.0.1:8080 --model-dir 
   and `SCIOT_MODEL_DIR`; they are skipped by default.
 - Client Python 3.11–3.13 only: TensorFlow 2.20 has no 3.14 wheels.
 - Use ruff at the version CI pins, not a local one.
+- Dashboard, from `dashboard/` (CI Node from `.nvmrc`): `npm ci`; `npm run lint`;
+  `npm test`; `npm run build` (runs `tsc -b`); the build must leave git clean.
 
 ## Conventions
-- Go comments are in Italian; Python code, docs, commits and PRs are in English.
+- Go and TypeScript comments are in Italian; Python code, docs, UI text,
+  commits and PRs are in English.
 - Branch first, never commit on `main`. PRs to `main` of `UBICO/SCIoT_go_server`.
 - Never commit `config.json`, `spike/`, `worker/tune-*.json`.
 - A protocol change updates server, client and `docs/PROTOCOL.md` in the same PR.
-- An admin API change updates server, dashboard and `docs/ADMIN_API.md` in the same PR.
+- An admin API change updates server, dashboard (`dashboard/src/api/types.ts`,
+  test fixtures) and `docs/ADMIN_API.md` in the same PR.
 - The admin port only reads what the server computes and calls existing admin
   actions: no new metric, no protocol or algorithm change.
 - Metrics never depend on an algorithm; algorithms use the metrics that exist.

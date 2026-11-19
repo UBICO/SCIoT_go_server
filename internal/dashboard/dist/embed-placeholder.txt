@@ -1,0 +1,3 @@
+Build output of dashboard/ (npm run build). This file keeps the folder in git so
+that go:embed compiles without Node; dashboard/public/ holds the same file, so
+the build writes it back.

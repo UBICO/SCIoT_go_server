@@ -11,3 +11,9 @@
 # Personal Claude Code files
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Dashboard: dependencies and build output (the placeholder stays: go:embed
+# needs at least one file to compile without Node)
+/dashboard/node_modules/
+/internal/dashboard/dist/*
+!/internal/dashboard/dist/embed-placeholder.txt

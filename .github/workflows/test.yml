@@ -87,3 +87,43 @@ jobs:
 
       - name: pytest
         run: uv run pytest -v
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node from dashboard/.nvmrc (26, LTS); the npm cache is keyed on the
+      # lockfile.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: dashboard/.nvmrc
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: eslint
+        run: npm run lint
+
+      - name: vitest
+        run: npm test
+
+      # tsc -b, then vite build into internal/dashboard/dist.
+      - name: build
+        run: npm run build
+
+      # The build must leave git clean: its output is ignored, and the
+      # placeholder go:embed needs comes back identical from public/.
+      - name: build leaves git clean
+        run: |
+          changed=$(git status --porcelain -- ../internal/dashboard)
+          if [ -n "$changed" ]; then
+            echo "The dashboard build changed tracked files:"
+            echo "$changed"
+            exit 1
+          fi

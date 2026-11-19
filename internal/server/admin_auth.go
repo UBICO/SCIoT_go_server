@@ -33,6 +33,7 @@ const (
 	// Codici di errore della porta admin: non fanno parte del protocollo dei
 	// device, quindi restano qui e non in internal/api.
 	errCodeUnauthorized = "unauthorized"
+	errCodeNotFound     = "not_found"
 )
 
 // adminSession è una sessione del browser.
