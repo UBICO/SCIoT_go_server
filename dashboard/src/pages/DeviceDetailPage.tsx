@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 import type { AdminDecision, AdminDevice, Prediction } from '../api/types'
 import { INK, type SeriesSpec } from '../components/chartData'
 import { PolicyBadges } from '../components/PolicyBadges'
+import { PolicyControl } from '../components/PolicyControl'
 import { TimeChart } from '../components/TimeChart'
 import { fmtAge, fmtBandwidth, fmtBytes, fmtMs, fmtNumber, fmtPercent, fmtPolicy, fmtTime } from '../format'
 import { useNow } from '../hooks'
@@ -64,6 +65,8 @@ export function DeviceDetailPage() {
       </Group>
 
       <Stats device={d} />
+      {/* key: un device registrato di nuovo riparte con il modulo della sua policy. */}
+      <PolicyControl key={d.session_id} device={d} />
 
       <Text size="xs" c="dimmed">
         Charts: one point per heartbeat, the last {HISTORY_SECONDS / 60} minutes since the dashboard was opened (the history lives in this browser tab).

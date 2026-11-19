@@ -1,0 +1,145 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/device"
+)
+
+// Registro delle modifiche (docs/ADMIN_API.md#change-log): chi ha cambiato
+// cosa con le azioni admin (pin, unpin; poi la config).
+//
+// Ogni azione riuscita va sempre nel log del server, con il nome di chi
+// l'ha fatta. Con la sezione "record" in config.json va anche in
+// <record.dir>/sciot-audit.jsonl: una riga JSON per azione, un solo file per
+// tutti gli avvii (in coda), così la storia sopravvive ai riavvii. Non è una
+// metrica e non entra nella registrazione (RECORDING.md): è chi ha fatto
+// cosa, non cosa è successo ai frame.
+
+// AuditFile è il nome del file nel record.dir.
+const AuditFile = "sciot-audit.jsonl"
+
+// Azioni del registro.
+const (
+	auditPin   = "pin"
+	auditUnpin = "unpin"
+)
+
+// Chi, quando non c'è il nome di un login.
+const (
+	// actorToken: una richiesta con Authorization: Bearer. Lo script ha il
+	// token ma non un nome.
+	actorToken = "token"
+	// actorAnonymous: porta admin senza token (solo loopback) e senza login.
+	actorAnonymous = "anonymous"
+	// actorDevicePort: gli endpoint di -admin sulla porta dei device, senza
+	// autenticazione. Lì non passa wrap, quindi il context non ha un nome.
+	actorDevicePort = "device port"
+)
+
+// auditEntry è una riga di sciot-audit.jsonl.
+//
+//	{"ts":"2026-11-19T15:04:05.123Z","who":"francesco","action":"pin",
+//	 "device_id":"pi_a","session_id":"FK2F…",
+//	 "policy":{"mode":"SPLIT","split_point":3,"policy_version":4},"pinned":true}
+type auditEntry struct {
+	TS        time.Time  `json:"ts"`
+	Who       string     `json:"who"`
+	Action    string     `json:"action"`
+	DeviceID  string     `json:"device_id"`
+	SessionID string     `json:"session_id"`
+	Policy    api.Policy `json:"policy"` // la policy dopo l'azione
+	Pinned    bool       `json:"pinned"` // dopo l'azione
+}
+
+// AuditLog è il file del registro. Lo apre main (OpenAudit) e lo passa con
+// Server.SetAudit; nil = solo il log del server.
+type AuditLog struct {
+	mu sync.Mutex // una riga alla volta: due pin insieme non si mescolano
+	f  *os.File
+}
+
+// OpenAudit apre (o crea) dir/AuditFile in coda.
+func OpenAudit(dir string) (*AuditLog, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	// 0o600: dentro ci sono i nomi di chi usa la dashboard, lo legge solo
+	// l'utente del servizio. O_APPEND: ogni Write va in fondo, anche dopo un
+	// riavvio.
+	f, err := os.OpenFile(filepath.Join(dir, AuditFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	return &AuditLog{f: f}, nil
+}
+
+// Close chiude il file.
+func (a *AuditLog) Close() error {
+	return a.f.Close()
+}
+
+// write aggiunge e come una riga JSON.
+func (a *AuditLog) write(e auditEntry) error {
+	data, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	// Una Write sola: con O_APPEND la riga arriva intera.
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, err = a.f.Write(append(data, '\n'))
+	return err
+}
+
+// SetAudit dà al server il file del registro. Va chiamata prima di Routes e
+// AdminRoutes, come SetRecorder.
+func (s *Server) SetAudit(a *AuditLog) { s.auditLog = a }
+
+// audit registra un'azione riuscita su d (lo stato dopo l'azione).
+func (s *Server) audit(r *http.Request, action string, d device.Device) {
+	e := auditEntry{
+		TS:        s.now().UTC(),
+		Who:       actorOf(r),
+		Action:    action,
+		DeviceID:  d.ID,
+		SessionID: d.SessionID,
+		Policy:    d.Policy,
+		Pinned:    d.Pinned,
+	}
+	log.Printf("admin %s: device=%s session=%s policy=%s v%d by=%q",
+		action, d.ID, d.SessionID, d.Policy.Mode, d.Policy.PolicyVersion, e.Who)
+	if s.auditLog == nil {
+		return
+	}
+	if err := s.auditLog.write(e); err != nil {
+		// L'azione è già fatta: un registro rotto non la annulla, si dice nel log.
+		log.Printf("audit: %v", err)
+	}
+}
+
+// actorKey è la chiave del nome di chi fa la richiesta nel context.
+type actorKey struct{}
+
+// withActor restituisce r con who nel context. La chiama wrap.
+func withActor(r *http.Request, who string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), actorKey{}, who))
+}
+
+// actorOf restituisce chi fa la richiesta: il nome messo da wrap, oppure
+// actorDevicePort se r non è passata da wrap (porta dei device, -admin).
+func actorOf(r *http.Request) string {
+	who, ok := r.Context().Value(actorKey{}).(string)
+	if !ok {
+		return actorDevicePort
+	}
+	return who
+}

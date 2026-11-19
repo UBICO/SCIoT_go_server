@@ -161,7 +161,7 @@ paths):
 | `dispatch.reprofile_age_ms` | 30000 | profile a model again when the estimate of one of its segments is older than this (segments no frame runs), 100–3600000; 0 = never ([docs/OFFLOAD.md](docs/OFFLOAD.md#reactivity)) |
 | `offload.*` | `static` | the offloading algorithm and its parameters ([docs/OFFLOAD.md](docs/OFFLOAD.md#configuration)) |
 | `server.device_segment_tau_ms` | 10000 | time constant of the estimates of the device's time per segment, 100–3600000 |
-| `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)) |
+| `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)); the change log of the admin actions goes to `sciot-audit.jsonl` in the same directory ([docs/ADMIN_API.md](docs/ADMIN_API.md#change-log)) |
 | `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
 | `models[].postprocess` | — | optional override of `score_threshold`, `iou_threshold`, `max_detections` |
 

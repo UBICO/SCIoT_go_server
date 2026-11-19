@@ -11,9 +11,9 @@ existing admin actions. It adds no metric and changes neither the protocol
 nor the offloading algorithm. Without `-admin-addr` there is no dashboard and
 the server runs as before.
 
-Status: devices list and device page with live charts. Next, in this order:
-pin/unpin from the page, `config.json` editing with validation and restart,
-recordings and models, model build jobs.
+Status: devices list, device page with live charts, pin and unpin. Next, in
+this order: `config.json` editing with validation and restart, recordings and
+models, model build jobs.
 
 ## Using it
 
@@ -40,6 +40,7 @@ tunnel: `ssh -L 8081:127.0.0.1:8081 <server>`, then `http://127.0.0.1:8081`
 - **Device** (`/devices/<id>`):
   - the last heartbeat (telemetry as the device sent it) and the bandwidth
     measured by the server;
+  - **Policy**: pin and unpin (below);
   - four charts, one point per heartbeat: latency (inference mean and max,
     answer, RTT, network latency), the server's policy (`LOCAL`, split
     points), device CPU, bandwidth;
@@ -48,6 +49,27 @@ tunnel: `ssh -L 8081:127.0.0.1:8081 <server>`, then `http://127.0.0.1:8081`
     is not in the telemetry); the chosen row is bold;
   - the policy changes seen since the dashboard was opened (decisions that keep
     the policy are not listed: `latency` decides at every heartbeat).
+
+### Pin and unpin
+
+A **pin** forces a policy on the device: `LOCAL`, or `SPLIT` at a split point
+with a window. The server validates it, gives it a new version and sends it
+with the next heartbeat; the offloading algorithm then leaves the device
+alone. **Unpin** gives the device back to the algorithm: the policy stays until
+the algorithm decides otherwise (with the `static` algorithm, it stays).
+A new registration of the device starts unpinned. Details:
+[OFFLOAD.md](OFFLOAD.md#admin).
+
+The panel offers only valid values: split points from `-1` (the raw input,
+the whole model on the server) to the model's `last_offloading_layer - 1`,
+and windows up to the stream's maximum (`max` = no `max_inflight`, the
+maximum). Without data plane there is no window. Both actions ask for a
+confirmation, show the result as a notification, and go to the change log
+with your login name ([ADMIN_API.md](ADMIN_API.md#change-log)). The page
+shows the new policy when the stream sends the device again.
+
+The form starts from the current policy and does not follow it afterwards: if
+the algorithm changes the policy while you choose, your choice stays.
 
 The header shows whether the live stream is connected (`live`,
 `connecting`, `disconnected`) and the server's state (devices, CPU, uptime).
@@ -119,8 +141,10 @@ SCIOT_ADMIN_TOKEN=dev-token-0123456789 go run ./cmd/server -config config.json -
 cd dashboard && npm run dev
 ```
 
-Open `http://localhost:5173`. For the browser the page and the API are on
-one origin, so the session cookie and the cross-origin protection behave as
+Open `http://localhost:5173`. To use a server on another address (for
+example when 8081 is taken), start Vite with
+`SCIOT_ADMIN_URL=http://127.0.0.1:18081 npm run dev`. For the browser the page
+and the API are on one origin, so the session cookie and the cross-origin protection behave as
 in production. Without devices the pages are empty: run a client
 ([CLIENT.md](CLIENT.md)), or any script that registers and sends heartbeats
 ([PROTOCOL.md](PROTOCOL.md)).
@@ -148,7 +172,7 @@ dashboard/
     api/types.ts        JSON shapes of the admin API (mirror of the Go structs)
     api/client.ts       fetch wrappers, ApiError
     live/               the events stream: LiveProvider, reducer, history
-    components/         TimeChart (uPlot), PolicyBadges, chart data
+    components/         TimeChart (uPlot), PolicyBadges, PolicyControl (pin), chart data
     pages/              Login, Layout (header, menu), device list, device page
     format.ts, hooks.ts number/time formatting, useNow
     test/               vitest setup, fixtures, fake EventSource
@@ -162,7 +186,7 @@ Tests sit next to the code (`*.test.ts(x)`).
 ### How it is built
 
 - **Libraries.** React 19, Mantine 9 (components and light/dark theme,
-  following the system), react-router 8 ("data mode": routes as objects,
+  following the system; `@mantine/notifications` for the results of actions), react-router 8 ("data mode": routes as objects,
   loaders), uPlot (canvas charts, ~50 KB, light enough for 600 points per
   series updated every second). TypeScript 6: typescript-eslint does not
   support TypeScript 7 yet.

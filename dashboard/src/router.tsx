@@ -2,7 +2,7 @@ import { redirect, type RouteObject } from 'react-router'
 import { api, isUnauthorized } from './api/client'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
 import { DeviceListPage } from './pages/DeviceListPage'
-import { NotFound, RouteError } from './pages/Errors'
+import { Loading, NotFound, RouteError } from './pages/Errors'
 import { Layout } from './pages/Layout'
 import { LoginPage } from './pages/LoginPage'
 
@@ -36,6 +36,7 @@ export const routes: RouteObject[] = [
     Component: Layout,
     loader: requireLogin,
     ErrorBoundary: RouteError,
+    HydrateFallback: Loading,
     children: [
       { index: true, loader: () => redirect('/devices') },
       { path: 'devices', Component: DeviceListPage },

@@ -121,16 +121,23 @@ func (l *decisionLog) forget(deviceID string) {
 // più rete e ultima decisione. Come statusResponse resta qui, non in
 // internal/api: non è un messaggio del protocollo dei device.
 type adminDevice struct {
-	DeviceID             string     `json:"device_id"`
-	DeviceType           string     `json:"device_type"`
-	SessionID            string     `json:"session_id"`
-	ModelKey             string     `json:"model_key"`
-	Policy               api.Policy `json:"policy"`
-	Pinned               bool       `json:"pinned"`
-	PolicySince          time.Time  `json:"policy_since"`
-	AppliedPolicyVersion uint64     `json:"applied_policy_version"`
-	RegisteredAt         time.Time  `json:"registered_at"`
-	LastSeen             time.Time  `json:"last_seen"`
+	DeviceID   string     `json:"device_id"`
+	DeviceType string     `json:"device_type"`
+	SessionID  string     `json:"session_id"`
+	ModelKey   string     `json:"model_key"`
+	Policy     api.Policy `json:"policy"`
+	Pinned     bool       `json:"pinned"`
+	// LastOffloadingLayer è quello del modello: gli split validi per un pin
+	// sono -1..LastOffloadingLayer-1 (PROTOCOL.md). MaxInflightMax è il
+	// massimo di max_inflight per un pin (lo stream); null senza data plane,
+	// dove la finestra non c'è. Li valida già handleSetPolicy: qui servono
+	// alla dashboard per offrire solo valori validi.
+	LastOffloadingLayer  int       `json:"last_offloading_layer"`
+	MaxInflightMax       *int      `json:"max_inflight_max"`
+	PolicySince          time.Time `json:"policy_since"`
+	AppliedPolicyVersion uint64    `json:"applied_policy_version"`
+	RegisteredAt         time.Time `json:"registered_at"`
+	LastSeen             time.Time `json:"last_seen"`
 	// Telemetry è l'ultimo heartbeat; null prima del primo (assente ≠ 0).
 	Telemetry *api.Telemetry `json:"telemetry"`
 	// Network è la rete misurata sullo stream; null senza data plane o
@@ -167,6 +174,7 @@ func (s *Server) adminDevices() []adminDevice {
 			ModelKey:             d.Model.ModelKey,
 			Policy:               d.Policy,
 			Pinned:               d.Pinned,
+			LastOffloadingLayer:  d.Model.LastOffloadingLayer,
 			PolicySince:          d.PolicySince,
 			AppliedPolicyVersion: d.AppliedPolicyVersion,
 			RegisteredAt:         d.RegisteredAt,
@@ -178,6 +186,10 @@ func (s *Server) adminDevices() []adminDevice {
 		// d è nuova a ogni iterazione (Go ≥ 1.22): &d.LastTelemetry è sicuro.
 		if d.AppliedPolicyVersion > 0 {
 			ad.Telemetry = &d.LastTelemetry
+		}
+		if s.notifier != nil {
+			m := s.notifier.MaxInflight(d.ID)
+			ad.MaxInflightMax = &m
 		}
 		out = append(out, ad)
 	}

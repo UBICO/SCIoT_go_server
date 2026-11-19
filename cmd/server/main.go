@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -218,6 +219,16 @@ func main() {
 			streamHandler.SetRecorder(rec)
 		}
 		log.Printf("recording to %s", rec.Stats().File)
+
+		// Il registro delle modifiche sta accanto alle registrazioni, un
+		// file solo per tutti gli avvii (internal/server/audit.go).
+		audit, err := server.OpenAudit(recordDir)
+		if err != nil {
+			log.Fatalf("audit: %v", err)
+		}
+		defer audit.Close()
+		srv.SetAudit(audit)
+		log.Printf("change log: %s", filepath.Join(recordDir, server.AuditFile))
 	}
 
 	// Il profilo parte dopo la registrazione, così ne registra gli eventi: un

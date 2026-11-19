@@ -64,6 +64,8 @@ uv run --project client sciot-client --server http://127.0.0.1:8080 --model-dir 
   test fixtures) and `docs/ADMIN_API.md` in the same PR.
 - The admin port only reads what the server computes and calls existing admin
   actions: no new metric, no protocol or algorithm change.
+- Every admin action that changes something calls `s.audit` (change log,
+  `internal/server/audit.go`, `docs/ADMIN_API.md#change-log`).
 - Metrics never depend on an algorithm; algorithms use the metrics that exist.
 - `model_hash` (MD5 of the `*.tflite` files in name order) is computed in Go,
   worker and client: change all three together with `testdata/model_hash`.

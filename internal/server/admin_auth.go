@@ -105,23 +105,34 @@ func (a *adminAuth) session(id string) (adminSession, bool) {
 }
 
 // wrap fa passare next solo alle richieste autenticate: Bearer valido o
-// cookie di una sessione valida. Le altre ricevono 401.
+// cookie di una sessione valida. Le altre ricevono 401. A next passa anche
+// chi è (withActor), per il registro delle modifiche (audit.go):
+//   - cookie di una sessione valida → il nome del login;
+//   - Bearer valido → actorToken;
+//   - senza token configurato e senza sessione → actorAnonymous.
 func (a *adminAuth) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if len(a.token) == 0 {
-			next.ServeHTTP(w, r)
+			// Anche senza token il login funziona e dà un nome.
+			who := actorAnonymous
+			if c, err := r.Cookie(adminCookie); err == nil {
+				if sess, ok := a.session(c.Value); ok {
+					who = sess.name
+				}
+			}
+			next.ServeHTTP(w, withActor(r, who))
 			return
 		}
 		// Con un header Authorization si decide solo su quello: un token
 		// sbagliato nello script non deve essere nascosto da un cookie valido.
 		if h := r.Header.Get("Authorization"); h != "" {
 			if t, ok := strings.CutPrefix(h, "Bearer "); ok && a.tokenOK(t) {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, withActor(r, actorToken))
 				return
 			}
 		} else if c, err := r.Cookie(adminCookie); err == nil {
-			if _, ok := a.session(c.Value); ok {
-				next.ServeHTTP(w, r)
+			if sess, ok := a.session(c.Value); ok {
+				next.ServeHTTP(w, withActor(r, sess.name))
 				return
 			}
 		}
