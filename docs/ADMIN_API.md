@@ -5,8 +5,8 @@ The API of the admin port: the contract between the server and the dashboard
 protocol ([PROTOCOL.md](PROTOCOL.md)): devices never use it.
 
 The admin port only reads what the server already computes and calls the
-existing admin actions (pin, unpin). It adds no metric and changes neither the
-protocol nor the offloading algorithm. Without `-admin-addr` it does not
+existing admin actions (pin, unpin), writing who did them to a change log. It
+adds no metric and changes neither the protocol nor the offloading algorithm. Without `-admin-addr` it does not
 exist and the server runs as before.
 
 The source of truth for the JSON shapes is `internal/server/admin.go` and
@@ -121,6 +121,7 @@ are none. A device just registered, before its first heartbeat:
   "session_id": "FK2FWZX4OHX2WI5CVT25S67B3F", "model_key": "yolo_pico_320",
   "policy": {"mode": "LOCAL", "split_point": null, "policy_version": 1},
   "pinned": false,
+  "last_offloading_layer": 7, "max_inflight_max": 2,
   "policy_since": "2026-11-19T12:33:08.420258+01:00",
   "applied_policy_version": 0,
   "registered_at": "2026-11-19T12:33:08.420258+01:00",
@@ -132,6 +133,8 @@ are none. A device just registered, before its first heartbeat:
 |---|---|
 | `policy` | the server's current policy for the device |
 | `pinned` | the policy was set by the admin: the algorithm does not change it ([OFFLOAD.md](OFFLOAD.md#admin)) |
+| `last_offloading_layer` | the model's: a pin accepts `split_point` from `-1` to `last_offloading_layer - 1` |
+| `max_inflight_max` | the largest `max_inflight` a pin accepts (the stream's maximum); `null` without data plane, where there is no window |
 | `policy_since` | when the current policy came into force |
 | `applied_policy_version` | the version the device said it applies in its last heartbeat; `0` = no heartbeat yet |
 | `last_seen` | the device's last contact (registration or heartbeat) |
@@ -183,7 +186,8 @@ data: {"device_id": "pi_a", "policy": {...}, "telemetry": {...}, ...}
 ### `POST /api/v1/admin/devices/{device_id}/policy`, `DELETE …`
 
 Pin and unpin, with the same bodies, answers and errors as on the device port
-with `-admin` ([PROTOCOL.md](PROTOCOL.md#post-apiv1admindevicesdevice_idpolicy-opt-in)).
+with `-admin` ([PROTOCOL.md](PROTOCOL.md#post-apiv1admindevicesdevice_idpolicy-opt-in)). Every
+successful pin and unpin goes to the change log.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $SCIOT_ADMIN_TOKEN" \
@@ -191,6 +195,36 @@ curl -X POST -H "Authorization: Bearer $SCIOT_ADMIN_TOKEN" \
 curl -X DELETE -H "Authorization: Bearer $SCIOT_ADMIN_TOKEN" \
   http://127.0.0.1:8081/api/v1/admin/devices/pi_a/policy
 ```
+
+## Change log
+
+Who changed what: every successful admin action (pin, unpin) is written to
+the server log with who did it:
+
+```text
+admin pin: device=pi_a session=FK2F… policy=SPLIT v4 by="francesco"
+```
+
+With a `record` section in `config.json`, the same action is also a line of
+`<record.dir>/sciot-audit.jsonl`: one JSON object per line, one file for
+every start (appended), readable only by the server's user (`0600`).
+
+```json
+{"ts": "2026-11-19T14:04:05.123Z", "who": "francesco", "action": "pin",
+ "device_id": "pi_a", "session_id": "FK2F…",
+ "policy": {"mode": "SPLIT", "split_point": 3, "policy_version": 4}, "pinned": true}
+```
+
+| Field | Meaning |
+|---|---|
+| `ts` | server time, UTC |
+| `who` | the `name` of the login; `token` for a request with `Authorization: Bearer`; `anonymous` on an admin port without token and without login; `device port` for the unauthenticated `-admin` endpoints on the device port |
+| `action` | `pin`, `unpin` |
+| `policy`, `pinned` | the device's policy and pin after the action (after an unpin the policy is unchanged) |
+
+Refused actions (invalid policy, unknown device) are not logged. The change
+log is not part of the recording ([RECORDING.md](RECORDING.md)): it says who
+acted, not what happened to the frames.
 
 ## Security notes
 

@@ -1,4 +1,4 @@
-import type { ErrorBody, LoginResponse, ServerStatus } from './types'
+import type { ErrorBody, LoginResponse, ServerStatus, SetPolicyRequest, SetPolicyResponse } from './types'
 
 // Le chiamate alla porta admin. Percorsi relativi all'origine: in
 // produzione la pagina e l'API sono sullo stesso server Go, in sviluppo il
@@ -57,4 +57,14 @@ export const api = {
     request<LoginResponse>('POST', '/api/v1/admin/login', { token, name }),
   logout: () => request<void>('POST', '/api/v1/admin/logout'),
   status: () => request<ServerStatus>('GET', '/api/v1/admin/status'),
+  // pin: impone la policy; l'algoritmo non tocca più il device (OFFLOAD.md#admin).
+  pin: (deviceID: string, p: SetPolicyRequest) =>
+    request<SetPolicyResponse>('POST', policyPath(deviceID), p),
+  // unpin: restituisce il device all'algoritmo; la policy resta finché
+  // l'algoritmo non decide altrimenti.
+  unpin: (deviceID: string) => request<SetPolicyResponse>('DELETE', policyPath(deviceID)),
+}
+
+function policyPath(deviceID: string): string {
+  return `/api/v1/admin/devices/${encodeURIComponent(deviceID)}/policy`
 }

@@ -1,4 +1,5 @@
 import { MantineProvider } from '@mantine/core'
+import { Notifications } from '@mantine/notifications'
 import { render } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { createMemoryRouter, type RouteObject } from 'react-router'
@@ -32,6 +33,8 @@ export function device(over: Partial<AdminDevice> = {}): AdminDevice {
     model_key: 'yolo_pico_320',
     policy: { mode: 'SPLIT', split_point: 5, policy_version: 2, max_inflight: 2 },
     pinned: false,
+    last_offloading_layer: 7,
+    max_inflight_max: 3,
     policy_since: '2026-11-19T12:00:00Z',
     applied_policy_version: 2,
     registered_at: '2026-11-19T11:59:00Z',
@@ -92,6 +95,7 @@ export function renderRoutes(routes: RouteObject[], path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] })
   const utils = render(
     <MantineProvider env="test">
+      <Notifications />
       <RouterProvider router={router} />
     </MantineProvider>,
   )

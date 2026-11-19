@@ -89,7 +89,8 @@ type Server struct {
 	notifier StreamNotifier
 	queue    QueueSource // nil senza data plane
 
-	rec *record.Recorder // nil = registrazione spenta
+	rec      *record.Recorder // nil = registrazione spenta
+	auditLog *AuditLog        // nil = registro delle modifiche solo nel log (audit.go)
 
 	// alg decide la policy dei device a ogni heartbeat; nil = nessuna
 	// decisione (la policy cambia solo con l'admin). Vedi SetAlgorithm.
@@ -490,8 +491,7 @@ func (s *Server) handleSetPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("admin policy: device=%s session=%s policy=%s v%d",
-		id, d.SessionID, d.Policy.Mode, d.Policy.PolicyVersion)
+	s.audit(r, auditPin, d)
 	// Via veloce: la policy arriva subito sullo stream, se aperto. L'heartbeat
 	// resta la via affidabile. notifier è nil senza data plane.
 	if s.notifier != nil {
@@ -524,7 +524,7 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("device %q is not registered", id))
 		return
 	}
-	log.Printf("admin unpin: device=%s session=%s", id, d.SessionID)
+	s.audit(r, auditUnpin, d)
 	writeJSON(w, http.StatusOK, api.SetPolicyResponse{DeviceID: id, SessionID: d.SessionID, Policy: d.Policy})
 }
 

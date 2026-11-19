@@ -99,6 +99,10 @@ export interface AdminDevice {
   model_key: string
   policy: Policy
   pinned: boolean
+  // Limiti di un pin: split da -1 a last_offloading_layer - 1 (il modello),
+  // finestra da 1 a max_inflight_max (lo stream; null senza data plane).
+  last_offloading_layer: number
+  max_inflight_max: number | null
   policy_since: string
   applied_policy_version: number // 0 = nessun heartbeat ancora
   registered_at: string
@@ -139,6 +143,20 @@ export interface ServerStatus {
   uptime_seconds: number
   dispatch?: DispatchSnapshot // assente senza data plane
   record?: Record<string, unknown> // assente senza registrazione
+}
+
+// Il corpo di un pin (POST …/devices/{id}/policy, PROTOCOL.md).
+export interface SetPolicyRequest {
+  mode: Mode
+  split_point: number | null
+  max_inflight?: number // assente = il massimo dello stream
+}
+
+// La risposta di pin e unpin.
+export interface SetPolicyResponse {
+  device_id: string
+  session_id: string
+  policy: Policy
 }
 
 export interface LoginResponse {

@@ -18,10 +18,11 @@ export default defineConfig({
   },
   server: {
     // In sviluppo il browser parla con Vite (5173); le chiamate all'API
-    // passano al server Go avviato con -admin-addr 127.0.0.1:8081. Per il
-    // browser è la stessa origine: il cookie e CrossOriginProtection
+    // passano al server Go avviato con -admin-addr 127.0.0.1:8081, o
+    // all'indirizzo in SCIOT_ADMIN_URL (un altro server già sulla 8081). Per
+    // il browser è la stessa origine: il cookie e CrossOriginProtection
     // funzionano come in produzione.
-    proxy: { '/api': 'http://127.0.0.1:8081' },
+    proxy: { '/api': process.env.SCIOT_ADMIN_URL ?? 'http://127.0.0.1:8081' },
   },
   test: {
     environment: 'jsdom',
