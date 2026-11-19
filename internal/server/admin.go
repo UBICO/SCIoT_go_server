@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/UBICO/SCIoT_go_server/internal/api"
+	"github.com/UBICO/SCIoT_go_server/internal/dashboard"
 	"github.com/UBICO/SCIoT_go_server/internal/netmeasure"
 	"github.com/UBICO/SCIoT_go_server/internal/record"
 )
@@ -45,6 +46,14 @@ func (s *Server) AdminRoutes(token string) http.Handler {
 	// pattern più specifico: questo vince su "/api/v1/admin/".
 	mux.HandleFunc("POST /api/v1/admin/login", s.handleAdminLogin)
 	mux.Handle("/api/v1/admin/", s.admin.wrap(protected))
+	// Le altre route /api/ non esistono sulla porta admin (le route dei
+	// device sono sull'altra porta): 404 JSON, non la pagina della dashboard.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, errCodeNotFound, "no such endpoint on the admin port")
+	})
+	// Tutto il resto è la dashboard (docs/DASHBOARD.md). "/" senza metodo:
+	// con "GET /" il mux andrebbe in panic, in conflitto con "/api/v1/admin/".
+	mux.Handle("/", dashboard.Handler())
 
 	// CrossOriginProtection (net/http, Go 1.25) rifiuta le richieste che
 	// modificano (POST, PUT, DELETE) mandate dal browser da un'altra origine,

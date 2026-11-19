@@ -50,6 +50,7 @@ The reference device client is in `client/`, in Python
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
 | [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, live events (SSE), pin/unpin; the contract for the dashboard |
+| [docs/DASHBOARD.md](docs/DASHBOARD.md) | the web dashboard on the admin port: using it, building it into the binary, development guide |
 | [docs/OFFLOAD.md](docs/OFFLOAD.md) | the offloading algorithm: constraints, objective, hysteresis, admin pin, configuration |
 | [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`, `sciot-replay check`) |
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
@@ -62,6 +63,8 @@ The reference device client is in `client/`, in Python
 - Go 1.27 or newer (one external dependency: gopsutil, for the load metrics);
 - [uv](https://docs.astral.sh/uv/) and Python 3.11–3.13 for the worker and
   the client (TensorFlow 2.20, installed by uv on first run).
+- Node 26 only to build the dashboard (`dashboard/`,
+  [docs/DASHBOARD.md](docs/DASHBOARD.md)); the server runs without it.
 
 ## Quick start
 
@@ -209,6 +212,10 @@ go run ./cmd/server -config config.json -addr :8080 -admin-addr 127.0.0.1:8081
 curl -s -H "Authorization: Bearer $SCIOT_ADMIN_TOKEN" http://127.0.0.1:8081/api/v1/admin/devices
 ```
 
+The same port serves the web dashboard at `http://127.0.0.1:8081`, once
+built (`cd dashboard && npm ci && npm run build`, then rebuild the server;
+[docs/DASHBOARD.md](docs/DASHBOARD.md)).
+
 State of the server (load, dispatcher queue: slots, λ, ρ, service time per
 split, recording counters):
 
@@ -273,6 +280,10 @@ cd worker && uv run pytest
 cd client && uv run pytest
 ```
 
+```bash
+cd dashboard && npm ci && npm run lint && npm test && npm run build
+```
+
 The worker and client tests build tiny TFLite models at run time and check
 the decoders and the model hash against the files in `testdata/`: no model
 artifacts needed.
@@ -298,6 +309,8 @@ internal/replay/     reads a recording back for offline checks (cmd/sciot-replay
 internal/record/     JSON Lines recording of events (docs/RECORDING.md)
 internal/worker/     gRPC client, catalog and supervisor of the Python worker
 internal/workerpb/   generated gRPC code (from proto/)
+internal/dashboard/  the built dashboard (go:embed) and its HTTP handler
+dashboard/           web dashboard: Vite, React, TypeScript (docs/DASHBOARD.md)
 proto/               the server ↔ worker contract
 worker/              Python worker (TFLite segments over gRPC), sciot-model build, decoders
 client/              Python device client (docs/CLIENT.md) and its benchmarks

@@ -22,6 +22,10 @@ go run ./cmd/server -config config.json -addr :8080 -admin-addr 127.0.0.1:8081
 - `-admin-addr` (default empty = no admin port) is a second HTTP listener,
   separate from the device port (`-addr`). Admin routes are not served on the
   device port, and device routes are not served on the admin port.
+- The admin port also serves the dashboard: every path outside `/api/` is a
+  page of it ([DASHBOARD.md](DASHBOARD.md)). The pages need no credentials
+  (the data is behind the API); a binary built without the dashboard serves a
+  page that says how to build it.
 - The token comes from the environment variable `SCIOT_ADMIN_TOKEN`, never
   from `config.json` (the file is copied around and may end up in git).
 - At start-up the server refuses to run (`admin: …` in the log) when:
@@ -73,6 +77,7 @@ bodies limited to 64 KiB, branch on `code`.
 | `unauthorized` | 401 | no credentials, wrong token, expired or unknown session |
 | `invalid_request` | 400 | malformed JSON, unknown key, missing field, invalid policy |
 | `device_not_found` | 404 | the device is not registered |
+| `not_found` | 404 | no such endpoint under `/api/` on the admin port (device routes included) |
 
 A cross-origin browser request gets a plain-text `403`, not this JSON.
 

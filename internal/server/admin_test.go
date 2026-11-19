@@ -302,6 +302,27 @@ func TestAdminRoutesAreSeparate(t *testing.T) {
 	}
 }
 
+// La dashboard si carica senza login (i dati sono dietro l'API); una route
+// /api/ sconosciuta è un 404 JSON, non la pagina della dashboard. Il
+// contenuto delle pagine lo verifica internal/dashboard.
+func TestAdminServesTheDashboard(t *testing.T) {
+	s, _, _ := testServer(t)
+	h := s.AdminRoutes(testAdminToken)
+
+	for _, path := range []string{"/", "/devices/pi_a"} {
+		rec := adminReq(h, http.MethodGet, path, "")
+		if rec.Code == http.StatusUnauthorized || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+			t.Errorf("GET %s: %d %q, voglio una pagina HTML senza login", path, rec.Code, rec.Header().Get("Content-Type"))
+		}
+	}
+	for _, path := range []string{"/api/v1/nope", "/api/"} {
+		rec := adminReq(h, http.MethodGet, path, "", bearer(testAdminToken))
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), `"not_found"`) {
+			t.Errorf("GET %s: %d %s, voglio 404 not_found", path, rec.Code, rec.Body)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/v1/admin/devices
 // ---------------------------------------------------------------------------
