@@ -90,6 +90,30 @@ func TestGetReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestListSortedCopies(t *testing.T) {
+	s := NewStore()
+	if got := s.List(); len(got) != 0 {
+		t.Fatalf("List di uno Store vuoto: %d device, voglio 0", len(got))
+	}
+	for _, id := range []string{"pi_b", "pi_a", "pi_c"} {
+		s.Register(id, "python", fomo, api.Capabilities{})
+	}
+
+	got := s.List()
+	var ids []string
+	for _, d := range got {
+		ids = append(ids, d.ID)
+	}
+	if want := []string{"pi_a", "pi_b", "pi_c"}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("List: %v, voglio %v", ids, want)
+	}
+
+	got[0].Policy.Mode = api.ModeSplit // modifico la copia...
+	if d, _ := s.Get("pi_a"); d.Policy.Mode != api.ModeLocal {
+		t.Error("modificare il risultato di List non deve alterare lo Store")
+	}
+}
+
 // TestConcurrentRegister registra 100 device in parallelo.
 // Ha senso soprattutto con il race detector: go test -race ./...
 func TestConcurrentRegister(t *testing.T) {

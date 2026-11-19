@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,8 @@ func main() {
 	// ATTIVARE la tabella; per disattivarla si usa config.json.
 	verbose := flag.Bool("verbose", false, "stampa una riga per ogni heartbeat (sovrascrive config.json)")
 	admin := flag.Bool("admin", false, "abilita l'endpoint admin per forzare la policy (senza autenticazione)")
+	// Vuoto = nessuna porta admin né dashboard: il server è quello di prima.
+	adminAddr := flag.String("admin-addr", "", "address of the admin API and dashboard, e.g. 127.0.0.1:8081 (token: SCIOT_ADMIN_TOKEN)")
 	flag.Parse()
 
 	// --- 2. Configurazione e registry -----------------------------------------
@@ -68,6 +71,22 @@ func main() {
 	}
 	if srvCfg.Admin {
 		log.Printf("WARNING: admin endpoint enabled without authentication: bind to localhost (-addr 127.0.0.1:PORT)")
+	}
+	// Il token viene dall'ambiente, mai da config.json: il file finisce nei
+	// backup e magari in git, una variabile d'ambiente no.
+	adminToken := os.Getenv("SCIOT_ADMIN_TOKEN")
+	if *adminAddr != "" {
+		if err := server.CheckAdminAddr(*adminAddr, adminToken); err != nil {
+			log.Fatalf("admin: %v", err)
+		}
+		if adminToken == "" {
+			log.Printf("WARNING: admin API on %s without authentication (loopback only): set SCIOT_ADMIN_TOKEN to require a token", *adminAddr)
+		}
+		// -admin apre gli stessi endpoint senza autenticazione sulla porta dei
+		// device: il token della porta admin non protegge più la policy.
+		if srvCfg.Admin {
+			log.Printf("WARNING: -admin is also on: the policy endpoints are open without authentication on %s, the admin token does not protect them", *addr)
+		}
 	}
 	log.Printf("heartbeat interval %v, verbose %v", srvCfg.HeartbeatInterval, srvCfg.Verbose)
 
@@ -231,6 +250,30 @@ func main() {
 		Handler:     srv.Routes(),
 	}
 
+	// --- 4b. Porta admin (solo con -admin-addr) --------------------------------
+
+	// adminServer resta nil senza -admin-addr: lo shutdown lo controlla.
+	var adminServer *http.Server
+	if *adminAddr != "" {
+		// Stessi timeout di httpServer: per ora l'API admin ha solo richieste
+		// brevi (la SSE della PR 2 li rivedrà). AdminRoutes va dopo SetStream/
+		// SetAlgorithm/SetRecorder, come Routes.
+		adminServer = &http.Server{
+			Addr:              *adminAddr,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			Handler:           srv.AdminRoutes(adminToken),
+		}
+		go func() {
+			log.Printf("admin API listening on %s", adminServer.Addr)
+			if err := adminServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("admin server: %v", err)
+			}
+		}()
+	}
+
 	// --- 5. Avvio e shutdown ordinato ----------------------------------------
 
 	log.Printf("listening on %s", httpServer.Addr)
@@ -265,9 +308,23 @@ func main() {
 			log.Printf("worker stopped")
 		}
 	}()
+	// Le due porte si chiudono in parallelo, ognuna con tutto shutdownCtx: in
+	// sequenza, una porta dei device lenta lascerebbe alla porta admin un
+	// context già scaduto. wg.Go (Go 1.25) è wg.Add(1) + go + defer wg.Done().
+	var wg sync.WaitGroup
+	if adminServer != nil {
+		wg.Go(func() {
+			if err := adminServer.Shutdown(shutdownCtx); err != nil {
+				log.Printf("admin shutdown: %v", err)
+			}
+		})
+	}
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+	// Prima di srv.Close: un pin dall'admin in corso deve finire prima che si
+	// chiuda la registrazione.
+	wg.Wait()
 	// Nessun heartbeat nuovo: si ferma la goroutine delle decisioni, che
 	// scrive nella registrazione.
 	srv.Close()

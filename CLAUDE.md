@@ -26,7 +26,8 @@ window of frames in flight). Protocol v1: `docs/PROTOCOL.md`.
   Raspberry setup in `docs/RASPBERRY.md`); benchmarks in `client/scripts/`,
   results in `client/results/` (gitignored).
 - `testdata/` — goldens shared by Go, worker and client (`model_hash`, decoders).
-- `docs/` — design and verification: COSTMODEL, OFFLOAD, PROTOCOL, RECORDING, MODELS.
+- `docs/` — design and verification: COSTMODEL, OFFLOAD, PROTOCOL, RECORDING, MODELS;
+  ADMIN_API is the contract of the admin port (`-admin-addr`, `internal/server/admin*.go`).
 
 ## Run
 ```bash
@@ -52,6 +53,9 @@ uv run --project client sciot-client --server http://127.0.0.1:8080 --model-dir 
 - Branch first, never commit on `main`. PRs to `main` of `UBICO/SCIoT_go_server`.
 - Never commit `config.json`, `spike/`, `worker/tune-*.json`.
 - A protocol change updates server, client and `docs/PROTOCOL.md` in the same PR.
+- An admin API change updates server, dashboard and `docs/ADMIN_API.md` in the same PR.
+- The admin port only reads what the server computes and calls existing admin
+  actions: no new metric, no protocol or algorithm change.
 - Metrics never depend on an algorithm; algorithms use the metrics that exist.
 - `model_hash` (MD5 of the `*.tflite` files in name order) is computed in Go,
   worker and client: change all three together with `testdata/model_hash`.

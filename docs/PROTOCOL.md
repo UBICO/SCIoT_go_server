@@ -247,7 +247,8 @@ The single-model form returns one entry, or `404 model_not_found`.
 Forces the policy of a registered device; it is delivered with the next
 heartbeat answer. Enabled only with `-admin` or `"admin": true` in
 `config.json`, and **unauthenticated**: bind the server to localhost when
-using it.
+using it. The authenticated admin port (`-admin-addr`) serves the same two
+endpoints with a token ([ADMIN_API.md](ADMIN_API.md)).
 
 ```json
 {"mode": "SPLIT", "split_point": 5}

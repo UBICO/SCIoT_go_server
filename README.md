@@ -49,6 +49,7 @@ The reference device client is in `client/`, in Python
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | the v1 protocol: control plane and data plane, the contract for every client |
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
+| [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, pin/unpin; the contract for the dashboard |
 | [docs/OFFLOAD.md](docs/OFFLOAD.md) | the offloading algorithm: constraints, objective, hysteresis, admin pin, configuration |
 | [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`, `sciot-replay check`) |
 | [docs/spikes/ML_RUNTIME.md](docs/spikes/ML_RUNTIME.md) | why a Python worker over gRPC, with measurements |
@@ -136,7 +137,7 @@ paths):
 |---|---|---|
 | `server.heartbeat_interval_ms` | 1000 | interval sent to clients, 100–60000 |
 | `server.verbose` | false | one table row per accepted heartbeat ([Server output](#server-output)) |
-| `server.admin` | false | enable the unauthenticated admin endpoint |
+| `server.admin` | false | enable the unauthenticated admin endpoint on the device port (the authenticated one is `-admin-addr`, [docs/ADMIN_API.md](docs/ADMIN_API.md)) |
 | `server.load_sample_interval_ms` | 1000 | how often the server samples its own CPU/memory load, 100–60000 |
 | `server.load_cpu_ewma_alpha` | 0.35 | weight of the newest CPU sample in the moving average, (0, 1] |
 | `worker` | absent | data plane on/off: without this section `/api/v1/stream` does not exist and every device stays LOCAL |
@@ -196,6 +197,16 @@ algorithm leaves it alone until it is released:
 
 ```bash
 curl -X DELETE http://127.0.0.1:8080/api/v1/admin/devices/web_96/policy
+```
+
+The same endpoints, with a token, are on a separate admin port
+([docs/ADMIN_API.md](docs/ADMIN_API.md)); without `-admin-addr` it does not
+exist:
+
+```bash
+export SCIOT_ADMIN_TOKEN="$(openssl rand -base64 32)"
+go run ./cmd/server -config config.json -addr :8080 -admin-addr 127.0.0.1:8081
+curl -s -H "Authorization: Bearer $SCIOT_ADMIN_TOKEN" http://127.0.0.1:8081/api/v1/admin/devices
 ```
 
 State of the server (load, dispatcher queue: slots, λ, ρ, service time per
