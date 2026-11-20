@@ -6,8 +6,9 @@ protocol ([PROTOCOL.md](PROTOCOL.md)): devices never use it.
 
 The admin port only reads what the server already computes and calls the
 existing admin actions (pin, unpin), edits `config.json` and restarts the
-server to apply it, writing who did them to a change log. Recordings, models
-and the change log are read-only. It
+server to apply it, builds model directories with `sciot-model build`, writing
+who did them to a change log. Recordings, models and the change log are
+read-only. It
 adds no metric and changes neither the protocol nor the offloading algorithm. Without `-admin-addr` it does not
 exist and the server runs as before.
 
@@ -82,6 +83,10 @@ bodies limited to 64 KiB, branch on `code`.
 | `not_found` | 404 | no such endpoint under `/api/` on the admin port (device routes included) |
 | `invalid_config` | 400 | the `config.json` text would not start the server, or changes `worker.command` |
 | `config_changed` | 409 | `config.json` changed since you read it (`base_hash` does not match) |
+| `build_running` | 409 | a model build is already running (one at a time) |
+| `model_exists` | 409 | the model folder `models_dir/<model_key>` already exists |
+| `not_running` | 409 | cancelling a build that has ended |
+| `too_large` | 413 | a model build upload larger than 1 GiB |
 
 A cross-origin browser request gets a plain-text `403`, not this JSON.
 
@@ -340,10 +345,70 @@ Lines that are not valid JSON (half a line after a crash) are skipped.
 Without a `record` section: `{"enabled": false, "entries": []}` (actions are
 then only in the server's log).
 
+### Model builds: `/api/v1/admin/models/builds`
+
+Builds a model directory from the two Edge Impulse exports with
+`sciot-model build` ([MODELS.md](MODELS.md)), on the server, into
+`models_dir/<model_key>`. Enabled by `"models_dir"` in `config.json` (an
+existing folder); without it `GET` answers `{"enabled": false}` and the other
+routes `404`. The command is fixed in the server (`uv run --project worker
+sciot-model build`, run from the server's working directory like the worker),
+never read from the config: the only arguments are the uploaded files and
+validated options. One build at a time, kept in memory (the last 20): a
+restart forgets the jobs, not the built models. A running build is stopped
+when the server stops.
+
+`GET …/builds`: `{"enabled": true, "models_dir": "models", "builds": [ … ]}`,
+newest first, without logs.
+
+`POST …/builds`, `multipart/form-data`, up to 1 GiB (this route only; the
+read deadline is 15 minutes):
+
+| Field | |
+|---|---|
+| `model_key` | the key, also the folder name: `[a-z0-9][a-z0-9_-]{0,63}` |
+| `savedmodel` | one file, the "TensorFlow SavedModel" export (`.zip`) |
+| `cpp_export` | one file, the "C++ library" export (`.zip`) |
+| `sample` | 0 to 10 images for the verification (strongly recommended) |
+| `max_segments` | optional, 0 to 64 (`--max-segments`; 0 = all automatic cuts) |
+| `cut` | repeatable, a tensor name for `--cut` |
+
+Uploaded files are saved under fixed names (never the browser's) and deleted
+when the job ends. `202` with the job; `400 invalid_request`, `409
+build_running`, `409 model_exists` (no `--overwrite` from here: a model in
+use would change hash under the devices), `413 too_large`, `500` if the
+command cannot start.
+
+`GET …/builds/{id}?since=N`: the job and its log from line `N` (`next` is the
+`since` of the following request), so a page follows the log by polling:
+
+```json
+{"id": "yolo_small_320-1", "model_key": "yolo_small_320", "output": "models/yolo_small_320",
+ "who": "francesco", "state": "succeeded", "started_at": "…", "finished_at": "…",
+ "exit_code": 0, "model_hash": "35cc5d15…", "log_lines": 42, "log": ["…"], "next": 42}
+```
+
+`state`: `running`, `succeeded` (exit 0 and a `model_hash` line), `failed`,
+`cancelled`. The log has stdout and stderr, up to 10000 lines.
+
+`DELETE …/builds/{id}`: cancels a running build (SIGTERM to the process
+group, SIGKILL after 5 s); `202`, or `409 not_running`. `sciot-model build`
+writes the model folder only at its last step: a cancel during that step may
+leave a partial folder, which then makes a new build with the same key fail
+with `model_exists`; delete it by hand.
+
+The build process gets the server's environment without
+`SCIOT_ADMIN_TOKEN`, plus `PYTHONUNBUFFERED=1` (so the log arrives line by
+line).
+
+The built model is not loaded: add `{"model_key", "tflite_dir"}` to
+`models` in `config.json` (`PUT /api/v1/admin/config`) and restart.
+
 ## Change log
 
 Who changed what: every successful admin action (pin, unpin, config save,
-restart) is written to the server log with who did it:
+restart, model build and its cancellation) is written to the server log with
+who did it:
 
 ```text
 admin pin: device=pi_a session=FK2F… policy=SPLIT v4 by="francesco"
@@ -367,8 +432,9 @@ every start (appended), readable only by the server's user (`0600`).
 |---|---|
 | `ts` | server time, UTC |
 | `who` | the `name` of the login; `token` for a request with `Authorization: Bearer`; `anonymous` on an admin port without token and without login; `device port` for the unauthenticated `-admin` endpoints on the device port |
-| `action` | `pin`, `unpin`, `config`, `restart` |
+| `action` | `pin`, `unpin`, `config`, `restart`, `model_build`, `model_build_cancel` |
 | `device_id`, `session_id`, `policy`, `pinned` | pin and unpin: the device, its policy and pin after the action (after an unpin the policy is unchanged) |
+| `build` | model build: `id`, `model_key`, `output` (its result is in the server log and in the job) |
 | `config` | config save: the file written (`path`), the backup of the previous content (`backup`, in the same folder), sha256 of the new content (`hash`); restart: the file the server starts again with and its sha256 (no `backup`) |
 
 Refused actions (invalid policy, unknown device, invalid config, conflict, a

@@ -36,6 +36,8 @@ type parsed struct {
 	stream     stream.Config
 	recordDir  string
 	recording  bool // c'è la sezione "record"
+	buildDir   string
+	building   bool // c'è models_dir: build dei modelli dalla dashboard
 }
 
 // parseConfig controlla f come all'avvio e ne ricava i valori per main.
@@ -86,6 +88,9 @@ func parseConfig(f config.File) (parsed, error) {
 	}
 	if p.recordDir, p.recording, err = f.RecordDir(); err != nil {
 		return parsed{}, fmt.Errorf("record config: %w", err)
+	}
+	if p.buildDir, p.building, err = f.BuildDir(); err != nil {
+		return parsed{}, fmt.Errorf("models config: %w", err)
 	}
 	return p, nil
 }

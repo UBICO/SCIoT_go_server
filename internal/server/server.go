@@ -95,6 +95,7 @@ type Server struct {
 	restart  func()           // nil = riavvio dalla dashboard spento (admin_restart.go)
 	// recordDir è record.dir; "" = registrazione spenta (admin_records.go).
 	recordDir string
+	builds    *builder // nil = build dei modelli spento (admin_builds.go)
 
 	// alg decide la policy dei device a ogni heartbeat; nil = nessuna
 	// decisione (la policy cambia solo con l'admin). Vedi SetAlgorithm.
@@ -668,6 +669,11 @@ func (s *Server) SetAlgorithm(a offload.Algorithm) {
 func (s *Server) Close() {
 	if s.decider != nil {
 		s.decider.close()
+	}
+	// Un build in corso si ferma con il server: un processo di conversione
+	// orfano terrebbe CPU e memoria.
+	if s.builds != nil {
+		s.builds.close()
 	}
 }
 

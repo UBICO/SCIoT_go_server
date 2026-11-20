@@ -62,6 +62,12 @@ type File struct {
 
 	// Record è opzionale: senza la sezione il server non registra nulla.
 	Record *Record `json:"record,omitempty"`
+
+	// ModelsDir è la cartella dove la dashboard costruisce i modelli
+	// (sciot-model build, docs/DASHBOARD.md). Opzionale: senza, il build
+	// dalla dashboard è spento. Non cambia i modelli caricati: quelli sono in
+	// "models".
+	ModelsDir string `json:"models_dir,omitempty"`
 }
 
 // Dispatch è la sezione "dispatch": la coda davanti al worker. Opzionale.
@@ -485,6 +491,31 @@ func removedKeyHint(err error) string {
 
 // RecordDir restituisce la cartella della registrazione e true, oppure false
 // se la sezione "record" manca. "~/" all'inizio indica la home dell'utente.
+// BuildDir restituisce models_dir, la cartella dei modelli costruiti dalla
+// dashboard (~/ espanso), e se il build è acceso. La cartella deve esistere:
+// il build crea dentro una cartella per modello, non la cartella stessa.
+func (f File) BuildDir() (string, bool, error) {
+	if f.ModelsDir == "" {
+		return "", false, nil
+	}
+	dir := f.ModelsDir
+	if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", false, fmt.Errorf("models_dir: %w", err)
+		}
+		dir = filepath.Join(home, rest)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", false, fmt.Errorf("models_dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("models_dir: %s is not a directory", dir)
+	}
+	return dir, true, nil
+}
+
 func (f File) RecordDir() (string, bool, error) {
 	if f.Record == nil {
 		return "", false, nil

@@ -1,6 +1,7 @@
 import { redirect, type RouteObject } from 'react-router'
 import { api, ApiError, isUnauthorized } from './api/client'
 import type { ConfigFile } from './api/types'
+import { BuildPage } from './pages/BuildPage'
 import { ChangeLogPage } from './pages/ChangeLogPage'
 import { ConfigPage } from './pages/ConfigPage'
 import { DeviceDetailPage } from './pages/DeviceDetailPage'
@@ -78,7 +79,10 @@ export const routes: RouteObject[] = [
       { path: 'devices', Component: DeviceListPage },
       { path: 'devices/:id', Component: DeviceDetailPage },
       { path: 'config', Component: ConfigPage, loader: configLoader },
-      { path: 'models', Component: ModelsPage, loader: withLogin(api.models) },
+      // Models sa anche se il build è acceso (il pulsante "Build a model").
+      { path: 'models', Component: ModelsPage, loader: withLogin(async () => ({ ...(await api.models()), builds: await api.builds() })) },
+      { path: 'models/build', Component: BuildPage, loader: withLogin(api.builds) },
+      { path: 'models/builds/:id', Component: BuildPage, loader: withLogin(api.builds) },
       { path: 'recordings', Component: RecordingsPage, loader: withLogin(api.recordings) },
       { path: 'changelog', Component: ChangeLogPage, loader: withLogin(() => api.changelog()) },
       { path: '*', Component: NotFound },

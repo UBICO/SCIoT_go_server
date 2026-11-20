@@ -1,4 +1,4 @@
-import type { AdminModel, ChangeLogResponse, ConfigFile, ConfigSaveResponse, ErrorBody, RecordingsResponse, LoginResponse, ServerStatus, SetPolicyRequest, SetPolicyResponse } from './types'
+import type { AdminModel, BuildsResponse, BuildView, ChangeLogResponse, ConfigFile, ConfigSaveResponse, ErrorBody, RecordingsResponse, LoginResponse, ServerStatus, SetPolicyRequest, SetPolicyResponse } from './types'
 
 // Le chiamate alla porta admin. Percorsi relativi all'origine: in
 // produzione la pagina e l'API sono sullo stesso server Go, in sviluppo il
@@ -29,7 +29,10 @@ export function isUnauthorized(err: unknown): boolean {
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method }
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    // multipart: il Content-Type con il boundary lo mette il browser.
+    init.body = body
+  } else if (body !== undefined) {
     init.headers = { 'Content-Type': 'application/json' }
     init.body = JSON.stringify(body)
   }
@@ -76,6 +79,12 @@ export const api = {
   recordings: () => request<RecordingsResponse>('GET', '/api/v1/admin/recordings'),
   models: () => request<{ models: AdminModel[] }>('GET', '/api/v1/admin/models'),
   changelog: (limit = 200) => request<ChangeLogResponse>('GET', `/api/v1/admin/changelog?limit=${limit}`),
+  // Build dei modelli: upload multipart (model_key, savedmodel, cpp_export,
+  // sample…, max_segments, cut…), poi stato e log a pezzi (since).
+  builds: () => request<BuildsResponse>('GET', '/api/v1/admin/models/builds'),
+  startBuild: (form: FormData) => request<BuildView>('POST', '/api/v1/admin/models/builds', form),
+  build: (id: string, since = 0) => request<BuildView>('GET', `/api/v1/admin/models/builds/${encodeURIComponent(id)}?since=${since}`),
+  cancelBuild: (id: string) => request<BuildView>('DELETE', `/api/v1/admin/models/builds/${encodeURIComponent(id)}`),
 }
 
 // recordingURL: il download di una registrazione. Un link normale: il

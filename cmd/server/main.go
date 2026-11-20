@@ -275,6 +275,11 @@ func run() bool {
 		}
 		// Riavvio dalla dashboard; prima di AdminRoutes, come SetConfigFile.
 		srv.SetRestart(func() { restart.Store(true); cancelRun() })
+		// Build dei modelli dalla dashboard, solo con models_dir.
+		if p.building {
+			srv.SetModelBuilds(p.buildDir)
+			log.Printf("model builds into %s", p.buildDir)
+		}
 		// Stessi timeout di httpServer: per ora l'API admin ha solo richieste
 		// brevi (la SSE della PR 2 li rivedrà). AdminRoutes va dopo SetStream/
 		// SetAlgorithm/SetRecorder, come Routes.

@@ -120,6 +120,14 @@ numbers as the source model (differences ~1e-5).
   padding with zero-score entries, and it is not used.
 - Error `max_rel_error` only counts values with `|expected| ≥ 1e-3`.
 
+### From the dashboard
+
+With `"models_dir"` in `config.json`, the dashboard runs the same build on the
+server (Models → Build a model, [DASHBOARD.md](DASHBOARD.md)): upload the two
+exports and the sample images, follow the log, and add the model to
+`config.json` when it succeeds. The options are the same (`--max-segments`,
+`--cut`); `--overwrite` is not offered.
+
 ## 4. config.json
 
 A model needs only its key and directory: the server reads the segment

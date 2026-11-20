@@ -55,18 +55,19 @@ func TestParseConfigMinimal(t *testing.T) {
 	if p.algName != "static" || p.alg != nil {
 		t.Errorf("algoritmo: %q %v, voglio static e nil", p.algName, p.alg)
 	}
-	if p.dataPlane || p.recording {
-		t.Errorf("dataPlane %v recording %v, voglio false", p.dataPlane, p.recording)
+	if p.dataPlane || p.recording || p.building {
+		t.Errorf("dataPlane %v recording %v building %v, voglio false", p.dataPlane, p.recording, p.building)
 	}
 }
 
 func TestParseConfigSections(t *testing.T) {
 	recDir := t.TempDir()
 	p, err := parseConfig(mustParse(t, cfgJSON(t, map[string]any{
-		"offload": map[string]any{"algorithm": "latency"},
-		"worker":  map[string]any{"address": "127.0.0.1:50051", "slots": 2, "threads": 2},
-		"stream":  map[string]any{"max_inflight": 3},
-		"record":  map[string]any{"dir": recDir},
+		"offload":    map[string]any{"algorithm": "latency"},
+		"worker":     map[string]any{"address": "127.0.0.1:50051", "slots": 2, "threads": 2},
+		"stream":     map[string]any{"max_inflight": 3},
+		"record":     map[string]any{"dir": recDir},
+		"models_dir": recDir,
 	})))
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +83,9 @@ func TestParseConfigSections(t *testing.T) {
 	}
 	if !p.recording || p.recordDir != recDir {
 		t.Errorf("record: %v %q", p.recording, p.recordDir)
+	}
+	if !p.building || p.buildDir != recDir {
+		t.Errorf("models_dir: %v %q", p.building, p.buildDir)
 	}
 	// parseConfig non avvia nulla: la cartella della registrazione resta vuota.
 	if entries, _ := os.ReadDir(recDir); len(entries) != 0 {
@@ -105,6 +109,7 @@ func TestParseConfigErrorPrefixes(t *testing.T) {
 		{"worker", map[string]any{"worker": map[string]any{"slots": 1, "threads": 1}}, "worker config: "},
 		{"stream", map[string]any{"stream": map[string]any{"max_inflight": 0}}, "stream config: "},
 		{"record", map[string]any{"record": map[string]any{"dir": ""}}, "record config: "},
+		{"models_dir", map[string]any{"models_dir": "/nonexistent/sciot-models"}, "models config: "},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
