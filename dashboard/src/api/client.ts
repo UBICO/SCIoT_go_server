@@ -69,6 +69,9 @@ export const api = {
   validateConfig: (content: string) => request<{ valid: boolean }>('POST', '/api/v1/admin/config/validate', { content }),
   saveConfig: (content: string, baseHash: string) =>
     request<ConfigSaveResponse>('PUT', '/api/v1/admin/config', { content, base_hash: baseHash }),
+  // restart: il server controlla config.json, risponde 202 e si riavvia
+  // (stesso processo, stessi argomenti). 400 invalid_config: non riparte.
+  restart: () => request<{ restarting: boolean }>('POST', '/api/v1/admin/restart'),
 }
 
 function policyPath(deviceID: string): string {

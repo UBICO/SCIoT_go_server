@@ -12,8 +12,8 @@ nor the offloading algorithm. Without `-admin-addr` there is no dashboard and
 the server runs as before.
 
 Status: devices list, device page with live charts, pin and unpin,
-`config.json` editing. Next, in this order: restart from the dashboard,
-recordings and models, model build jobs.
+`config.json` editing and restart. Next, in this order: recordings and
+models, model build jobs.
 
 ## Using it
 
@@ -85,7 +85,7 @@ The **Config** page edits the server's `config.json` (the file given with
   checks the text again, keeps a backup of the current file next to it
   (`config.json.<YYYYMMDD-HHMMSS>.bak`), writes the new one atomically and
   adds a line to the change log with your name. Then restart the server to
-  apply it.
+  apply it (below).
 - `worker.command` cannot be changed from here: it is a command the server
   runs. Edit it by hand on the server.
 - If the file changed after you opened the page (edited by hand, or saved
@@ -93,6 +93,15 @@ The **Config** page edits the server's `config.json` (the file given with
   text stays in the editor, copy your edits, reload, apply them again.
 - A yellow banner says when the file differs from the configuration the
   server started with.
+
+**Restart server** (in the "Saved" notice and in the yellow banner) applies
+the file. After a confirmation that lists what a restart means (devices in
+`LOCAL` for a few seconds, then registered again; pins lost; a new recording
+file; a new login), the server checks the file again and refuses to restart
+if it would not start. Otherwise it stops in order and starts again in the
+same process; the page waits for the new server (a different start time, or
+the 401 of the lost session) and opens the login. After 60 s without an
+answer it says so: check the server's log on the machine.
 
 The header shows whether the live stream is connected (`live`,
 `connecting`, `disconnected`) and the server's state (devices, CPU, uptime).
@@ -195,7 +204,8 @@ dashboard/
     api/types.ts        JSON shapes of the admin API (mirror of the Go structs)
     api/client.ts       fetch wrappers, ApiError
     live/               the events stream: LiveProvider, reducer, history
-    components/         TimeChart (uPlot), PolicyBadges, PolicyControl (pin), ConfigDiff, chart data
+    components/         TimeChart (uPlot), PolicyBadges, PolicyControl (pin), ConfigDiff,
+                        RestartButton, chart data
     pages/              Login, Layout (header, menu), device list, device page, config
     format.ts, hooks.ts number/time formatting, useNow
     test/               vitest setup, fixtures, fake EventSource

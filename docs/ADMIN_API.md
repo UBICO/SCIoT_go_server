@@ -5,8 +5,8 @@ The API of the admin port: the contract between the server and the dashboard
 protocol ([PROTOCOL.md](PROTOCOL.md)): devices never use it.
 
 The admin port only reads what the server already computes and calls the
-existing admin actions (pin, unpin) and edits `config.json` for the next start,
-writing who did them to a change log. It
+existing admin actions (pin, unpin), edits `config.json` and restarts the
+server to apply it, writing who did them to a change log. It
 adds no metric and changes neither the protocol nor the offloading algorithm. Without `-admin-addr` it does not
 exist and the server runs as before.
 
@@ -263,14 +263,38 @@ file, then a line in the change log. `200`:
   half of it. It keeps its permissions; its owner becomes the server's user.
 - `500` if the backup or the write fails: the file is left as it was.
 
+### `POST /api/v1/admin/restart`
+
+Restarts the server to apply `config.json`, without a body. First the file is
+checked with the same checks as the start: a file that would not start the
+server (edited by hand) gets `400 invalid_config` and the server keeps
+running, since it would otherwise stop and not come back. Then a `restart`
+line goes to the change log, the answer is `202 {"restarting": true}`, and the
+server stops as on `SIGTERM` (streams closed with 1001, both ports, decisions,
+recording, worker) and starts again in the same process (`syscall.Exec`: same
+PID, same flags and environment, so the same `SCIOT_ADMIN_TOKEN`). Linux and
+macOS only.
+
+What a restart means:
+
+- devices fall back to `LOCAL` while the server is down, get
+  `session_expired` and register again (the Python client does both by
+  itself); pins are lost, since a new registration starts unpinned;
+- a new recording file starts (`record.dir`);
+- dashboard sessions are in memory: log in again.
+
+`404` without config editing (no check possible); `500` if
+`config.json` cannot be read (no restart).
+
 ## Change log
 
-Who changed what: every successful admin action (pin, unpin, config save) is
-written to the server log with who did it:
+Who changed what: every successful admin action (pin, unpin, config save,
+restart) is written to the server log with who did it:
 
 ```text
 admin pin: device=pi_a session=FK2F… policy=SPLIT v4 by="francesco"
 admin config: path=/srv/sciot/config.json backup=config.json.20261119-150405.bak by="francesco"
+admin restart: config=/srv/sciot/config.json hash=bab942fa… by="francesco"
 ```
 
 With a `record` section in `config.json`, the same action is also a line of
@@ -289,12 +313,13 @@ every start (appended), readable only by the server's user (`0600`).
 |---|---|
 | `ts` | server time, UTC |
 | `who` | the `name` of the login; `token` for a request with `Authorization: Bearer`; `anonymous` on an admin port without token and without login; `device port` for the unauthenticated `-admin` endpoints on the device port |
-| `action` | `pin`, `unpin`, `config` |
+| `action` | `pin`, `unpin`, `config`, `restart` |
 | `device_id`, `session_id`, `policy`, `pinned` | pin and unpin: the device, its policy and pin after the action (after an unpin the policy is unchanged) |
-| `config` | config save: the file written (`path`), the backup of the previous content (`backup`, in the same folder), sha256 of the new content (`hash`) |
+| `config` | config save: the file written (`path`), the backup of the previous content (`backup`, in the same folder), sha256 of the new content (`hash`); restart: the file the server starts again with and its sha256 (no `backup`) |
 
-Refused actions (invalid policy, unknown device, invalid config, conflict) and
-a config save that changes nothing are not logged. The change
+Refused actions (invalid policy, unknown device, invalid config, conflict, a
+restart refused because of the config) and a config save that changes nothing
+are not logged. The change
 log is not part of the recording ([RECORDING.md](RECORDING.md)): it says who
 acted, not what happened to the frames.
 
