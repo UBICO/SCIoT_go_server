@@ -222,3 +222,29 @@ func TestLoadRemovedModelKeysExplainWhy(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildDir(t *testing.T) {
+	if _, ok, err := (File{}).BuildDir(); ok || err != nil {
+		t.Errorf("senza models_dir: ok %v err %v, voglio spento", ok, err)
+	}
+	dir := t.TempDir()
+	if got, ok, err := (File{ModelsDir: dir}).BuildDir(); !ok || err != nil || got != dir {
+		t.Errorf("cartella esistente: %q %v %v", got, ok, err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := (File{ModelsDir: "~/"}).BuildDir(); got != home {
+		t.Errorf("~/ non espanso: %q", got)
+	}
+	file := filepath.Join(dir, "f")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{filepath.Join(dir, "missing"), file} {
+		if _, _, err := (File{ModelsDir: bad}).BuildDir(); err == nil || !strings.HasPrefix(err.Error(), "models_dir: ") {
+			t.Errorf("%s: err %v", bad, err)
+		}
+	}
+}

@@ -33,6 +33,10 @@ const (
 	auditUnpin   = "unpin"
 	auditConfig  = "config"
 	auditRestart = "restart"
+	// Build dei modelli: l'avvio e l'annullamento, con chi (il risultato
+	// non ha un "chi": è nel log del server e nello stato del job).
+	auditBuildStart  = "model_build"
+	auditBuildCancel = "model_build_cancel"
 )
 
 // Chi, quando non c'è il nome di un login.
@@ -69,6 +73,14 @@ type auditEntry struct {
 	Policy    *api.Policy       `json:"policy,omitempty"` // la policy dopo l'azione
 	Pinned    *bool             `json:"pinned,omitempty"` // dopo l'azione
 	Config    *auditConfigEntry `json:"config,omitempty"`
+	Build     *auditBuildEntry  `json:"build,omitempty"`
+}
+
+// auditBuildEntry descrive un build di un modello.
+type auditBuildEntry struct {
+	ID       string `json:"id"`
+	ModelKey string `json:"model_key"`
+	Output   string `json:"output"`
 }
 
 // auditConfigEntry descrive config.json in un salvataggio o in un riavvio.
@@ -151,6 +163,14 @@ func (s *Server) auditConfigSave(r *http.Request, c auditConfigEntry) {
 func (s *Server) auditRestartRequest(r *http.Request, c auditConfigEntry) {
 	e := auditEntry{TS: s.now().UTC(), Who: actorOf(r), Action: auditRestart, Config: &c}
 	log.Printf("admin restart: config=%s hash=%s by=%q", c.Path, c.Hash, e.Who)
+	s.writeAudit(e)
+}
+
+// auditBuild registra l'avvio o l'annullamento di un build.
+func (s *Server) auditBuild(r *http.Request, action string, job *buildJob) {
+	e := auditEntry{TS: s.now().UTC(), Who: actorOf(r), Action: action,
+		Build: &auditBuildEntry{ID: job.ID, ModelKey: job.ModelKey, Output: job.Output}}
+	log.Printf("admin %s: id=%s output=%s by=%q", action, job.ID, job.Output, e.Who)
 	s.writeAudit(e)
 }
 

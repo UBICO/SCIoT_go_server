@@ -223,6 +223,30 @@ export interface ChangeLogResponse {
   entries: ChangeLogEntry[] // dalla più recente
 }
 
+// Build di un modello (sciot-model build) dalla dashboard.
+export type BuildState = 'running' | 'succeeded' | 'failed' | 'cancelled'
+
+export interface BuildView {
+  id: string
+  model_key: string
+  output: string // models_dir/<key>: il tflite_dir per config.json
+  who: string
+  state: BuildState
+  started_at: string
+  finished_at?: string
+  exit_code?: number
+  model_hash?: string
+  log_lines: number
+  log?: string[] // solo GET di un build: le righe da since
+  next?: number // il since della richiesta successiva
+}
+
+export interface BuildsResponse {
+  enabled: boolean // false: nessun models_dir in config.json
+  models_dir?: string
+  builds: BuildView[] // dal più recente
+}
+
 export interface LoginResponse {
   name: string
   expires_at: string

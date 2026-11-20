@@ -1,11 +1,12 @@
 import { Alert, Button, Group, JsonInput, Modal, Stack, Text, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useState } from 'react'
-import { useLoaderData, useNavigate, useRevalidator } from 'react-router'
+import { useLoaderData, useLocation, useNavigate, useRevalidator } from 'react-router'
 import { api, ApiError, isUnauthorized } from '../api/client'
 import type { ConfigFile, ConfigSaveResponse } from '../api/types'
 import { ConfigDiff } from '../components/ConfigDiff'
 import { RestartButton } from '../components/RestartButton'
+import { type AddModel, withModel } from '../configEdit'
 
 // ConfigPage: config.json del server, da modificare (docs/DASHBOARD.md).
 //
@@ -19,6 +20,8 @@ import { RestartButton } from '../components/RestartButton'
 export function ConfigPage() {
   const file = useLoaderData() as ConfigFile | null
   const revalidator = useRevalidator()
+  const navigate = useNavigate()
+  const addModel = (useLocation().state as { addModel?: AddModel } | null)?.addModel
   // saved sta qui e non nell'editor: l'editor si ricrea a ogni versione nuova
   // del file (key), l'avviso deve restare.
   const [saved, setSaved] = useState<ConfigSaveResponse | null>(null)
@@ -51,12 +54,20 @@ export function ConfigPage() {
           </Stack>
         </Alert>
       )}
+      {addModel !== undefined && <AddModelNotice file={file} model={addModel} />}
       {/* key: una versione nuova del file (salvata, o ricaricata) riparte da zero. */}
       <ConfigEditor
         key={file.hash}
         file={file}
+        initial={addModel === undefined ? undefined : textOrUndefined(withModel(file.content, addModel))}
         onSaved={(res) => {
           setSaved(res)
+          // Via lo stato della navigazione: il modello è salvato, ricaricando
+          // non va aggiunto di nuovo. navigate ricarica anche il file.
+          if (addModel !== undefined) {
+            navigate('/config', { replace: true, state: null })
+            return
+          }
           revalidator.revalidate()
         }}
         onReload={() => {
@@ -68,11 +79,31 @@ export function ConfigPage() {
   )
 }
 
+function textOrUndefined(r: { text: string } | { reason: string }): string | undefined {
+  return 'text' in r ? r.text : undefined
+}
+
+function AddModelNotice({ file, model }: { file: ConfigFile; model: AddModel }) {
+  const r = withModel(file.content, model)
+  if ('text' in r) {
+    return (
+      <Alert color="blue" variant="light" title={`Add ${model.model_key}`}>
+        The model is added to "models" below (the file is reformatted with 2-space indentation). Review the changes, Validate, Save, then restart the server.
+      </Alert>
+    )
+  }
+  return (
+    <Alert color="yellow" variant="light" title={`Add ${model.model_key} by hand`}>
+      {r.reason}. Add to "models": {JSON.stringify(model)}
+    </Alert>
+  )
+}
+
 type Check = { state: 'valid' } | { state: 'invalid'; message: string } | null
 
-function ConfigEditor({ file, onSaved, onReload }: { file: ConfigFile; onSaved: (r: ConfigSaveResponse) => void; onReload: () => void }) {
+function ConfigEditor({ file, initial, onSaved, onReload }: { file: ConfigFile; initial?: string; onSaved: (r: ConfigSaveResponse) => void; onReload: () => void }) {
   const navigate = useNavigate()
-  const [text, setText] = useState(file.content)
+  const [text, setText] = useState(initial ?? file.content)
   const [check, setCheck] = useState<Check>(null) // l'esito dell'ultimo Validate, per il testo di allora
   const [conflict, setConflict] = useState(false) // 409: il file è cambiato sul server
   const [confirm, setConfirm] = useState(false)

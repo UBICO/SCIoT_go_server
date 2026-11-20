@@ -12,8 +12,8 @@ nor the offloading algorithm. Without `-admin-addr` there is no dashboard and
 the server runs as before.
 
 Status: devices list, device page with live charts, pin and unpin,
-models, recordings, change log, `config.json` editing and restart. Next:
-model build jobs.
+models and model builds, recordings, change log, `config.json` editing and
+restart.
 
 ## Using it
 
@@ -51,7 +51,8 @@ tunnel: `ssh -L 8081:127.0.0.1:8081 <server>`, then `http://127.0.0.1:8081`
     the policy are not listed: `latency` decides at every heartbeat).
 
 - **Models**: the registry's models (key, hash, segments and valid splits,
-  input, decoder, labels) and how many devices use each.
+  input, decoder, labels) and how many devices use each. **Build a model**
+  (with `models_dir` in `config.json`): below.
 - **Recordings**: the files of `record.dir`, newest first, with size and last
   write; a click downloads one. The file of this start is marked `recording`:
   its download stops at the last complete line, so `sciot-replay` reads it.
@@ -59,6 +60,27 @@ tunnel: `ssh -L 8081:127.0.0.1:8081 <server>`, then `http://127.0.0.1:8081`
 - **Change log**: the last 200 admin actions (pin, unpin, config, restart)
   with time and who; needs a `record` section in `config.json`.
 - **Config**: below.
+
+### Build a model
+
+With `"models_dir": "models"` in `config.json` (an existing folder), Models →
+**Build a model** runs `sciot-model build` on the server ([MODELS.md](MODELS.md)):
+
+1. the model key (also the folder name), the two Edge Impulse exports
+   (SavedModel `.zip`, C++ library `.zip`, same model version), real images
+   for the verification, and optionally `max segments` and `cuts`;
+2. **Upload and build**: the page follows the log while the build runs, and
+   can cancel it;
+3. when it succeeds (`model_hash` in the log), **Add to config.json** opens
+   the Config page with the model added to `models` (the file is reformatted
+   with 2-space indentation: the diff shows everything that changes); Save,
+   then restart the server.
+
+One build at a time; the build loads the CPU for minutes, so do not build
+during a measurement run. An existing model folder is refused (no overwrite
+from the dashboard); a build cancelled while writing its folder may leave it
+half written: delete it by hand before building the same key again. The list
+of builds lives in the server's memory.
 
 ### Pin and unpin
 
@@ -215,9 +237,10 @@ dashboard/
     api/client.ts       fetch wrappers, ApiError
     live/               the events stream: LiveProvider, reducer, history
     components/         TimeChart (uPlot), PolicyBadges, PolicyControl (pin), ConfigDiff,
-                        RestartButton, chart data
+                        RestartButton, BuildJob, chart data
     pages/              Login, Layout (header, menu), device list, device page, models,
-                        recordings, change log, config
+                        build, recordings, change log, config
+    configEdit.ts       edits to config.json made for the user (add a built model)
     format.ts, hooks.ts number/time formatting, useNow
     test/               vitest setup, fixtures, fake EventSource
 internal/dashboard/

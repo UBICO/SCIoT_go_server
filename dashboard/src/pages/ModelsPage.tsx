@@ -1,16 +1,24 @@
-import { Badge, Code, Group, Paper, SimpleGrid, Stack, Text, Title } from '@mantine/core'
-import { useLoaderData } from 'react-router'
-import type { AdminModel } from '../api/types'
+import { Badge, Button, Code, Group, Paper, SimpleGrid, Stack, Text, Title } from '@mantine/core'
+import { Link, useLoaderData } from 'react-router'
+import type { AdminModel, BuildsResponse } from '../api/types'
 
 // ModelsPage: i modelli del registry (MODELS.md), con quanti device li
 // usano. I dati arrivano da modelsLoader (router.tsx).
 export function ModelsPage() {
-  const { models } = useLoaderData() as { models: AdminModel[] }
+  const { models, builds } = useLoaderData() as { models: AdminModel[]; builds?: BuildsResponse }
   return (
     <>
-      <Title order={3} mb="md">
-        Models
-      </Title>
+      <Group justify="space-between" mb="md">
+        <Title order={3}>Models</Title>
+        {builds?.enabled && (
+          <Button component={Link} to="/models/build" size="xs">
+            Build a model
+          </Button>
+        )}
+      </Group>
+      <Text size="sm" c="dimmed" mb="md">
+        The models the server loaded at start. A new model is used after it is added to config.json and the server restarts.
+      </Text>
       {models.length === 0 ? (
         <Text c="dimmed">No model in the registry.</Text>
       ) : (

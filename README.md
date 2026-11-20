@@ -49,7 +49,7 @@ The reference device client is in `client/`, in Python
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | the v1 protocol: control plane and data plane, the contract for every client |
 | [docs/MODELS.md](docs/MODELS.md) | from Edge Impulse to a model directory (`sciot-model build`), manifest, model hash, decoders and golden files |
 | [docs/RECORDING.md](docs/RECORDING.md) | the JSON Lines recording (`sciot-record.v1`) and how to read it |
-| [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, live events (SSE), pin/unpin, models, recordings (list, download), `config.json` editing, restart, change log; the contract for the dashboard |
+| [docs/ADMIN_API.md](docs/ADMIN_API.md) | the authenticated admin port (`-admin-addr`): login, devices, status, live events (SSE), pin/unpin, models and model builds, recordings (list, download), `config.json` editing, restart, change log; the contract for the dashboard |
 | [docs/DASHBOARD.md](docs/DASHBOARD.md) | the web dashboard on the admin port: using it, building it into the binary, development guide |
 | [docs/OFFLOAD.md](docs/OFFLOAD.md) | the offloading algorithm: constraints, objective, hysteresis, admin pin, configuration |
 | [docs/COSTMODEL.md](docs/COSTMODEL.md) | predicted cost of a frame per split point: the simulation of device and queue, and its verification (`sciot-replay algo`, `sciot-replay queue`, `sciot-replay check`) |
@@ -161,6 +161,7 @@ paths):
 | `dispatch.reprofile_age_ms` | 30000 | profile a model again when the estimate of one of its segments is older than this (segments no frame runs), 100–3600000; 0 = never ([docs/OFFLOAD.md](docs/OFFLOAD.md#reactivity)) |
 | `offload.*` | `static` | the offloading algorithm and its parameters ([docs/OFFLOAD.md](docs/OFFLOAD.md#configuration)) |
 | `server.device_segment_tau_ms` | 10000 | time constant of the estimates of the device's time per segment, 100–3600000 |
+| `models_dir` | absent | an existing folder where the dashboard builds models with `sciot-model build` ([docs/DASHBOARD.md](docs/DASHBOARD.md)); absent = no builds from the dashboard |
 | `record.dir` | absent | write every event (sessions, heartbeats, policy changes, SPLIT frames) to a JSON Lines file in this directory, one file per start ([docs/RECORDING.md](docs/RECORDING.md)); the change log of the admin actions goes to `sciot-audit.jsonl` in the same directory ([docs/ADMIN_API.md](docs/ADMIN_API.md#change-log)) |
 | `models[].tflite_dir` | — | model directory built by `sciot-model build` ([docs/MODELS.md](docs/MODELS.md)): segments and `manifest.json` |
 | `models[].postprocess` | — | optional override of `score_threshold`, `iou_threshold`, `max_detections` |
