@@ -220,6 +220,7 @@ func run() bool {
 			streamHandler.SetRecorder(rec)
 		}
 		log.Printf("recording to %s", rec.Stats().File)
+		go runtimeLoop(ctx, rec, devices, record.RuntimeInterval)
 
 		// Il registro delle modifiche sta accanto alle registrazioni, un
 		// file solo per tutti gli avvii (internal/server/audit.go).
