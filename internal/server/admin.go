@@ -43,6 +43,7 @@ func (s *Server) AdminRoutes(token string) http.Handler {
 	protected.HandleFunc("GET /api/v1/admin/config", s.handleAdminConfig)
 	protected.HandleFunc("POST /api/v1/admin/config/validate", s.handleAdminConfigValidate)
 	protected.HandleFunc("PUT /api/v1/admin/config", s.handleAdminConfigSave)
+	protected.HandleFunc("POST /api/v1/admin/restart", s.handleAdminRestart)
 
 	mux := http.NewServeMux()
 	// Il login è l'unica route admin senza credenziali. Il mux sceglie il

@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,6 +29,28 @@ import (
 )
 
 func main() {
+	if !run() {
+		return // Ctrl+C o SIGTERM: il server esce, come sempre
+	}
+	// Riavvio chiesto dalla dashboard (POST /api/v1/admin/restart). Qui i
+	// defer di run sono già stati eseguiti: worker fermo, registrazione e
+	// registro chiusi, porte libere.
+	exe, err := os.Executable()
+	if err != nil {
+		log.Fatalf("restart: %v", err)
+	}
+	log.Printf("restarting: %s", strings.Join(os.Args, " "))
+	// Exec sostituisce il programma nello stesso processo: stesso PID, stessi
+	// argomenti e ambiente (-config, SCIOT_ADMIN_TOKEN). Se ritorna, è fallito.
+	err = syscall.Exec(exe, os.Args, os.Environ())
+	log.Fatalf("restart: %v", err)
+}
+
+// run è il server: avvia tutto, aspetta un segnale o un riavvio, spegne
+// tutto in ordine. Restituisce true se lo spegnimento era per un riavvio:
+// main allora rilancia il programma, dopo che tutti i defer di run sono
+// stati eseguiti (per questo il corpo non sta più in main).
+func run() bool {
 	// --- 1. Argomenti da riga di comando ------------------------------------
 
 	// flag.String registra un argomento e restituisce un *string: il valore
@@ -106,6 +130,12 @@ func main() {
 	// Il context viene cancellato al primo Ctrl+C o SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Il secondo motivo per spegnersi, il riavvio: cancellare ctx è come un
+	// Ctrl+C, lo stesso spegnimento. restart lo scrive l'handler admin, lo
+	// legge run alla fine.
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	var restart atomic.Bool
 
 	go monitor.Run(ctx)
 
@@ -242,6 +272,8 @@ func main() {
 		if err := srv.SetConfigFile(*configPath, checkConfig); err != nil {
 			log.Fatalf("admin config: %v", err)
 		}
+		// Riavvio dalla dashboard; prima di AdminRoutes, come SetConfigFile.
+		srv.SetRestart(func() { restart.Store(true); cancelRun() })
 		// Stessi timeout di httpServer: per ora l'API admin ha solo richieste
 		// brevi (la SSE della PR 2 li rivedrà). AdminRoutes va dopo SetStream/
 		// SetAlgorithm/SetRecorder, come Routes.
@@ -328,4 +360,5 @@ func main() {
 		stats := rec.Stats() // dopo Close: conta anche gli eventi che erano in coda
 		log.Printf("recorded %d lines to %s (%d events dropped)", stats.Written, stats.File, stats.Dropped)
 	}
+	return restart.Load()
 }

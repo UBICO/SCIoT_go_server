@@ -67,6 +67,9 @@ uv run --project client sciot-client --server http://127.0.0.1:8080 --model-dir 
 - Every admin action that changes something writes to the change log
   (`s.audit`, `s.auditConfigSave`; `internal/server/audit.go`,
   `docs/ADMIN_API.md#change-log`).
+- `cmd/server/main.go`: the server is `run() (restart bool)`; shutdown work
+  goes in `run`'s defers, so a restart (`syscall.Exec` in `main`) happens
+  only after it.
 - Config checks live in one place, `parseConfig` (`cmd/server/config.go`):
   the start and the dashboard's validate/save use it. A new config key gets
   its check there, never only in `main`.

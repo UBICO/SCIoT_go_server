@@ -5,6 +5,7 @@ import { useLoaderData, useNavigate, useRevalidator } from 'react-router'
 import { api, ApiError, isUnauthorized } from '../api/client'
 import type { ConfigFile, ConfigSaveResponse } from '../api/types'
 import { ConfigDiff } from '../components/ConfigDiff'
+import { RestartButton } from '../components/RestartButton'
 
 // ConfigPage: config.json del server, da modificare (docs/DASHBOARD.md).
 //
@@ -33,13 +34,21 @@ export function ConfigPage() {
       </Text>
       {saved !== null && saved.changed && (
         <Alert color="green" variant="light" title="Saved">
-          The server still runs with the configuration it started with: restart it to apply the new one.
-          {saved.backup !== undefined && ` The previous file is in ${saved.backup}, next to it.`}
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm">
+              The server still runs with the configuration it started with: restart it to apply the new one.
+              {saved.backup !== undefined && ` The previous file is in ${saved.backup}, next to it.`}
+            </Text>
+            <RestartButton size="xs" />
+          </Stack>
         </Alert>
       )}
       {saved === null && file.modified_since_start && (
         <Alert color="yellow" variant="light">
-          The file differs from the configuration the server started with: restart the server to apply it.
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm">The file differs from the configuration the server started with: restart the server to apply it.</Text>
+            <RestartButton size="xs" />
+          </Stack>
         </Alert>
       )}
       {/* key: una versione nuova del file (salvata, o ricaricata) riparte da zero. */}
