@@ -298,6 +298,23 @@ window full (`rejected_per_s`, `window_full_per_s`, omitted when 0).
 Infinite or undefined values (no frame served) are `null`, and `missing`
 lists the inputs a prediction lacked.
 
+### `runtime` — the server's own resources, every 10 s
+
+One at start (before any load) and then every 10 s, to see leaks over long
+runs and the cost of many devices:
+
+| Key | Meaning |
+|---|---|
+| `goroutines` | goroutines of the server process |
+| `heap_bytes` | bytes of objects on the Go heap, live and not yet collected |
+| `go_memory_bytes` | all the memory the Go runtime has mapped from the system (heap, stacks, runtime metadata, released pages included); not the RSS |
+| `open_files` | file descriptors open in the process (files, sockets, pipes), from `/dev/fd`; `null` if unreadable |
+| `devices` | devices in the device store: a device is never removed, a new registration of the same `device_id` replaces it |
+
+The RSS (resident memory) is not here: the Go standard library does not
+read it portably. Read it from outside (`ps -o rss= -p <pid>`), with the
+worker's.
+
 ### `end` — the last line, at shutdown
 
 `written` (lines before this one), `dropped` (events discarded, see below).

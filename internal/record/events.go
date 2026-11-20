@@ -262,6 +262,18 @@ type Admission struct {
 	Known           bool    `json:"known"`      // S da misure (false = stima prudente)
 }
 
+// Runtime: le risorse del processo server, ogni RuntimeInterval (fase di
+// robustezza: perdite nei run lunghi, costo con molti device). L'RSS non c'è:
+// la libreria standard non lo dà in modo portabile, si legge da fuori (ps).
+type Runtime struct {
+	Header
+	Goroutines    int    `json:"goroutines"`
+	HeapBytes     uint64 `json:"heap_bytes"`      // oggetti vivi sulla heap (e quelli non ancora raccolti)
+	GoMemoryBytes uint64 `json:"go_memory_bytes"` // tutta la memoria mappata dal runtime Go
+	OpenFiles     *int   `json:"open_files"`      // descrittori aperti; null se non leggibili
+	Devices       int    `json:"devices"`         // device nello store (mai rimossi, oggi)
+}
+
 // End è l'ultima riga, scritta da Close.
 type End struct {
 	Header
@@ -277,4 +289,5 @@ func (*Frame) kind() string     { return "frame" }
 func (*Probe) kind() string     { return "probe" }
 func (*Decision) kind() string  { return "decision" }
 func (*Profile) kind() string   { return "profile" }
+func (*Runtime) kind() string   { return "runtime" }
 func (*End) kind() string       { return "end" }
