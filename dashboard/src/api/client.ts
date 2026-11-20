@@ -1,4 +1,4 @@
-import type { ConfigFile, ConfigSaveResponse, ErrorBody, LoginResponse, ServerStatus, SetPolicyRequest, SetPolicyResponse } from './types'
+import type { AdminModel, ChangeLogResponse, ConfigFile, ConfigSaveResponse, ErrorBody, RecordingsResponse, LoginResponse, ServerStatus, SetPolicyRequest, SetPolicyResponse } from './types'
 
 // Le chiamate alla porta admin. Percorsi relativi all'origine: in
 // produzione la pagina e l'API sono sullo stesso server Go, in sviluppo il
@@ -72,6 +72,16 @@ export const api = {
   // restart: il server controlla config.json, risponde 202 e si riavvia
   // (stesso processo, stessi argomenti). 400 invalid_config: non riparte.
   restart: () => request<{ restarting: boolean }>('POST', '/api/v1/admin/restart'),
+  // Sola lettura: registrazioni, modelli, registro delle modifiche.
+  recordings: () => request<RecordingsResponse>('GET', '/api/v1/admin/recordings'),
+  models: () => request<{ models: AdminModel[] }>('GET', '/api/v1/admin/models'),
+  changelog: (limit = 200) => request<ChangeLogResponse>('GET', `/api/v1/admin/changelog?limit=${limit}`),
+}
+
+// recordingURL: il download di una registrazione. Un link normale: il
+// browser manda il cookie da sé e salva il file (Content-Disposition).
+export function recordingURL(name: string): string {
+  return `/api/v1/admin/recordings/${encodeURIComponent(name)}`
 }
 
 function policyPath(deviceID: string): string {

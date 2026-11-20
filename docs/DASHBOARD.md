@@ -12,8 +12,8 @@ nor the offloading algorithm. Without `-admin-addr` there is no dashboard and
 the server runs as before.
 
 Status: devices list, device page with live charts, pin and unpin,
-`config.json` editing and restart. Next, in this order: recordings and
-models, model build jobs.
+models, recordings, change log, `config.json` editing and restart. Next:
+model build jobs.
 
 ## Using it
 
@@ -49,6 +49,16 @@ tunnel: `ssh -L 8081:127.0.0.1:8081 <server>`, then `http://127.0.0.1:8081`
     is not in the telemetry); the chosen row is bold;
   - the policy changes seen since the dashboard was opened (decisions that keep
     the policy are not listed: `latency` decides at every heartbeat).
+
+- **Models**: the registry's models (key, hash, segments and valid splits,
+  input, decoder, labels) and how many devices use each.
+- **Recordings**: the files of `record.dir`, newest first, with size and last
+  write; a click downloads one. The file of this start is marked `recording`:
+  its download stops at the last complete line, so `sciot-replay` reads it.
+  Nothing is deleted from here.
+- **Change log**: the last 200 admin actions (pin, unpin, config, restart)
+  with time and who; needs a `record` section in `config.json`.
+- **Config**: below.
 
 ### Pin and unpin
 
@@ -206,7 +216,8 @@ dashboard/
     live/               the events stream: LiveProvider, reducer, history
     components/         TimeChart (uPlot), PolicyBadges, PolicyControl (pin), ConfigDiff,
                         RestartButton, chart data
-    pages/              Login, Layout (header, menu), device list, device page, config
+    pages/              Login, Layout (header, menu), device list, device page, models,
+                        recordings, change log, config
     format.ts, hooks.ts number/time formatting, useNow
     test/               vitest setup, fixtures, fake EventSource
 internal/dashboard/

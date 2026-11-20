@@ -60,6 +60,26 @@ describe('routes', () => {
     expect(f).toHaveBeenCalledWith('/api/v1/admin/logout', { method: 'POST' })
   })
 
+  it('opens a read-only page, and the login when its loader gets 401', async () => {
+    let models = 200
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (url: string) => {
+        if (url === '/api/v1/admin/models') {
+          return models === 200 ? jsonResponse(200, { models: [] }) : unauthorized()
+        }
+        return jsonResponse(200, status())
+      }),
+    )
+    renderRoutes(routes, '/models')
+    expect(await screen.findByText('No model in the registry.')).toBeInTheDocument()
+
+    models = 401
+    const { router } = renderRoutes(routes, '/models')
+    expect(await screen.findByRole('button', { name: 'Log in' })).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/login')
+  })
+
   it('explains when the server is down', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
     renderRoutes(routes, '/devices')

@@ -215,6 +215,7 @@ func run() bool {
 			log.Fatalf("record: %v", err)
 		}
 		srv.SetRecorder(rec)
+		srv.SetRecordDir(recordDir) // per l'elenco della dashboard e il registro
 		if streamHandler != nil {
 			streamHandler.SetRecorder(rec)
 		}
