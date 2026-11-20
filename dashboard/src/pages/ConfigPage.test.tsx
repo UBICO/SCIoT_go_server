@@ -1,5 +1,5 @@
 import { notifications } from '@mantine/notifications'
-import { act, fireEvent, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConfigFile } from '../api/types'
@@ -144,8 +144,9 @@ describe('ConfigPage', () => {
     expect(screen.getByText(/The previous file is in config\.json\.20261119-150405\.bak/)).toBeInTheDocument()
     expect(screen.getByText('Backup: config.json.20261119-150405.bak')).toBeInTheDocument() // la notifica
     // Ricaricato: il file salvato è la nuova base, niente più da salvare.
+    // L'avviso compare prima che la ricarica (asincrona) finisca: si aspetta.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled())
     expect(screen.getByLabelText('config.json')).toHaveValue(V2)
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
   })
 
   it('shows a refused save under the editor', async () => {
