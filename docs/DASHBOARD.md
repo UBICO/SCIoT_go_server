@@ -15,6 +15,32 @@ Status: devices list, device page with live charts, pin and unpin,
 models and model builds, recordings, change log, `config.json` editing and
 restart.
 
+## Quick start
+
+From a clone, with Go 1.27, Node 26 and [uv](https://docs.astral.sh/uv/)
+(for the worker):
+
+```bash
+cd dashboard && npm ci && npm run build && cd ..
+go build -o sciot-server ./cmd/server
+cp config.example.json config.json
+export SCIOT_ADMIN_TOKEN="$(openssl rand -base64 32)" && echo "$SCIOT_ADMIN_TOKEN"
+./sciot-server -config config.json -addr :8080 -admin-addr 127.0.0.1:8081
+```
+
+Open `http://127.0.0.1:8081`, log in with your name and the token printed
+above. `config.example.json` loads the two models in `models/` and starts the
+worker. Some pages need a section in `config.json`:
+
+| Page or feature | Needs |
+|---|---|
+| Recordings, Change log | `"record": {"dir": "<folder>"}` ([RECORDING.md](RECORDING.md)) |
+| Build a model | `"models_dir": "<existing folder>"`, better outside the repository |
+| Bandwidth chart, window in Pin | the `worker` section (data plane) |
+| Decisions on the device page | `"offload": {"algorithm": "latency"}` ([OFFLOAD.md](OFFLOAD.md)) |
+
+You can add them from the Config page itself, then restart from there.
+
 ## Using it
 
 ```bash
@@ -30,6 +56,51 @@ login by itself.
 On a remote server keep `-admin-addr 127.0.0.1:8081` and open an SSH
 tunnel: `ssh -L 8081:127.0.0.1:8081 <server>`, then `http://127.0.0.1:8081`
 ([ADMIN_API.md](ADMIN_API.md#security-notes)).
+
+### As a service (systemd)
+
+An example for a Linux server; adapt user, paths and `PATH` (uv is often in
+`~/.local/bin`, which systemd does not see). The token lives in a file only
+root can read, never in the unit:
+
+```bash
+sudo mkdir -p /etc/sciot
+printf 'SCIOT_ADMIN_TOKEN=%s\n' "$(openssl rand -base64 32)" | sudo tee /etc/sciot/admin.env >/dev/null
+sudo chmod 600 /etc/sciot/admin.env
+sudo cat /etc/sciot/admin.env   # the token for the login
+```
+
+```ini
+# /etc/systemd/system/sciot-server.service
+[Unit]
+Description=SCIoT server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sciot
+# The worker command and the relative paths of config.json start here.
+WorkingDirectory=/opt/sciot-go-server
+EnvironmentFile=/etc/sciot/admin.env
+Environment=PATH=/home/sciot/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/sciot-go-server/sciot-server -config config.json -addr :8080 -admin-addr 127.0.0.1:8081
+Restart=on-failure
+# Shutdown closes the streams, both ports and the worker: give it time.
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now sciot-server
+journalctl -u sciot-server -f   # the server's log, change log lines included
+```
+
+A restart from the dashboard keeps the same process (same PID), so systemd
+sees no restart. For the Config page to save, `User` must be able to write
+`config.json` and its folder (the backup and the atomic write create files
+next to it).
 
 ### Pages
 
@@ -149,6 +220,42 @@ history of a whole run use the recording ([RECORDING.md](RECORDING.md)) and
 
 Ages ("3 s ago") compare the browser's clock with the server's `last_seen`:
 with a remote server whose clock is off, they are off by the same amount.
+
+## Common tasks
+
+**Change a setting and apply it** (a threshold, the heartbeat interval, the
+algorithm):
+
+1. Config: edit the text; the diff below shows the change.
+2. Validate: the server answers whether it would start with it, with the
+   message it would log.
+3. Save (a backup of the old file stays next to it).
+4. Restart server, in the green notice; log in again.
+
+**Force a split for an experiment and keep the data** (needs `record`):
+
+1. Devices → the device → Policy: `SPLIT`, the split point, the window →
+   Pin. The device applies it at its next heartbeat; the badge shows `pinned`.
+2. Run the experiment. The algorithm leaves the device alone.
+3. Unpin when done (the policy stays until the algorithm changes it).
+4. Recordings → download the file of this start (marked `recording`), then
+   analyse it offline: `go run ./cmd/sciot-replay algo <file>`
+   ([COSTMODEL.md](COSTMODEL.md)).
+
+A pin is lost when the device registers again or the server restarts.
+
+**Add a new model** (needs `models_dir`):
+
+1. Models → Build a model: key, the two Edge Impulse exports of the same
+   model version, a few real images ([MODELS.md](MODELS.md)).
+2. Follow the log until `succeeded`; note the `model_hash`.
+3. Add to config.json → review the diff → Save → Restart server.
+4. Copy the model folder (`models_dir/<key>`) to every device and point the
+   client at it (`--model-dir`, [CLIENT.md](CLIENT.md)): a device registers
+   with the `model_hash` of its own files, which must match the server's.
+
+**See who changed what**: Change log (needs `record`), or the server's log
+(`admin pin: … by="…"`).
 
 ## Building
 
