@@ -41,6 +41,11 @@ worker. Some pages need a section in `config.json`:
 
 You can add them from the Config page itself, then restart from there.
 
+`models_dir` is only where builds are written: the server does not load what
+is in it. The models in use are exactly the ones listed in `models`; a built
+model is used after it is added there (Add to config.json) and the server
+restarts.
+
 ## Using it
 
 ```bash
