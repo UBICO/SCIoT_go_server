@@ -175,6 +175,54 @@ export interface ConfigSaveResponse {
   restart_required: boolean
 }
 
+// GET /api/v1/admin/recordings: i file di record.dir, dal più recente.
+export interface Recording {
+  name: string // sciot-YYYYMMDD-HHMMSS.jsonl
+  size_bytes: number
+  modified: string
+  current: boolean // in scrittura (questo avvio)
+}
+
+export interface RecordingsResponse {
+  recording: boolean // false: nessuna sezione "record" nella config
+  dir?: string
+  files: Recording[]
+}
+
+// GET /api/v1/admin/models: i modelli del registry.
+export interface AdminModel {
+  model_hash: string
+  model_key: string
+  num_layers: number
+  last_offloading_layer: number
+  input: { shape: number[]; dtype: string }
+  postprocess: {
+    decoder: string
+    labels: string[]
+    score_threshold: number
+    iou_threshold?: number
+    max_detections: number
+  }
+  devices: number // device registrati con questo modello
+}
+
+// Una riga del registro delle modifiche (ADMIN_API.md#change-log).
+export interface ChangeLogEntry {
+  ts: string
+  who: string
+  action: string // pin, unpin, config, restart
+  device_id?: string
+  session_id?: string
+  policy?: Policy
+  pinned?: boolean
+  config?: { path: string; backup?: string; hash: string }
+}
+
+export interface ChangeLogResponse {
+  enabled: boolean // false: nessuna sezione "record"
+  entries: ChangeLogEntry[] // dalla più recente
+}
+
 export interface LoginResponse {
   name: string
   expires_at: string

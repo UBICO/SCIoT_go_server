@@ -29,6 +29,26 @@ export function fmtBytes(v: number | null | undefined): string {
   return mib >= 1024 ? `${(mib / 1024).toFixed(1)} GiB` : `${mib.toFixed(0)} MiB`
 }
 
+// fmtFileSize: dimensione di un file, in B, KiB, MiB o GiB.
+export function fmtFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  const units = ['KiB', 'MiB', 'GiB']
+  let v = bytes / 1024
+  let u = 0
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024
+    u++
+  }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[u]}`
+}
+
+// fmtDateTime: data e ora locali.
+export function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString()
+}
+
 // fmtBandwidth: banda in MB/s (potenze di 10, come le reti).
 export function fmtBandwidth(bps: number | null | undefined): string {
   return bps === null || bps === undefined ? DASH : fmtNumber(bps / 1e6, 2, 'MB/s')

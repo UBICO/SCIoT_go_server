@@ -6,7 +6,8 @@ protocol ([PROTOCOL.md](PROTOCOL.md)): devices never use it.
 
 The admin port only reads what the server already computes and calls the
 existing admin actions (pin, unpin), edits `config.json` and restarts the
-server to apply it, writing who did them to a change log. It
+server to apply it, writing who did them to a change log. Recordings, models
+and the change log are read-only. It
 adds no metric and changes neither the protocol nor the offloading algorithm. Without `-admin-addr` it does not
 exist and the server runs as before.
 
@@ -285,6 +286,59 @@ What a restart means:
 
 `404` without config editing (no check possible); `500` if
 `config.json` cannot be read (no restart).
+
+### `GET /api/v1/admin/models`
+
+The models of the registry, sorted by `model_key`: the same objects as the
+device port's `GET /api/v1/models` ([PROTOCOL.md](PROTOCOL.md)), plus
+`devices`, how many registered devices use the model.
+
+```json
+{"models": [{"model_hash": "…", "model_key": "yolo_pico_320", "num_layers": 8,
+  "last_offloading_layer": 7, "input": {"shape": [1, 320, 320, 3], "dtype": "float32"},
+  "postprocess": {"decoder": "yolo_pro", "labels": ["bicycle", "stop sign"], …},
+  "devices": 2}]}
+```
+
+### `GET /api/v1/admin/recordings`
+
+The recordings in `record.dir` ([RECORDING.md](RECORDING.md)), newest first.
+Only files named `sciot-YYYYMMDD-HHMMSS.jsonl` are listed (not the change
+log, not other files).
+
+```json
+{"recording": true, "dir": "/srv/sciot-records", "files": [
+  {"name": "sciot-20261120-091811.jsonl", "size_bytes": 2500000,
+   "modified": "2026-11-20T09:30:00+01:00", "current": true}]}
+```
+
+`current` is the file of this start, still being written. Without a `record`
+section: `{"recording": false, "files": []}`. Nothing can be deleted from
+here: recordings are experiment data, delete them by hand on the machine.
+
+### `GET /api/v1/admin/recordings/{name}`
+
+Downloads a recording (`application/x-ndjson`, as an attachment). `Range` is
+supported, so an interrupted download of a large file can resume. `404
+not_found` for a name that is not a recording name (no path outside
+`record.dir` can be reached), a missing file, or without recording.
+
+The file being written may end with half a line (the recorder writes through
+a buffer): the download stops at the last complete line, so `sciot-replay`
+can read it. A finished file is served whole.
+
+### `GET /api/v1/admin/changelog`
+
+The last lines of the change log (below), newest first, as written in the
+file: `?limit=N`, 1 to 1000, default 200 (`400 invalid_request` otherwise).
+Lines that are not valid JSON (half a line after a crash) are skipped.
+
+```json
+{"enabled": true, "entries": [{"ts": "…", "who": "francesco", "action": "pin", …}]}
+```
+
+Without a `record` section: `{"enabled": false, "entries": []}` (actions are
+then only in the server's log).
 
 ## Change log
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtAge, fmtBandwidth, fmtBytes, fmtDuration, fmtMs, fmtNumber, fmtPercent, fmtPolicy } from './format'
+import { fmtAge, fmtBandwidth, fmtBytes, fmtDuration, fmtFileSize, fmtMs, fmtNumber, fmtPercent, fmtPolicy } from './format'
 
 describe('format', () => {
   it('shows a dash for missing values, not 0', () => {
@@ -17,6 +17,15 @@ describe('format', () => {
     expect(fmtBandwidth(11_500_000)).toBe('11.50 MB/s')
     expect(fmtBytes(812_345_344)).toBe('775 MiB')
     expect(fmtBytes(3 * 2 ** 30)).toBe('3.0 GiB')
+  })
+
+  it('formats file sizes', () => {
+    expect(fmtFileSize(0)).toBe('0 B')
+    expect(fmtFileSize(1023)).toBe('1023 B')
+    expect(fmtFileSize(1536)).toBe('1.5 KiB')
+    expect(fmtFileSize(2_500_000)).toBe('2.4 MiB')
+    expect(fmtFileSize(50 * 2 ** 20)).toBe('50 MiB')
+    expect(fmtFileSize(3 * 2 ** 30)).toBe('3.0 GiB')
   })
 
   it('formats ages and durations', () => {

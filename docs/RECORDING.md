@@ -15,6 +15,10 @@ Every server start writes a new file `sciot-<YYYYMMDD-HHMMSS>.jsonl` (local
 time) in that directory: one experiment, one file. The path and the counters
 are in `GET /api/v1/server/status` under `record`.
 
+With an admin port, the dashboard lists the files and downloads them
+(Recordings page, [DASHBOARD.md](DASHBOARD.md)); the file still being written
+is served up to its last complete line.
+
 The same directory holds `sciot-audit.jsonl`, the change log of the admin
 actions (who pinned what): one file for every start, not part of the
 recording ([ADMIN_API.md](ADMIN_API.md#change-log)).

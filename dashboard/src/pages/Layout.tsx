@@ -18,10 +18,12 @@ export function Layout() {
   )
 }
 
-// Le voci del menu. Le prossime pagine (modelli, registrazioni) si
-// aggiungono qui e in router.tsx.
+// Le voci del menu. Una pagina nuova si aggiunge qui e in router.tsx.
 const nav = [
   { to: '/devices', label: 'Devices' },
+  { to: '/models', label: 'Models' },
+  { to: '/recordings', label: 'Recordings' },
+  { to: '/changelog', label: 'Change log' },
   { to: '/config', label: 'Config' },
 ]
 

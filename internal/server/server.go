@@ -93,6 +93,8 @@ type Server struct {
 	auditLog *AuditLog        // nil = registro delle modifiche solo nel log (audit.go)
 	config   *configFile      // nil = config dalla dashboard spenta (admin_config.go)
 	restart  func()           // nil = riavvio dalla dashboard spento (admin_restart.go)
+	// recordDir è record.dir; "" = registrazione spenta (admin_records.go).
+	recordDir string
 
 	// alg decide la policy dei device a ogni heartbeat; nil = nessuna
 	// decisione (la policy cambia solo con l'admin). Vedi SetAlgorithm.
