@@ -28,6 +28,10 @@ import (
 	"github.com/UBICO/SCIoT_go_server/internal/worker"
 )
 
+// startEnv è l'ambiente all'avvio, SCIOT_ADMIN_TOKEN compreso: run lo toglie
+// da os.Environ, il riavvio lo ridà al nuovo programma.
+var startEnv = os.Environ()
+
 func main() {
 	if !run() {
 		return // Ctrl+C o SIGTERM: il server esce, come sempre
@@ -42,7 +46,7 @@ func main() {
 	log.Printf("restarting: %s", strings.Join(os.Args, " "))
 	// Exec sostituisce il programma nello stesso processo: stesso PID, stessi
 	// argomenti e ambiente (-config, SCIOT_ADMIN_TOKEN). Se ritorna, è fallito.
-	err = syscall.Exec(exe, os.Args, os.Environ())
+	err = syscall.Exec(exe, os.Args, startEnv)
 	log.Fatalf("restart: %v", err)
 }
 
@@ -99,6 +103,9 @@ func run() bool {
 	// Il token viene dall'ambiente, mai da config.json: il file finisce nei
 	// backup e magari in git, una variabile d'ambiente no.
 	adminToken := os.Getenv("SCIOT_ADMIN_TOKEN")
+	// Tolto dall'ambiente: i processi figli (worker, build) lo ereditano e non
+	// ne hanno bisogno. Il riavvio usa startEnv, salvato prima di run.
+	os.Unsetenv("SCIOT_ADMIN_TOKEN")
 	if *adminAddr != "" {
 		if err := server.CheckAdminAddr(*adminAddr, adminToken); err != nil {
 			log.Fatalf("admin: %v", err)

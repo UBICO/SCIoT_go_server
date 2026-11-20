@@ -31,6 +31,9 @@ go run ./cmd/server -config config.json -addr :8080 -admin-addr 127.0.0.1:8081
   page that says how to build it.
 - The token comes from the environment variable `SCIOT_ADMIN_TOKEN`, never
   from `config.json` (the file is copied around and may end up in git).
+  The server removes it from its environment after reading it, so the
+  worker and the model builds do not inherit it; a restart from the
+  dashboard passes it to the new program.
 - At start-up the server refuses to run (`admin: …` in the log) when:
   - the token is shorter than 16 characters;
   - there is no token and `-admin-addr` is not a loopback address
